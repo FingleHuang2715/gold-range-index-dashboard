@@ -753,17 +753,44 @@ async function handleApiData(req, res) {
 
 // ---------- HTTP ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css' };
+// 静态字面量路径读取，确保 Vercel NFT (@vercel/nft) 打包器自动将 public/index.html 打入 Serverless 镜像
+const INDEX_HTML_PATH = path.join(__dirname, 'public', 'index.html');
+let INDEX_HTML_BUF = null;
+try {
+  INDEX_HTML_BUF = fs.readFileSync(path.join(__dirname, 'public', 'index.html'));
+} catch (e) {}
+
 const appHandler = async (req, res) => {
   const u = new URL(req.url || '/', 'http://localhost');
-  if (u.pathname === '/api/data') {
+  if (u.pathname === '/api/data' || u.pathname.startsWith('/api/data')) {
     return handleApiData(req, res);
   }
-  const file = path.join(__dirname, 'public', u.pathname === '/' ? 'index.html' : path.normalize(u.pathname).replace(/^(\.\.[\\/])+/, ''));
-  fs.readFile(file, (err, buf) => {
-    if (err) { res.writeHead(404); return res.end('Not found'); }
+  if (u.pathname === '/' || u.pathname === '/index.html') {
+    try {
+      const buf = (!process.env.VERCEL && fs.existsSync(INDEX_HTML_PATH))
+        ? await fs.promises.readFile(INDEX_HTML_PATH)
+        : (INDEX_HTML_BUF || await fs.promises.readFile(INDEX_HTML_PATH));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      return res.end(buf);
+    } catch (e) {
+      if (INDEX_HTML_BUF) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        return res.end(INDEX_HTML_BUF);
+      }
+      res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+      return res.end('Failed to load index.html: ' + e.message);
+    }
+  }
+  const safeRel = path.normalize(u.pathname).replace(/^(\.\.[\\/])+/, '').replace(/^[/\\]+/, '');
+  const file = path.join(__dirname, 'public', safeRel);
+  try {
+    const buf = await fs.promises.readFile(file);
     res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
-    res.end(buf);
-  });
+    return res.end(buf);
+  } catch (err) {
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    return res.end('Not found');
+  }
 };
 
 if (require.main === module && !process.env.VERCEL) {
