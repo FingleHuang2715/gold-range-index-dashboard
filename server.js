@@ -753,12 +753,9 @@ async function handleApiData(req, res) {
 
 // ---------- HTTP ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css' };
-// 静态字面量路径读取，确保 Vercel NFT (@vercel/nft) 打包器自动将 public/index.html 打入 Serverless 镜像
+// 通过 CommonJS require('./public-html') 直接将前端 HTML 作为 JS 模块打包进 Vercel Serverless 镜像，彻底杜绝 Vercel 运行时 ENOENT 找不到文件
+const EMBEDDED_HTML = require('./public-html');
 const INDEX_HTML_PATH = path.join(__dirname, 'public', 'index.html');
-let INDEX_HTML_BUF = null;
-try {
-  INDEX_HTML_BUF = fs.readFileSync(path.join(__dirname, 'public', 'index.html'));
-} catch (e) {}
 
 const appHandler = async (req, res) => {
   const u = new URL(req.url || '/', 'http://localhost');
@@ -766,20 +763,15 @@ const appHandler = async (req, res) => {
     return handleApiData(req, res);
   }
   if (u.pathname === '/' || u.pathname === '/index.html') {
-    try {
-      const buf = (!process.env.VERCEL && fs.existsSync(INDEX_HTML_PATH))
-        ? await fs.promises.readFile(INDEX_HTML_PATH)
-        : (INDEX_HTML_BUF || await fs.promises.readFile(INDEX_HTML_PATH));
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
-      return res.end(buf);
-    } catch (e) {
-      if (INDEX_HTML_BUF) {
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        return res.end(INDEX_HTML_BUF);
-      }
-      res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
-      return res.end('Failed to load index.html: ' + e.message);
+    if (!process.env.VERCEL && fs.existsSync(INDEX_HTML_PATH)) {
+      try {
+        const diskHtml = await fs.promises.readFile(INDEX_HTML_PATH, 'utf8');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+        return res.end(diskHtml);
+      } catch (e) {}
     }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+    return res.end(EMBEDDED_HTML);
   }
   const safeRel = path.normalize(u.pathname).replace(/^(\.\.[\\/])+/, '').replace(/^[/\\]+/, '');
   const file = path.join(__dirname, 'public', safeRel);
