@@ -1,0 +1,12 @@
+{
+  "name": "gold-range-index-dashboard",
+  "version": "1.0.0",
+  "description": "黄金震荡指数 & M1双向追踪倍投马丁EA多空净敞口风控与实时监控系统",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,2599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>黄金震荡指数 - 网格马丁行情判断</title>
+<style>
+  :root{--bg:#0b0e14;--card:#121620;--card2:#161b26;--bd:#212838;--tx:#e6eaf2;--mut:#7d899e;--gold:#eab308;--green:#10b981;--red:#f43f5e;--yel:#f59e0b}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+  header{position:sticky;top:0;z-index:50;background:rgba(11,14,20,0.92);backdrop-filter:blur(10px);display:flex;flex-wrap:nowrap;gap:12px;align-items:center;justify-content:space-between;padding:10px 24px;border-bottom:1px solid var(--bd)}
+  header>div:first-child{min-width:0;flex:1}
+  h1{margin:0;font-size:18px;color:#f8fafc;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  h1 b{color:var(--gold)}
+  .sub{color:var(--mut);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  header .btns{flex-wrap:nowrap;flex-shrink:0}
+  button{background:var(--card2);color:var(--tx);border:1px solid var(--bd);padding:7px 13px;border-radius:7px;cursor:pointer;font-size:12.5px;transition:all .15s;white-space:nowrap}
+  button:hover{border-color:var(--gold);color:#fff}
+  button.pri{background:var(--gold);color:#141004;border-color:var(--gold);font-weight:600}
+  button.pri:hover{filter:brightness(1.08);color:#000}
+  button.on{background:rgba(234,179,8,0.15);color:var(--gold);border-color:rgba(234,179,8,0.5);font-weight:600}
+  button:disabled{opacity:.5;cursor:wait}
+  .layout{display:grid;grid-template-columns:224px minmax(0,1fr);max-width:1680px;margin:0 auto}
+  aside.sidenav{position:sticky;top:61px;height:calc(100vh - 61px);overflow-y:auto;overflow-x:hidden;padding:12px 10px;border-right:1px solid var(--bd);background:#0e121a;display:flex;flex-direction:column;gap:2px;scrollbar-width:thin;scrollbar-color:#212838 transparent}
+  aside.sidenav:hover{scrollbar-color:rgba(234,179,8,0.45) transparent}
+  aside.sidenav::-webkit-scrollbar{width:4px}
+  aside.sidenav::-webkit-scrollbar-track{background:transparent}
+  aside.sidenav::-webkit-scrollbar-thumb{background:rgba(125,137,158,0.2);border-radius:99px}
+  aside.sidenav:hover::-webkit-scrollbar-thumb{background:rgba(234,179,8,0.5)}
+  /* 全局与监控框极细暗黑滚动条美化（解决特朗普言论监控等区域右侧滚动条生硬问题） */
+  *{scrollbar-width:thin;scrollbar-color:#232b3d transparent}
+  *::-webkit-scrollbar{width:5px;height:5px}
+  *::-webkit-scrollbar-track{background:rgba(11,14,20,0.35);border-radius:99px}
+  *::-webkit-scrollbar-thumb{background:rgba(125,137,158,0.22);border-radius:99px;transition:background .2s}
+  *::-webkit-scrollbar-thumb:hover{background:rgba(234,179,8,0.58)}
+  .thin-scroll{scrollbar-width:thin;scrollbar-color:#263044 transparent}
+  .thin-scroll:hover{scrollbar-color:rgba(234,179,8,0.5) transparent}
+  aside.sidenav .ng{font-size:11px;color:#5c667a;margin:10px 8px 3px;font-weight:600;letter-spacing:.6px;text-transform:uppercase}
+  aside.sidenav .ng:first-child{margin-top:0}
+  aside.sidenav a{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px 9px;border-radius:6px;color:#b8c2d4;text-decoration:none;font-size:12.5px;border:1px solid transparent;transition:all .15s;min-width:0}
+  aside.sidenav a span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  aside.sidenav a:hover,aside.sidenav a.active{background:var(--card2);border-color:#2c364b;color:#fff}
+  main{padding:18px 22px;display:grid;gap:16px;min-width:0}
+  @media(max-width:960px){.layout{grid-template-columns:1fr}aside.sidenav{position:static;height:auto;flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--bd)}.sidenav .ng{width:100%}header{flex-wrap:wrap}}
+  section[id],div[id^="ind-"]{scroll-margin-top:72px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;overflow:hidden;min-width:0}
+  .card h2{margin:0 0 12px;font-size:15px;color:#f1f5f9;font-weight:600;word-break:break-word;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .screen-card{min-height:calc(100vh - 92px);display:flex;flex-direction:column;justify-content:space-between;padding:18px 20px}
+  .chart-wrap{flex:1;min-height:420px;display:flex;flex-direction:column;margin:10px 0}
+  .big-svg{width:100%;height:calc(100vh - 295px);min-height:400px;max-height:660px;display:block;background:#0d1118;border:1px solid var(--bd);border-radius:10px;cursor:crosshair;user-select:none}
+  /* 语义色克制化：仅核心结论使用柔和描边胶囊，辅助标签全部使用低调深灰 */
+  .RANGE{background:rgba(16,185,129,0.12);color:#34d399;border:1px solid rgba(16,185,129,0.28)}
+  .TREND{background:rgba(244,63,94,0.13);color:#fb7185;border:1px solid rgba(244,63,94,0.3)}
+  .MIXED{background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.28)}
+  .NEUT{background:#181f2c;color:#94a3b8;border:1px solid #263042}
+  .UP{background:#161e2b;color:#34d399;border:1px solid #233142}
+  .DOWN{background:#161e2b;color:#fb7185;border:1px solid #233142}
+  /* 核心三大焦点看板 */
+  .hero-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;margin-bottom:14px}
+  .hero-box{background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:16px;position:relative;overflow:hidden;min-width:0}
+  .hero-box.hl-green{border-top:3px solid var(--green)}
+  .hero-box.hl-yel{border-top:3px solid var(--yel)}
+  .hero-box.hl-red{border-top:3px solid var(--red)}
+  .hero-box.hl-gold{border-top:3px solid var(--gold)}
+  .hero-lbl{font-size:12px;color:var(--mut);font-weight:500;display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+  .hero-val{font-size:38px;font-weight:800;line-height:1.1;letter-spacing:-.5px;color:#fff;margin:4px 0 8px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  /* 前排异动监控卡片 */
+  .anom-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin-top:10px}
+  .anom-card{background:#151924;border:1px solid var(--bd);border-left:3px solid var(--yel);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;cursor:pointer;transition:transform .12s,border-color .12s}
+  .anom-card:hover{border-color:var(--gold);transform:translateY(-1px)}
+  .anom-card.sev-high{background:rgba(244,63,94,0.06);border-color:rgba(244,63,94,0.28);border-left:3px solid var(--red)}
+  .anom-card.sev-med{background:rgba(245,158,11,0.05);border-color:rgba(245,158,11,0.25);border-left:3px solid var(--yel)}
+  .vgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+  .vbox{background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:14px;overflow:hidden;min-width:0}
+  .vhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;min-width:0}
+  .vnum{font-size:32px;font-weight:800;line-height:1.15;word-break:break-word}
+  .fcgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px}
+  .fccard{background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;overflow:hidden;min-width:0}
+  .fchead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+  .fcscore{font-size:24px;font-weight:700;color:#fff}
+  .fcparts{display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;font-size:12px;color:var(--mut)}
+  .fcevs{font-size:11px;color:var(--mut);border-top:1px solid var(--bd);padding-top:6px;margin-top:auto;word-break:break-word}
+  .tfidx-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;margin-top:12px}
+  .tfcard{background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:12px;cursor:pointer;transition:border-color .15s;overflow:hidden;min-width:0}
+  .tfcard:hover{border-color:#3b4760}
+  /* 大图顶部标签栏严格水平对齐且自适应防溢出 */
+  .meta-strip{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+  .mchip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:32px;padding:4px 11px;max-width:100%;background:var(--card2);border:1px solid var(--bd);border-radius:7px;font-size:12.5px;line-height:1.2}
+  .mchip b{font-size:13.5px;color:#fff}
+  .mchip .big-num{font-size:19px;font-weight:800;color:var(--gold)}
+  .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:7px 9px;text-align:left;border-bottom:1px solid var(--bd);font-size:13px}
+  th{color:var(--mut);font-weight:500;font-size:12px}
+  .pill{padding:0 8px;min-height:21px;line-height:19px;border-radius:6px;font-size:11.5px;font-weight:600;display:inline-flex;align-items:center;vertical-align:middle;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
+  .live-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px;box-shadow:0 0 6px var(--green)}
+  ul{margin:6px 0 0;padding-left:18px;color:var(--mut)}
+  .err{color:#fb7185}
+  .star{color:var(--gold)}
+  .imp{background:rgba(234,179,8,0.06)}
+  .tfblock{margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--bd)}.tfblock:last-child{border-bottom:none}.tfh{margin-bottom:10px;font-size:14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .gauges{display:grid;grid-template-columns:repeat(auto-fit,minmax(265px,1fr));gap:12px 18px}
+  .g{min-width:0;padding:8px 10px;background:var(--card2);border:1px solid var(--bd);border-radius:8px}
+  .g.g-warn{border-color:rgba(245,158,11,0.35)}
+  .g.g-err{border-color:rgba(244,63,94,0.4);background:rgba(244,63,94,0.04)}
+  .g .gh{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:12.5px;margin-bottom:6px}
+  .g .gh a{color:#cbd5e1;text-decoration:none}
+  .g .gh a:hover{color:var(--gold)}
+  /* 进度条降噪：底槽柔和暗色，仅游标与当前段突出 */
+  .bar{position:relative;display:flex;height:8px;border-radius:99px;background:#1a2130;overflow:visible}
+  .bar>div:not(.mk){height:100%;opacity:.22;transition:opacity .2s}.bar>div:first-child{border-radius:99px 0 0 99px}.bar>div:nth-last-child(2){border-radius:0 99px 99px 0}
+  .bar>div.z-active{opacity:.85}
+  .mk{position:absolute;top:-4px;width:6px;height:16px;margin-left:-3px;background:#fff;border-radius:3px;box-shadow:0 0 6px rgba(255,255,255,0.9),0 0 2px #000}
+  .ticks{position:relative;height:13px;font-size:10px;color:#5c667a;margin-top:3px}.ticks span{position:absolute;transform:translateX(-50%)}
+  .zp{padding:1px 7px;border-radius:5px;font-size:11px;font-weight:600}
+  .sm{font-size:12px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mut);align-items:center}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:middle}
+  .mut{color:var(--mut)}
+  .num{color:var(--tx);text-decoration:none;border-bottom:1px dotted rgba(234,179,8,0.4)}.num:hover{color:var(--gold)}
+  th a,.card h2 a{color:#f1f5f9;text-decoration:none;border-bottom:1px dashed var(--mut)}
+  .tol-bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding:10px 14px;margin-bottom:10px}
+  .tol-slider{width:200px;accent-color:var(--gold);cursor:pointer;height:5px}
+  .tol-presets button{padding:4px 9px;font-size:12px}
+  details.clean-fold>summary{cursor:pointer;color:var(--mut);font-size:12px;user-select:none;padding:4px 0}
+  details.clean-fold>summary:hover{color:var(--tx)}
+  /* 仅针对 1M/5M 震荡指数与价格数字本身的持续背景高亮动画 */
+  .num-chip{display:inline-block;padding:1px 6px;border-radius:6px;transition:background-color .2s}
+  @keyframes numFlashBg {
+    0%   { background-color: rgba(16, 185, 129, 0.5); color: #fff; box-shadow: 0 0 10px rgba(16, 185, 129, 0.6); }
+    45%  { background-color: rgba(234, 179, 8, 0.4); color: #fff; }
+    85%  { background-color: rgba(16, 185, 129, 0.18); }
+    100% { background-color: transparent; }
+  }
+  .flash-num { animation: numFlashBg 4.5s ease-out; }
+  #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--green);color:#04170f;padding:10px 20px;border-radius:8px;display:none;font-weight:600;z-index:100}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🥇 <b>黄金震荡指数</b> <span class="mut sm" style="font-weight:400">· 网格马丁量化决策台</span></h1>
+    <div class="sub" id="meta">加载中…</div>
+  </div>
+  <div class="btns">
+    <button id="btnFast">⚡ 立即刷新实时数据</button>
+    <button class="pri" id="btnFetch">🔄 全量刷新</button>
+    <button class="pri" id="btnCopy">📋 一键复制(发给AI)</button>
+  </div>
+</header>
+<div class="layout">
+  <aside class="sidenav" id="sidenav">
+    <div class="ng">核心决策</div>
+    <a href="#topSessionSec"><span>🕒 交易时段进度</span><span id="nav-sess" class="pill NEUT">-</span></a>
+    <a href="#tolSec"><span>🛡️ 账户推演 & 手动操作</span><span id="nav-ea" class="pill RANGE">-</span></a>
+    <a href="#anomalySec"><span>⚡ 实时异动监控</span><span id="nav-anom" class="pill NEUT">0项</span></a>
+    <a href="#verdict"><span>📊 核心震荡总览</span><span id="nav-run" class="pill MIXED">-</span></a>
+    <a href="#entrySec"><span>🚦 是否适合入场图</span><span id="nav-entry" class="pill MIXED">-</span></a>
+    <a href="#forecastSec"><span>🔮 未来5日预测</span></a>
+    <div class="ng">大图趋势 (一图一屏)</div>
+    <a href="#chart-1M"><span>📈 1M 震荡大图 ⚡</span><span id="nav-1M" class="pill NEUT">-</span></a>
+    <a href="#chart-5M"><span>📈 5M 震荡大图 ⚡</span><span id="nav-5M" class="pill NEUT">-</span></a>
+    <a href="#chart-15M"><span>📈 15M 震荡大图</span><span id="nav-15M" class="pill NEUT">-</span></a>
+    <a href="#chart-1H"><span>📈 1H 震荡大图</span><span id="nav-1H" class="pill NEUT">-</span></a>
+    <a href="#chart-4H"><span>📈 4H 震荡大图</span><span id="nav-4H" class="pill NEUT">-</span></a>
+    <div class="ng">分周期指标明细</div>
+    <a href="#ind-1M"><span>🎛️ 1M 指标进度条</span></a>
+    <a href="#ind-5M"><span>🎛️ 5M 指标进度条</span></a>
+    <a href="#ind-15M"><span>🎛️ 15M 指标进度条</span></a>
+    <a href="#ind-1H"><span>🎛️ 1H 指标进度条</span></a>
+    <a href="#ind-4H"><span>🎛️ 4H 指标进度条</span></a>
+    <a href="#ind-1D"><span>🎛️ 1D 日线指标</span></a>
+    <div class="ng">宏观与日历</div>
+    <a href="#trumpSec"><span>🦅 特朗普言论监控</span><span id="nav-trump" class="pill NEUT">-</span></a>
+    <a href="#macroSec"><span>🌐 跨市场长周期备查</span><span id="nav-macro" class="pill NEUT">-</span></a>
+    <a href="#sessionSec"><span>🕒 时段说明 & GVZ</span></a>
+    <a href="#calSec"><span>📅 金十经济周历</span></a>
+    <a href="#sources"><span>🔗 数据源验证</span></a>
+  </aside>
+  <main>
+    <section class="card" id="topSessionSec"></section>
+    <section class="card" id="tolSec">
+      <div class="vhead" style="margin-bottom:10px">
+        <h2 style="margin:0">🛡️ M1双向追踪倍投马丁EA · 多空净敞口风控推演与实时操作指令台 <span class="mut sm" style="font-weight:400">(核心公式：抗单边美元 D = 可亏金额 ÷ (多空净敞口 N × 100) · 真正决定浮亏速度的是「买单手数 − 卖单手数」的净敞口)</span></h2>
+        <span class="pill NEUT" id="eaParamBadge">当前策略: 0.02起 · K_Lot 1.38 · 封顶1.32手 · 24层 · 步长1.0$</span>
+      </div>
+      <div class="tol-bar" style="justify-content:space-between">
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:9px">
+          <div style="display:flex;align-items:center;gap:5px">
+            <label style="font-weight:700;color:#fff">💰 账户余额($):</label>
+            <input type="number" id="accBalInput" min="100" max="500000" step="100" value="2700" style="width:78px;background:var(--bg);color:var(--gold);border:1px solid var(--gold);padding:5px 7px;border-radius:6px;font-size:14px;font-weight:800">
+          </div>
+          <div class="btns tol-presets">
+            <button onclick="setAccountBal(2000)" title="2000$账户 (风控线1500$)">2000$</button>
+            <button onclick="setAccountBal(2700)" title="您实盘当前余额 ~2700$">2700$(实盘)</button>
+            <button onclick="setAccountBal(3500)" title="MaxLoss=3500$">3500$</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:5px;padding-left:6px;border-left:1px solid var(--bd)">
+            <label style="font-weight:700;color:#f59e0b" title="用于公式 D = 可亏金额 / (净敞口N × 100)，例如1500美金爆仓/止损线">🛡️ 可亏/爆仓线($):</label>
+            <input type="number" id="riskLossInput" min="50" max="500000" step="100" value="1500" style="width:72px;background:var(--bg);color:#f59e0b;border:1px solid rgba(245,158,11,0.6);padding:5px 6px;border-radius:6px;font-size:14px;font-weight:800" title="例如1500美金爆仓/风控线：净敞口0.5手可抗30$(3000点)，净敞口1.0手可抗15$(1500点)">
+          </div>
+          <div style="display:flex;align-items:center;gap:5px;padding-left:6px;border-left:1px solid var(--bd)">
+            <label style="font-weight:700;color:#34d399">📈 买单总手数(Buy):</label>
+            <input type="number" id="buyLotsInput" min="0" max="100" step="0.01" value="0.45" style="width:64px;background:var(--bg);color:#34d399;border:1px solid rgba(16,185,129,0.55);padding:5px 6px;border-radius:6px;font-size:14px;font-weight:800" title="填入MT4/MT5显示的当前买单(Buy)合计总手数">
+          </div>
+          <div style="display:flex;align-items:center;gap:5px">
+            <label style="font-weight:700;color:#fb7185">📉 卖单总手数(Sell):</label>
+            <input type="number" id="sellLotsInput" min="0" max="100" step="0.01" value="0.02" style="width:64px;background:var(--bg);color:#fb7185;border:1px solid rgba(244,63,94,0.55);padding:5px 6px;border-radius:6px;font-size:14px;font-weight:800" title="填入MT4/MT5显示的当前卖单(Sell)合计总手数">
+          </div>
+          <span class="pill MIXED" id="lotDetectBadge" style="font-size:12px;padding:4px 10px">⚖️ 净敞口 N=0.43手 ($43/美金) · 买7层/卖1层</span>
+          <div style="display:flex;align-items:center;gap:4px;padding-left:6px;border-left:1px solid var(--bd)">
+            <label class="mut sm">单边层数:</label>
+            <input type="number" id="curLayerInput" min="1" max="50" step="1" value="7" style="width:44px;background:var(--bg);color:var(--gold);border:1px solid var(--bd);padding:4px 5px;border-radius:6px;font-size:13px;font-weight:700" title="由买单/卖单手数反推的单边最高层数">
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;padding-left:6px;border-left:1px solid var(--bd)">
+            <label class="mut sm">预付款($):</label>
+            <input type="number" id="usedMarginInput" min="1" max="100000" step="1" value="14" style="width:52px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:4px 5px;border-radius:6px;font-size:13px;font-weight:700" title="填入MT4/MT5显示的已用预付款(如14美金)">
+          </div>
+          <button class="pri" id="btnCalcAccount">🧮 重算净敞口 & 指令</button>
+        </div>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+          <span class="mut sm">净敞口可抗单边区间: <b id="tolValTxt" style="color:var(--gold);font-size:15px">34.9</b><b style="color:var(--gold)">$</b></span>
+          <input type="range" id="tolSlider" class="tol-slider" min="5" max="150" step="0.5" value="34.9" style="width:100px" title="由 D = 可亏金额 / (净敞口N × 100) 自动推算，也可手动微调">
+          <input type="number" id="tolInput" min="3" max="300" step="0.5" value="34.9" style="width:60px;background:var(--bg);color:var(--tx);border:1px solid var(--bd);padding:4px 6px;border-radius:6px;font-size:12.5px">
+          <button class="sm" id="btnCalcTol">微调区间</button>
+        </div>
+      </div>
+      <div id="lotQuickStrip" style="margin-bottom:10px;padding:8px 11px;background:rgba(15,19,28,0.85);border:1px solid var(--bd);border-radius:8px;font-size:12px;display:flex;flex-direction:column;gap:6px"></div>
+      <details class="clean-fold" id="fold-ea-params" ontoggle="window.OPEN_FOLDS&&(window.OPEN_FOLDS[this.id]=this.open)" style="margin-bottom:10px">
+        <summary>⚙️ 点击展开/修改：多空持仓均价精确浮亏计算 & EA 底层倍投参数 (支持填入多单/空单均价直接算实时净浮亏)</summary>
+        <div style="margin-top:8px;padding:10px 12px;background:var(--card2);border:1px solid var(--bd);border-radius:8px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:12.5px">
+          <label style="color:#34d399;font-weight:700">多单均价($可选): <input type="number" id="buyAvgPxInput" value="0" step="0.1" min="0" placeholder="0=自动" style="width:74px;background:var(--bg);color:#34d399;border:1px solid rgba(16,185,129,0.5);padding:3px 6px;border-radius:4px" title="填入多单持仓均价(0表示不填)，结合现价直接算多单浮盈亏 = 多单手数×100×(现价-均价)"></label>
+          <label style="color:#fb7185;font-weight:700">空单均价($可选): <input type="number" id="sellAvgPxInput" value="0" step="0.1" min="0" placeholder="0=自动" style="width:74px;background:var(--bg);color:#fb7185;border:1px solid rgba(244,63,94,0.5);padding:3px 6px;border-radius:4px" title="填入空单持仓均价(0表示不填)，结合现价直接算空单浮盈亏 = 空单手数×100×(均价-现价)"></label>
+          <label>平台强平比例(%): <input type="number" id="stopOutPctInput" value="20" step="5" min="0" max="100" style="width:52px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:3px 6px;border-radius:4px" title="1000倍杠杆常见强平比例为20%或50%"></label>
+          <label>起始手数(lot): <input type="number" id="eaLot" value="0.02" step="0.01" min="0.01" style="width:56px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:3px 6px;border-radius:4px"></label>
+          <label>倍投系数(K_Lot): <input type="number" id="eaK" value="1.38" step="0.01" min="1.05" style="width:58px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:3px 6px;border-radius:4px"></label>
+          <label>单笔封顶(Maxlot): <input type="number" id="eaMaxLot" value="1.32" step="0.01" min="0.1" style="width:60px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:3px 6px;border-radius:4px"></label>
+          <label>最大层数(Totals): <input type="number" id="eaTotals" value="24" step="1" min="5" max="60" style="width:52px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:3px 6px;border-radius:4px"></label>
+          <label>加仓间距(Step$): <input type="number" id="eaStep" value="1.00" step="0.1" min="0.2" style="width:56px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:3px 6px;border-radius:4px"></label>
+          <label>每层止盈(StopProfit$): <input type="number" id="eaTp" value="4.0" step="0.5" min="1" style="width:54px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:3px 6px;border-radius:4px"></label>
+          <div class="btns" style="margin-left:auto">
+            <button class="sm" onclick="applyEaPreset('cur')">套用当前实盘 (2700$ / 可亏1500$ / Maxlot 1.32)</button>
+            <button class="sm" onclick="applyEaPreset('bal2000')">2000$账户 + 净敞口0.5手 (抗30$/3000点)</button>
+            <button class="sm" onclick="applyEaPreset('log')">日志原参数 (Maxlot 3.50 / 50层)</button>
+          </div>
+        </div>
+      </details>
+      <div id="eaActionBox"></div>
+      <div id="tolResult" style="margin-top:12px"></div>
+    </section>
+    <section class="card" id="anomalySec"></section>
+    <section class="card" id="verdict"></section>
+    <section class="card" id="entrySec"></section>
+    <section class="card" id="forecastSec"></section>
+    <div id="bigCharts"></div>
+    <section class="card" id="tfSec"><h2>🎛️ 分周期 10 项技术指标明细 <span class="mut sm" style="font-weight:400">(正常指标自动静默为深灰，仅触发趋势/极值预警的指标高亮提示)</span></h2><div id="tf"></div></section>
+    <section class="card" id="trumpSec"></section>
+    <section class="card" id="macroSec"></section>
+    <section class="grid3" id="sessionSec">
+      <div class="card" id="session"></div>
+      <div class="card" id="gvz"></div>
+    </section>
+    <section class="card" id="calSec">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+        <h2 style="margin:0"><a href="https://www.jin10.com/minipro/index.html#/pages_sub/weeklyEconomic/weeklyEconomic?maxWidth=800&id=calendar&mode=weekly" target="_blank" rel="noopener">📅 金十数据经济周历 (官网 1:1 同步) 🔗</a> <span class="mut sm" style="font-weight:400">(数据来自 <a id="calApi" target="_blank" rel="noopener">金十周历接口 🔗</a>)</span></h2>
+        <div class="btns">
+          <button class="sm on" id="calModeWeek" onclick="setCalRange('week')">📅 本周全部7天(周一至周日)</button>
+          <button class="sm" id="calMode2d" onclick="setCalRange('2d')">📍 仅看今明两日</button>
+          <button class="sm" id="calModeToday" onclick="setCalRange('today')">📌 仅看今日</button>
+          <label class="mut sm" style="margin-left:6px"><input type="checkbox" id="onlyImp" checked> 仅看 ★3 以上</label>
+        </div>
+      </div>
+      <div id="cal"></div>
+    </section>
+    <section class="card mut" style="font-size:12px">
+      阈值参考: ADX&lt;20 震荡 / &gt;25 趋势; CHOP&gt;61.8 震荡 / &lt;38.2 趋势; ATR(14)/ATR(100) &lt;0.82 挤压 / &gt;1.25 扩张。仅供参考,不构成投资建议。
+    </section>
+    <section class="card" id="sources">
+      <h2>数据来源(点击跳转)</h2>
+      <div class="btns" id="srcBtns"></div>
+    </section>
+  </main>
+</div>
+<div id="toast"></div>
+<script>
+  const wkd = (() => { const n = new Date(Date.now() + 8 * 3600e3), m = n.getTime() - ((n.getUTCDay() + 6) % 7) * 86400e3, f = (t) => new Date(t).toISOString().slice(0, 10); return [f(m), f(m + 6 * 86400e3)]; })();
+  const WK = wkd;
+  const SRC = [
+    ['现货黄金 XAUUSD 实时行情(0延迟)', 'https://wallstreetcn.com/markets/codes/XAUUSD.OTC'],
+    ['实时K线接口 XAUUSD 1M(0延迟)', 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=60&fields=tick_at,open_px,close_px,high_px,low_px'],
+    ['实时K线接口 XAUUSD 5M(0延迟)', 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=300&fields=tick_at,open_px,close_px,high_px,low_px'],
+    ['实时K线接口 XAUUSD 15M(0延迟)', 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=900&fields=tick_at,open_px,close_px,high_px,low_px'],
+    ['实时K线接口 XAUUSD 1H(0延迟)', 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=3600&fields=tick_at,open_px,close_px,high_px,low_px'],
+    ['实时K线接口 XAUUSD 4H(0延迟)', 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=14400&fields=tick_at,open_px,close_px,high_px,low_px'],
+    ['实时K线接口 XAUUSD 1D(10年)', 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=2600&period_type=86400&fields=tick_at,open_px,close_px,high_px,low_px'],
+    ['金十数据经济周历', 'https://www.jin10.com/minipro/index.html#/pages_sub/weeklyEconomic/weeklyEconomic?maxWidth=800&id=calendar&mode=weekly'],
+    ['金十数据经济日历', 'https://rili.jin10.com/'],
+    ['金十周历数据接口(本周)', 'https://rili-open-api.jin10.com/data/week_info?start_date=' + WK[0] + '&end_date=' + WK[1] + '&include_holiday=true'],
+    ['Yahoo GVZ 波动率指数', 'https://finance.yahoo.com/quote/%5EGVZ/'],
+    ['K线接口 GVZ', 'https://query1.finance.yahoo.com/v8/finance/chart/%5EGVZ?interval=1d&range=1y'],
+    ['Yahoo 黄金期货 GC=F(备用)', 'https://finance.yahoo.com/quote/GC%3DF/'],
+    ['TradingView XAUUSD', 'https://www.tradingview.com/symbols/XAUUSD/'],
+    ['TradingView GVZ', 'https://www.tradingview.com/symbols/CBOE-GVZ/'],
+  ];
+  document.getElementById('srcBtns').innerHTML = SRC.map(([n, u]) => `<a href="${u}" target="_blank" rel="noopener" title="${u}"><button>🔗 ${n}</button></a>`).join('');
+</script>
+<script>
+let D = null;
+let ACC_BAL = Number(localStorage.getItem('gold_acc_bal')) || 2700; // 默认账户余额 2700 美元
+let RISK_LOSS_USD = Number(localStorage.getItem('gold_risk_loss')) || 1500; // 默认可亏/爆仓参考线 1500 美元 (对应 D = 1500 / (N * 100))
+let BUY_LOTS = localStorage.getItem('gold_buy_lots') != null ? Number(localStorage.getItem('gold_buy_lots')) : 0.45; // 默认当前买单总手数 0.45手(7层)
+let SELL_LOTS = localStorage.getItem('gold_sell_lots') != null ? Number(localStorage.getItem('gold_sell_lots')) : 0.02; // 默认当前卖单总手数 0.02手(1层)
+let BUY_AVG_PX = Number(localStorage.getItem('gold_buy_avg_px')) || 0; // 可选：多单持仓均价(0=未填)
+let SELL_AVG_PX = Number(localStorage.getItem('gold_sell_avg_px')) || 0; // 可选：空单持仓均价(0=未填)
+let STOP_OUT_PCT = localStorage.getItem('gold_stop_out_pct') != null ? Number(localStorage.getItem('gold_stop_out_pct')) : 20; // 强平比例默认20%
+let CUR_LAYERS = Number(localStorage.getItem('gold_cur_layers')) || 7; // 默认单边最高层数 7 层 (累计0.45手)
+let USED_MARGIN = Number(localStorage.getItem('gold_used_margin')) || 14; // 默认已用预付款 14 美元 (2700/14 ≈ 19286%)
+let EA_CFG = {
+  lot: Number(localStorage.getItem('gold_ea_lot')) || 0.02,
+  kLot: Number(localStorage.getItem('gold_ea_klot')) || 1.38,
+  maxLot: Number(localStorage.getItem('gold_ea_maxlot')) || 1.32,
+  totals: Number(localStorage.getItem('gold_ea_totals')) || 24,
+  stepUsd: Number(localStorage.getItem('gold_ea_step')) || 1.00,
+  tpPerOrder: Number(localStorage.getItem('gold_ea_tp')) || 4.0
+};
+let TOL = Number(localStorage.getItem('gold_tol')) || 34.9; // 由净敞口公式 D = L / (N * 100) 推演出的抗单边跨度(美元)
+const SHOW_CANDLE = {}; // 各周期大图是否显示黄金价格蜡烛图(默认全不显示, 点击按钮才开启)
+const CHART_PTS = {};   // 缓存各周期大图的坐标与数据供十字准星使用
+window.OPEN_FOLDS = {}; // 持久化记录所有 <details> 展开状态，防止 15秒/3分钟数据刷新时自动合上
+window.SCROLL_POS = {}; // 持久化记录内部滚动容器的滚动条位置
+
+function saveUiState() {
+  if (!document.querySelectorAll) return;
+  document.querySelectorAll('details').forEach((el, idx) => {
+    const key = el.id || el.getAttribute('data-fold-id') || ('fold-idx-' + idx);
+    window.OPEN_FOLDS[key] = !!el.open;
+  });
+  ['trumpScrollBox', 'eaLayerScrollBox'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && el.scrollTop != null) window.SCROLL_POS[id] = el.scrollTop;
+  });
+}
+
+function restoreUiState() {
+  if (!document.querySelectorAll) return;
+  document.querySelectorAll('details').forEach((el, idx) => {
+    const key = el.id || el.getAttribute('data-fold-id') || ('fold-idx-' + idx);
+    if (window.OPEN_FOLDS[key]) el.open = true;
+  });
+  ['trumpScrollBox', 'eaLayerScrollBox'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && window.SCROLL_POS[id] != null) el.scrollTop = window.SCROLL_POS[id];
+  });
+}
+
+const API = {
+  '1M': 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=60&fields=tick_at,open_px,close_px,high_px,low_px',
+  '5M': 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=300&fields=tick_at,open_px,close_px,high_px,low_px',
+  '15M': 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=900&fields=tick_at,open_px,close_px,high_px,low_px',
+  '1H': 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=3600&fields=tick_at,open_px,close_px,high_px,low_px',
+  '4H': 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=600&period_type=14400&fields=tick_at,open_px,close_px,high_px,low_px',
+  '1D': 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=2600&period_type=86400&fields=tick_at,open_px,close_px,high_px,low_px',
+  GVZ: 'https://query1.finance.yahoo.com/v8/finance/chart/%5EGVZ?interval=1d&range=1y'
+};
+const lk = (u, t) => '<a class="num" href="' + u + '" target="_blank" rel="noopener" title="点击打开数据源验证: ' + u + '">' + t + '</a>';
+const $ = (id) => document.getElementById(id);
+const fmtBJ = (ts) => new Date(ts * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-');
+const f2 = (v) => v == null || isNaN(v) ? '-' : Number(v).toFixed(2);
+const toast = (m) => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 1800); };
+
+function clamp(x, a = 0, b = 100) { return Math.max(a, Math.min(b, x)); }
+function r1(x) { return Math.round(x * 10) / 10; }
+function lerp(x, pts) {
+  if (x <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (x <= pts[i][0]) {
+      const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+      return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+function levelFor(x, dir) {
+  if (x == null) return { name: '-', cls: 'MIXED', advice: '' };
+  const dTxt = dir === 'UP' ? '·📈上涨趋势' : dir === 'DOWN' ? '·📉下跌趋势' : '';
+  const dAdv = dir === 'UP' ? '(当前上涨趋势,严禁逆势空单死扛)' : dir === 'DOWN' ? '(当前下跌趋势,严禁逆势多单死扛)' : '';
+  if (x >= 70) return { name: '强震荡(合理区间内)', cls: 'RANGE', advice: '波幅在设定区间内,适合正常运行网格/马丁' };
+  if (x >= 55) return { name: '偏震荡(合理区间内)', cls: 'RANGE', advice: '波幅可控,可运行常规网格参数,注意风控' };
+  if (x >= 45) return { name: '过渡' + dTxt, cls: 'MIXED', advice: '接近区间边界,建议减仓、放大网格间距' };
+  if (x >= 30) return { name: '偏单边' + dTxt, cls: 'TREND', advice: '超出合理震荡区间或趋势走强,暂停新开网格' + dAdv };
+  return { name: '强单边' + dTxt, cls: 'TREND', advice: '严重超出合理区间/单边爆发,停止网格/马丁' + dAdv };
+}
+function adjBySpan(rawIdx, span, tol) {
+  if (rawIdx == null) return null;
+  if (!span || !tol) return rawIdx;
+  const ratio = span / tol;
+  const spanScore = lerp(ratio, [[0.4, 100], [0.8, 85], [1.0, 68], [1.25, 45], [1.6, 20], [2.2, 0]]);
+  let v = 0.6 * rawIdx + 0.4 * spanScore;
+  if (ratio > 1.25) v -= Math.min(25, (ratio - 1.25) * 22);
+  return r1(clamp(v));
+}
+
+// ========== M1 双向追踪挂单倍投马丁 EA 账户风控与层数推演模型 ==========
+// 公式: L_n = min(Maxlot, round(lot * K_Lot^n, 2)), Step = 100点(1.00$), StopProfit = 4.0$ * 层数
+function calcEaModel(bal = ACC_BAL, cfg = EA_CFG, curL = CUR_LAYERS, usedMargin = USED_MARGIN) {
+  const step = Math.max(0.1, Number(cfg.stepUsd) || 1.0);
+  const totals = Math.max(1, Math.min(60, Math.round(Number(cfg.totals) || 24)));
+  const lot0 = Math.max(0.01, Number(cfg.lot) || 0.02);
+  const kLot = Math.max(1.0, Number(cfg.kLot) || 1.38);
+  const maxLot = Math.max(lot0, Number(cfg.maxLot) || 1.32);
+  const tpUnit = Math.max(0.5, Number(cfg.tpPerOrder) || 4.0);
+  const marginIn = Math.max(1, Number(usedMargin) || 14);
+
+  const layers = [];
+  let cumLot = 0;
+  for (let i = 0; i < totals; i++) {
+    const rawL = lot0 * Math.pow(kLot, i);
+    const l = Math.min(maxLot, Math.round(rawL * 100) / 100);
+    cumLot = Math.round((cumLot + l) * 100) / 100;
+    const distUsd = r1(i * step); // 距离首层(n=1)的价格单边跨度($)
+    // 当价格到达第 i+1 层开仓价时，前 i 层持仓的理论单边累计浮亏($)：每1手波动1美元=100美元
+    let ddUsd = 0;
+    for (let j = 0; j < i; j++) {
+      ddUsd += layers[j].lot * (i - j) * step * 100;
+    }
+    ddUsd = Math.round(ddUsd * 100) / 100;
+    const lossPerUsd = Math.round(cumLot * 100 * 100) / 100; // 该层持仓下，每波动1美元盈亏($)
+    const tpUsd = Math.round((i + 1) * tpUnit * 100) / 100;  // 整组止盈所需浮盈(StopProfit=4.0 * 层数)
+    // 从当前第 i+1 层开仓价需要回调多少美元，才能让该方向整组浮盈达到 tpUsd 并全部平仓重置
+    const pullbackUsd = lossPerUsd > 0 ? Math.round(((ddUsd + tpUsd) / lossPerUsd) * 100) / 100 : 0;
+    const ddPct = bal > 0 ? Math.round((ddUsd / bal) * 1000) / 10 : 0;
+    // 在该层数(cumLot)下，账户 65% 安全可扛总跨度 与 100% 强平极限总跨度
+    const layerSafeSpan = r1(distUsd + Math.max(0, bal * 0.65 - ddUsd) / lossPerUsd);
+    const layerMaxSpan = r1(distUsd + Math.max(0, bal - ddUsd) / lossPerUsd);
+    // 按 7层(0.45手) 对应用户实盘 marginIn(14$) 折算各层预估预付款与预付款比例
+    const estMargin = r1(Math.max(2, marginIn * (cumLot / 0.45)));
+    const estMarginLevel = Math.round((Math.max(0, bal - ddUsd) / estMargin) * 100);
+    layers.push({
+      n: i + 1,
+      idx: i,
+      lot: l,
+      cumLot,
+      distUsd,
+      ddUsd,
+      ddPct,
+      lossPerUsd,
+      tpUsd,
+      pullbackUsd,
+      layerSafeSpan,
+      layerMaxSpan,
+      estMargin,
+      estMarginLevel,
+      isCapped: l >= maxLot - 1e-6
+    });
+  }
+
+  // 若不控层数、任由 EA 连续逆势死加到 24 层时的失控临界点 (仅供对比预警)
+  function uncontrolledSpanAtLoss(targetLoss) {
+    if (targetLoss <= 0) return { span: 0, layer: 1, cumLot: layers[0].cumLot, loss: 0, pullbackUsd: layers[0].pullbackUsd };
+    for (let i = 0; i < layers.length - 1; i++) {
+      const cur = layers[i], nxt = layers[i + 1];
+      if (targetLoss >= cur.ddUsd && targetLoss <= nxt.ddUsd) {
+        const extraLoss = targetLoss - cur.ddUsd;
+        const extraSpan = cur.lossPerUsd > 0 ? extraLoss / cur.lossPerUsd : 0;
+        const span = Math.round((cur.distUsd + extraSpan) * 100) / 100;
+        const pullback = cur.lossPerUsd > 0 ? Math.round(((targetLoss + cur.tpUsd) / cur.lossPerUsd) * 100) / 100 : 0;
+        return { span, layer: cur.n, cumLot: cur.cumLot, loss: Math.round(targetLoss), pullbackUsd: pullback };
+      }
+    }
+    const last = layers[layers.length - 1];
+    const extraLoss = Math.max(0, targetLoss - last.ddUsd);
+    const extraSpan = last.lossPerUsd > 0 ? extraLoss / last.lossPerUsd : 0;
+    const span = Math.round((last.distUsd + extraSpan) * 100) / 100;
+    const pullback = last.lossPerUsd > 0 ? Math.round(((targetLoss + last.tpUsd) / last.lossPerUsd) * 100) / 100 : 0;
+    return { span, layer: last.n, cumLot: last.cumLot, loss: Math.round(targetLoss), pullbackUsd: pullback, beyondMaxLayer: true };
+  }
+
+  const uncontrolledWarn = uncontrolledSpanAtLoss(bal * 0.65);
+  const uncontrolledHard = uncontrolledSpanAtLoss(bal * 1.00);
+  const fullLayer = layers[layers.length - 1];
+
+  // 根据单边总手数 (如买单 0.45手 或 卖单 0.02手) 自动精确反推当前处于第几层！
+  function inferLayerFromLots(sideLots) {
+    const v = Math.max(0, Number(sideLots) || 0);
+    if (v <= 0.005) return { layer: 0, cumLot: 0, lot: 0, ddUsd: 0, pullbackUsd: 0 };
+    let best = layers[0], minDiff = Math.abs(v - layers[0].cumLot);
+    for (const r of layers) {
+      const diff = Math.abs(v - r.cumLot);
+      if (diff <= minDiff) { minDiff = diff; best = r; }
+    }
+    return { layer: best.n, cumLot: best.cumLot, lot: best.lot, ddUsd: best.ddUsd, pullbackUsd: best.pullbackUsd, inputLots: v };
+  }
+
+  const buyLotsVal = Math.max(0, Number(BUY_LOTS) || 0);
+  const sellLotsVal = Math.max(0, Number(SELL_LOTS) || 0);
+  const buyInfo = inferLayerFromLots(buyLotsVal);
+  const sellInfo = inferLayerFromLots(sellLotsVal);
+  const totalBothLots = Math.round((buyLotsVal + sellLotsVal) * 100) / 100;
+
+  // 核心原则：马丁网格的“抗单边点数”不等于“累计总手数 × 点数”，而主要看多空对冲后的净敞口 N = |买单总手数 - 卖单总手数|！
+  const netLots = Math.round(Math.abs(buyLotsVal - sellLotsVal) * 100) / 100;
+  const isFullyHedged = netLots < 0.005;
+  const effNetLots = Math.max(0.02, netLots); // 防除零保护(完全锁仓时按0.02基准计算)
+  const netLossPerUsd = Math.round(effNetLots * 100 * 100) / 100; // 每波动 1 美元的真实净浮亏速度 ($/美金) = N * 100
+
+  const heavySide = buyLotsVal > sellLotsVal + 0.005 ? 'BUY' : sellLotsVal > buyLotsVal + 0.005 ? 'SELL' : 'EVEN';
+  const heavySideTxt = heavySide === 'BUY'
+    ? `净多头 +${f2(netLots)}手 (买${f2(buyLotsVal)}手[≈${buyInfo.layer}层] − 卖${f2(sellLotsVal)}手[≈${sellInfo.layer}层])`
+    : heavySide === 'SELL'
+    ? `净空头 -${f2(netLots)}手 (卖${f2(sellLotsVal)}手[≈${sellInfo.layer}层] − 买${f2(buyLotsVal)}手[≈${buyInfo.layer}层])`
+    : `完全锁仓对冲 净0手 (买${f2(buyLotsVal)}手 = 卖${f2(sellLotsVal)}手)`;
+
+  const curLayerNum = Math.max(1, Math.min(totals, Math.round(curL || Math.max(buyInfo.layer, sellInfo.layer) || 7)));
+  const curInfo = layers[curLayerNum - 1];
+
+  // 可选：若填入了多单均价 / 空单均价，按公式直接算实时净浮亏：
+  // 净浮亏 = 多单总手数 × 100 × (多单均价 − 现价) + 空单总手数 × 100 × (现价 − 空单均价)
+  const curPx = (D && D.timeframes && ((D.timeframes['1M'] && D.timeframes['1M'].price) || (D.timeframes['5M'] && D.timeframes['5M'].price))) || 0;
+  const buyAvgPx = Math.max(0, Number(BUY_AVG_PX) || 0);
+  const sellAvgPx = Math.max(0, Number(SELL_AVG_PX) || 0);
+  const hasAvgPx = (buyAvgPx > 0 || sellAvgPx > 0) && curPx > 0;
+  const buyFloatLoss = (buyAvgPx > 0 && curPx > 0) ? Math.round(buyLotsVal * 100 * (buyAvgPx - curPx) * 100) / 100 : 0;
+  const sellFloatLoss = (sellAvgPx > 0 && curPx > 0) ? Math.round(sellLotsVal * 100 * (curPx - sellAvgPx) * 100) / 100 : 0;
+  const actualNetFloatLoss = Math.round((buyFloatLoss + sellFloatLoss) * 100) / 100; // >0 为净浮亏，<0 为净浮盈
+
+  // 实盘预付款比例 (Margin Level = 余额或净值 / 已用预付款 * 100%)
+  const stopOutPct = Math.max(0, Math.min(100, Number(STOP_OUT_PCT) || 20));
+  const stopOutMarginUsd = Math.round(marginIn * (stopOutPct / 100) * 100) / 100;
+  const marginLevelBal = Math.round((bal / marginIn) * 100);
+  const eqNow = hasAvgPx ? Math.max(0, bal - actualNetFloatLoss) : bal;
+  const marginLevelEq = Math.round((eqNow / marginIn) * 100);
+
+  // 核心公式：1500 = N * 100 * D  =>  D = L / (N * 100) 美元 (折合 D * 100 点)
+  const riskLossUsd = Math.max(50, Math.min(bal * 2, Number(RISK_LOSS_USD) || Math.round(bal * 0.75)));
+  const remRiskBudget = hasAvgPx ? Math.max(0, riskLossUsd - Math.max(0, actualNetFloatLoss)) : riskLossUsd;
+  const remHardBudget = Math.max(0, eqNow - stopOutMarginUsd);
+
+  const comfortSpan = r1((riskLossUsd * 0.60) / netLossPerUsd);
+  const warnSpan = r1(remRiskBudget / netLossPerUsd);       // 按风控可亏线(如1500$)推算的抗单边美元数 D = L / (N*100)
+  const hardSpan = r1(bal / netLossPerUsd);                 // 按账户总本金(如2000$/2700$)推算的极限抗单边美元数 D_max = Bal / (N*100)
+  const hardSpanAfterStopOut = r1(remHardBudget / netLossPerUsd);
+
+  const comfort = { span: comfortSpan, pts: Math.round(comfortSpan * 100), layer: curLayerNum, cumLot: netLots, loss: Math.round(riskLossUsd * 0.60), pullbackUsd: curInfo.pullbackUsd };
+  const warn = { span: warnSpan, pts: Math.round(warnSpan * 100), layer: curLayerNum, cumLot: netLots, loss: Math.round(riskLossUsd), pullbackUsd: curInfo.pullbackUsd };
+  const hard = { span: hardSpan, pts: Math.round(hardSpan * 100), layer: curLayerNum, cumLot: netLots, loss: Math.round(bal), pullbackUsd: curInfo.pullbackUsd };
+
+  const remWarnSpan = Math.max(2.0, warnSpan);
+  const remHardSpan = Math.max(3.0, hardSpanAfterStopOut);
+  const remWarnLoss = Math.round(remRiskBudget);
+  const remHardLoss = Math.round(remHardBudget);
+
+  // 单边无对冲一条链(无另一方向盈利抵消、从首单0.02连续死加)在强平50%与20%下的理论极限
+  // 注：单边链到达第 k 层时，除了前面已建仓层的阶梯浮亏 ddUsd，平台保证金占用约 (cumLot / 0.45) * marginIn
+  const uncontrolled50 = uncontrolledSpanAtLoss(Math.max(100, bal * 0.85)); // 2000$ 账户强平50%下约 13.0$ (1300点)
+  const uncontrolled20 = uncontrolledSpanAtLoss(Math.max(100, bal * 0.96)); // 2000$ 账户强平20%下约 13.5~14.0$ (1400点)
+
+  // 生成不同净敞口 N (0.5手、1.0手、1.5手、2.0手、3.0手 + 当前净敞口) 的抗单边美元/点数对照表
+  const stdNetList = [0.25, 0.50, 1.00, 1.50, 2.00, 3.00];
+  if (effNetLots > 0 && !stdNetList.some((x) => Math.abs(x - effNetLots) < 0.015)) {
+    stdNetList.push(effNetLots);
+    stdNetList.sort((a, b) => a - b);
+  }
+  const netExposureTable = stdNetList.map((nLot) => {
+    const dRisk = Math.round((riskLossUsd / (nLot * 100)) * 100) / 100;
+    const dBal = Math.round((bal / (nLot * 100)) * 100) / 100;
+    return {
+      nLot,
+      lossPerUsd: Math.round(nLot * 100),
+      dRisk,
+      ptsRisk: Math.round(dRisk * 100),
+      dBal,
+      ptsBal: Math.round(dBal * 100),
+      isCurrent: Math.abs(nLot - effNetLots) < 0.015
+    };
+  });
+
+  return {
+    bal,
+    riskLossUsd,
+    usedMargin: marginIn,
+    stopOutPct,
+    stopOutMarginUsd,
+    marginLevelBal,
+    marginLevelEq,
+    buyLots: buyLotsVal,
+    sellLots: sellLotsVal,
+    buyAvgPx,
+    sellAvgPx,
+    hasAvgPx,
+    buyFloatLoss,
+    sellFloatLoss,
+    actualNetFloatLoss,
+    buyInfo,
+    sellInfo,
+    totalBothLots,
+    netLots,
+    effNetLots,
+    isFullyHedged,
+    netLossPerUsd,
+    heavySide,
+    heavySideTxt,
+    cfg: { lot: lot0, kLot, maxLot, totals, stepUsd: step, tpPerOrder: tpUnit },
+    layers,
+    netExposureTable,
+    comfort,
+    warn,
+    hard,
+    uncontrolledWarn,
+    uncontrolledHard,
+    uncontrolled50,
+    uncontrolled20,
+    fullLayer,
+    curLayerNum,
+    curInfo,
+    remWarnSpan,
+    remHardSpan,
+    remWarnLoss,
+    remHardLoss,
+    recommendedTol: Math.max(4, Math.min(250, r1(warnSpan)))
+  };
+}
+
+// ========== 基于 1M + 5M 为主(65%)、15M + 1H 为辅(35%) 的 EA 实时手动操作指令引擎 ==========
+function calcEaDirective(d, ea, adjMap, eMap) {
+  const t1 = (d.timeframes && d.timeframes['1M']) || {};
+  const t5 = (d.timeframes && d.timeframes['5M']) || {};
+  const t15 = (d.timeframes && d.timeframes['15M']) || {};
+  const t60 = (d.timeframes && d.timeframes['1H']) || {};
+  const price = t1.price || t5.price || t15.price || 0;
+
+  const adj1 = adjMap['1M'] ?? t1.rangeIndex ?? 60;
+  const adj5 = adjMap['5M'] ?? t5.rangeIndex ?? 60;
+  const adj15 = adjMap['15M'] ?? t15.rangeIndex ?? 60;
+  const adj60 = adjMap['1H'] ?? t60.rangeIndex ?? 60;
+
+  const e1 = (eMap['1M'] && eMap['1M'].last) || {};
+  const e5 = (eMap['5M'] && eMap['5M'].last) || {};
+  const e15 = (eMap['15M'] && eMap['15M'].last) || {};
+  const e60 = (eMap['1H'] && eMap['1H'].last) || {};
+
+  // 1M & 5M 核心短线触发指标 (权重 65%)
+  const fastIdx = r1(0.45 * adj1 + 0.55 * adj5);
+  const midIdx = r1(0.60 * adj15 + 0.40 * adj60);
+  const blendIdx = r1(0.65 * fastIdx + 0.35 * midIdx);
+
+  const drop1M = Number(e1.effDrop1 ?? t1.idxDrop1 ?? 0);
+  const drop5M = Number(e5.effDrop1 ?? t5.idxDrop1 ?? 0);
+  const drop15M = Number(e15.effDrop1 ?? t15.idxDrop1 ?? 0);
+  const fastDrop = r1(Math.max(drop1M, drop5M));
+  const maxDrop14Fast = r1(Math.max(t1.maxDrop14 || 0, t5.maxDrop14 || 0));
+
+  // 多空方向合力评分：以 1M + 5M 实时突破为主，结合 15M + 1H 趋势背景
+  let dirScore = 0; // 正数=单边上涨(利空空单Sell)，负数=单边下跌(利空多单Buy)
+  const dirVote = (tf, w) => {
+    if (!tf || tf.price == null) return 0;
+    let s = 0;
+    if (tf.trendDir === 'UP') s += 1.0;
+    else if (tf.trendDir === 'DOWN') s -= 1.0;
+    if ((tf.net14 || 0) > 0.3) s += 0.6;
+    else if ((tf.net14 || 0) < -0.3) s -= 0.6;
+    if ((tf.pdi || 0) > (tf.mdi || 0) + 3) s += 0.5;
+    else if ((tf.mdi || 0) > (tf.pdi || 0) + 3) s -= 0.5;
+    if (tf.ema50 && tf.price > tf.ema50) s += 0.3;
+    else if (tf.ema50 && tf.price < tf.ema50) s -= 0.3;
+    return s * w;
+  };
+  dirScore = r1(dirVote(t1, 0.30) + dirVote(t5, 0.35) + dirVote(t15, 0.22) + dirVote(t60, 0.13));
+  const domDir = dirScore >= 0.35 ? 'UP' : dirScore <= -0.35 ? 'DOWN' : (t5.trendDir !== 'FLAT' ? t5.trendDir : (t15.trendDir || 'FLAT'));
+  const domDirTxt = domDir === 'UP' ? '📈 单边向上突破/拉升' : domDir === 'DOWN' ? '📉 单边向下破位/急跌' : '↔️ 双向拉锯';
+
+  // 检查单边未回调净波幅是否逼近或超过当前账户($ACC_BAL)警戒跨度
+  const span1 = t1.span14 || 0, span5 = t5.span14 || 0, span15 = t15.span14 || 0, span60 = t60.span14 || 0;
+  // M1 马丁只要回调 1~3$ 即可整组止盈重置，因此真正威胁账户的是「1M近14分钟振幅」与「5M/15M净单边涨跌幅(net14)」
+  const oneWayMove = r1(Math.max(span1, Math.abs(t5.net14 || 0), Math.abs(t15.net14 || 0) * 0.65));
+  const spanWarnRatio = ea.remWarnSpan > 0 ? r1(oneWayMove / ea.remWarnSpan) : 0;
+
+  // 判断风险等级与具体手动操作指令 (以 1M+5M 为主触发 65%，参考 15M+1H 趋势 35%)
+  const curHighRisk = ea.curInfo.ddUsd >= ea.bal * 0.55 || ea.curLayerNum >= ea.uncontrolledWarn.layer;
+  const isAccountBreach = oneWayMove >= ea.remHardSpan || curHighRisk;
+  const isExtremeWhipsaw = (fastIdx < 32 && Math.abs(dirScore) < 0.35) || fastDrop >= 8.5;
+  const isTrendDanger = isAccountBreach || fastIdx < 50 || adj5 < 48 || (adj1 < 45 && adj5 < 54) || fastDrop >= 4.0 || (midIdx < 45 && fastIdx < 56) || spanWarnRatio >= 0.90;
+  const isWatch = !isExtremeWhipsaw && !isTrendDanger && (fastIdx < 58 || fastDrop >= 2.5 || midIdx < 52 || spanWarnRatio >= 0.70 || ea.curLayerNum >= Math.max(10, ea.uncontrolledWarn.layer - 2));
+
+  // 计算关键防守价位
+  const upWarnPx = price ? f2(price + ea.remWarnSpan) : '-';
+  const upHardPx = price ? f2(price + ea.remHardSpan) : '-';
+  const dnWarnPx = price ? f2(price - ea.remWarnSpan) : '-';
+  const dnHardPx = price ? f2(price - ea.remHardSpan) : '-';
+  const trailBuyPx = price ? f2(price + 0.60) : '-';
+  const trailSellPx = price ? f2(price - 0.60) : '-';
+
+  let state = 'AUTO_OK';
+  let needManual = false;
+  let badgeTxt = '🟢 无需手动操作 · 保持双向自动运行';
+  let badgeCls = 'RANGE';
+  let headline = '当前 1M/5M 震荡平稳，单边净波幅在账户安全容忍范围内，无需手动干预 EA';
+  let pauseSideTxt = '无需暂停（保持 Long & Short 双向挂单）';
+  let steps = [];
+  let resumeRule = '当前处于正常双向挂单状态；若后续 1M/5M 震荡指数跌破 50 或单次急跌 ≥ 4分，系统将立即提示锁方向。';
+
+  if (isExtremeWhipsaw) {
+    state = 'STOP_ALL';
+    needManual = true;
+    badgeTxt = '🛑 紧急手动操作 · 立即暂停EA自动交易 & 删双向挂单';
+    badgeCls = 'TREND';
+    const pauseDir = domDir === 'UP' ? '严禁开空单(Sell)及双向追单' : domDir === 'DOWN' ? '严禁开多单(Buy)及双向追单' : '严禁双向新开挂单';
+    pauseSideTxt = `🚨 立即暂停 EA 自动交易 (${pauseDir})`;
+    headline = `🚨 1M/5M 出现极端双向剧烈扫盘或指数闪崩（单次跌 ${fastDrop}分）：必须立即手动暂停 EA 并删除双向挂单！`;
+    steps = [
+      `<b>第一步（立即切断新挂单）</b>：在 MT4/MT5 顶部工具栏点击 <b>「自动交易 (AutoTrading)」切换为红色停止</b>，防止 <code>Step=100(1.00$)</code> 在极端剧烈波动中连续秒加仓。`,
+      `<b>第二步（删除追踪 Stop 挂单·关键！）</b>：立即在 MT4/MT5「终端 - 交易」栏中，<b>手动删除未成交的 <code>Buy Stop</code> 和 <code>Sell Stop</code> 挂单</b>（当前约在 ${trailBuyPx}$ / ${trailSellPx}$ 附近）。因为您的 EA 带有 <code>StepTrallOrders=100</code> 挂单追踪功能，不删挂单会在价格剧烈扫盘时把逆势首单 <code>0.02</code> 追到极端高位/低位成交！`,
+      `<b>第三步（现有持仓风控）</b>：${ea.curLayerNum > 0 ? `您当前已持仓 <b>${ea.curLayerNum} 层（累计 ${f2(ea.curInfo.cumLot)} 手，已浮亏约 $${f2(ea.curInfo.ddUsd)}）</b>，仅需黄金回调 <b>${f2(ea.curInfo.pullbackUsd)}$</b> 即可触发 <code>StopProfit=${f2(ea.curInfo.tpUsd)}$</code> 整组止盈平仓；若价格继续逆势超过 <b>${domDir === 'UP' ? upHardPx : dnHardPx}$</b>（再走 ${f2(ea.remHardSpan)}$）将触发 $${ea.bal} 强平线。` : `若场上仅有浅层持仓（1~4层），等待行情回调 <b>0.8~1.6$</b> 触发整组止盈后切勿再开新单；上方极限防线 <b>${upHardPx}$</b>、下方极限防线 <b>${dnHardPx}$</b>。`}`
+    ];
+    resumeRule = `需等待 <b>1M 与 5M 震荡指数同时回升至 ≥ 55</b>、单根K线指数跌幅回落至 ≤ 1.5分后，再重新开启 MT4/MT5「自动交易」。`;
+  } else if (isTrendDanger) {
+    needManual = true;
+    badgeCls = 'TREND';
+    const breachNote = isAccountBreach
+      ? `（🚨 且当前单边净波幅 ${f2(oneWayMove)}$ 已逼近/超出您 $${ea.bal} 账户的强平极限 ${f2(ea.remHardSpan)}$！）`
+      : `（当前单边推进约 ${f2(oneWayMove)}$，$${ea.bal} 账户安全上限为 ${f2(ea.remWarnSpan)}$）`;
+    if (domDir === 'UP') {
+      state = 'PAUSE_SELL';
+      badgeTxt = isAccountBreach ? '🛑 账户极危 · 立即禁空(Sell)或停EA' : '🚨 立即手动操作 · 暂停【开空单 Sell】';
+      pauseSideTxt = '🚫 立即暂停【开空单 (Sell)】· 仅允许做多 (Only Long) + 删除下方 Sell Stop 挂单';
+      headline = `⚠️ 1M/5M 主触发向上单边行情（15M/1H 趋势共振向上）${breachNote}：请立即手动暂停【开空单 Sell】，严防逆势摸顶连环加仓！`;
+      steps = [
+        `<b>第一步（在 EA 中禁止开空单 Sell）</b>：在 MT4/MT5 图表按 <code>F7</code> 打开 EA 设置 → 切换到 <b>「常规 (Common)」</b> 选项卡 → 将多空方向从 <code>Long & Short</code> 修改为 <b><code>Only Long (仅做多)</code></b>，点击确定${isAccountBreach ? '（由于当前波幅已超您账户极限，若已有深套空单建议直接点击顶部「自动交易」暂停全部加仓）' : ''}。`,
+        `<b>第二步（手动删除下方追踪 Sell Stop 挂单·必做！）</b>：在下方「交易」订单列表中，找到未成交的 <b><code>sell stop 0.02 XAUUSD</code>（当前约在 ${trailSellPx}$ 附近）右键删除</b>！<span class="mut">（原因：您的 EA 参数 <code>StepTrallOrders=100</code> 会让未成交的 Sell Stop 每 1 美元跟着金价往上爬，一旦金价急涨后小幅回踩 0.6~1.0$ 就会在高位触发空单，随后若继续拉升就会陷入每 1.00$ 1.38倍逆势加空！）</span>`,
+        `<b>第三步（多单顺势收割 & 空单防守线）</b>：保留多单方向（<code>Buy Stop</code>）正常运行，利用上涨趋势每层吃 <code>StopProfit=4.0$</code> 快速止盈重置。${ea.curLayerNum > 0 ? `若当前已有被套空单（${ea.curLayerNum}层/${f2(ea.curInfo.cumLot)}手），需金价回落 <b>${f2(ea.curInfo.pullbackUsd)}$</b> 即可触发 $${f2(ea.curInfo.tpUsd)} 整组平仓；上方 65% 资金警戒价为 <b>${upWarnPx}$</b>，100% 强平极限价为 <b>${upHardPx}$</b>。` : `按您 $${ea.bal} 账户推算，上方 65% 警戒价位在 <b>${upWarnPx}$</b>（第 ${ea.warn.layer} 层），100% 极限价位在 <b>${upHardPx}$</b>（第 ${ea.hard.layer} 层）。`}`
+      ];
+      resumeRule = `当 <b>1M 与 5M 震荡指数双双回到 ≥ 55</b>（当前 1M=${adj1}, 5M=${adj5}），且 1M/5M 单次下跌速度 ≤ 1.5分、15M 停止创出新高时，再按 <code>F7</code> 改回 <code>Long & Short</code> 恢复空单。`;
+    } else if (domDir === 'DOWN') {
+      state = 'PAUSE_BUY';
+      badgeTxt = isAccountBreach ? '🛑 账户极危 · 立即禁多(Buy)或停EA' : '🚨 立即手动操作 · 暂停【开多单 Buy】';
+      pauseSideTxt = '🚫 立即暂停【开多单 (Buy)】· 仅允许做空 (Only Short) + 删除上方 Buy Stop 挂单';
+      headline = `⚠️ 1M/5M 主触发向下单边破位（15M/1H 趋势共振向下）${breachNote}：请立即手动暂停【开多单 Buy】，严防逆势抄底连环加仓！`;
+      steps = [
+        `<b>第一步（在 EA 中禁止开多单 Buy）</b>：在 MT4/MT5 图表按 <code>F7</code> 打开 EA 设置 → 切换到 <b>「常规 (Common)」</b> 选项卡 → 将多空方向从 <code>Long & Short</code> 修改为 <b><code>Only Short (仅做空)</code></b>，点击确定${isAccountBreach ? '（由于当前波幅已超您账户极限，若已有深套多单建议直接点击顶部「自动交易」暂停全部加仓）' : ''}。`,
+        `<b>第二步（手动删除上方追踪 Buy Stop 挂单·必做！）</b>：在下方「交易」订单列表中，找到未成交的 <b><code>buy stop 0.02 XAUUSD</code>（当前约在 ${trailBuyPx}$ 附近）右键删除</b>！<span class="mut">（原因：您的 EA 参数 <code>StepTrallOrders=100</code> 会让未成交的 Buy Stop 跟着暴跌的价格一路往下移，一旦下跌途中小幅反抽 0.6~1.0$ 就会触发多单，随后若继续瀑布下跌就会每 1.00$ 按 1.38倍连环套牢多单！）</span>`,
+        `<b>第三步（空单顺势收割 & 多单防守线）</b>：保留空单方向（<code>Sell Stop</code>）正常运行，利用下跌趋势快速触发 <code>StopProfit=4.0$</code> 止盈重置。${ea.curLayerNum > 0 ? `若当前已有被套多单（${ea.curLayerNum}层/${f2(ea.curInfo.cumLot)}手），需金价反弹 <b>${f2(ea.curInfo.pullbackUsd)}$</b> 即可触发 $${f2(ea.curInfo.tpUsd)} 整组平仓；下方 65% 资金警戒价为 <b>${dnWarnPx}$</b>，100% 强平极限价为 <b>${dnHardPx}$</b>。` : `按您 $${ea.bal} 账户推算，下方 65% 警戒价位在 <b>${dnWarnPx}$</b>（第 ${ea.warn.layer} 层），100% 极限价位在 <b>${dnHardPx}$</b>（第 ${ea.hard.layer} 层）。`}`
+      ];
+      resumeRule = `当 <b>1M 与 5M 震荡指数双双回到 ≥ 55</b>（当前 1M=${adj1}, 5M=${adj5}），且 1M/5M 单次下跌速度 ≤ 1.5分、15M 企稳止跌时，再按 <code>F7</code> 改回 <code>Long & Short</code> 恢复多单。`;
+    } else {
+      state = 'PAUSE_BOTH_PEND';
+      badgeTxt = '⚠️ 立即手动操作 · 暂停新开首单 / 删双向挂单观望';
+      pauseSideTxt = '🚫 暂停新开双向首单 (删除未成交 Buy Stop & Sell Stop 挂单)';
+      headline = `⚠️ 1M/5M 波幅急剧扩大但多空双向剧烈扫盘：建议删除未成交双向 Stop 挂单，仅让已有持仓止盈出场！`;
+      steps = [
+        `<b>第一步（观察已有持仓）</b>：保持已有持仓等待 <code>StopProfit=4.0$ × 层数</code> 止盈平仓，但暂时不要让新方向开出首单 <code>0.02</code>。`,
+        `<b>第二步（删除未成交挂单）</b>：手动删除 <code>Buy Stop</code> (${trailBuyPx}$) 与 <code>Sell Stop</code> (${trailSellPx}$) 未成交挂单，避免上下扫盘两边同时被套。`,
+        `<b>第三步（防守区间）</b>：当前 $${ea.bal} 账户安全边界为上方 <b>${upWarnPx}$</b>、下方 <b>${dnWarnPx}$</b>（±${f2(ea.remWarnSpan)}$）。`
+      ];
+      resumeRule = `待 1M 与 5M 震荡指数回升至 ≥ 55 后恢复正常双向挂单。`;
+    }
+  } else if (isWatch) {
+    state = 'CAUTION_WATCH';
+    needManual = false;
+    badgeTxt = '🟡 一级戒备 · 准备手动锁方向';
+    badgeCls = 'MIXED';
+    const riskSide = domDir === 'UP' ? '【空单 Sell】' : domDir === 'DOWN' ? '【多单 Buy】' : '【逆势方向】';
+    const safeMode = domDir === 'UP' ? 'Only Long (仅做多)' : domDir === 'DOWN' ? 'Only Short (仅做空)' : '暂停挂单';
+    pauseSideTxt = `👀 暂不锁方向，但需重点盯防${riskSide}（若 1M/5M 跌破 50 则切为 ${safeMode}）`;
+    headline = `🟡 1M/5M 处于震荡向趋势过渡区（或 15M/1H 背景偏趋势）：当前可维持运行，但请做好暂停${riskSide}的准备`;
+    steps = [
+      `<b>当前状态（暂无需改动 EA，保持观察）</b>：1M(${adj1}分) / 5M(${adj5}分) 尚未触发硬性锁方向阈值，您的 <code>Step=100(1.00$)</code> + <code>StopProfit=4.0$</code> 仍可通过短线回撤完成整组止盈。`,
+      `<b>重点盯防方向（${riskSide}）</b>：当前多空合力偏向 <b>${domDirTxt}</b>。若接下来 1~3 分钟内 <b>1M 或 5M 震荡指数跌破 48~50</b>，或单根K线指数急跌 ≥ 4分，请立即按 <code>F7</code> 切换为 <b><code>${safeMode}</code></b> 并删除逆势 Stop 挂单。`,
+      `<b>账户安全余量</b>：按 $${ea.bal} 账户推算，当前价格 ${f2(price)}$ 距离 65% 资金警戒线还有 <b>±${f2(ea.remWarnSpan)}$</b>（上界 <b>${upWarnPx}$</b> / 下界 <b>${dnWarnPx}$</b>，最多可安全承接至第 <b>${ea.warn.layer}</b> 层）。`
+    ];
+    resumeRule = `若 1M/5M 指数重新回升至 ≥ 60，则解除戒备。`;
+  } else {
+    state = 'AUTO_OK';
+    needManual = false;
+    badgeTxt = '🟢 无需手动操作 · 黄金震荡收割期';
+    badgeCls = 'RANGE';
+    pauseSideTxt = '✅ 无需暂停（保持 Long & Short 双向 Buy Stop / Sell Stop 自动挂单与追踪）';
+    headline = `🟢 1M(${adj1}分) 与 5M(${adj5}分) 处于优质震荡区间，且 15M/1H 波幅远低于 $${ea.bal} 账户警戒线，无需任何手动操作！`;
+    steps = [
+      `<b>保持 EA 全自动双向运行</b>：当前短周期来回均值回归明显，非常适合您的 <code>FirstStep=50</code> 双向挂单 + <code>StepTrallOrders=100</code> 挂单追踪 + <code>StopProfit=4.0$ × 层数</code> 双向轮流止盈收割。`,
+      `<b>层数与回调预期</b>：当前 5M 近14根波幅仅 <b>${f2(span5)}$</b>、15M 近14根波幅 <b>${f2(span15)}$</b>，预计单边最多触发 <b>${Math.max(1, Math.min(ea.totals || 24, Math.ceil(span15 / ea.cfg.stepUsd)))} 层</b>（累计手数 ≤ ${f2((ea.layers[Math.min(ea.layers.length - 1, Math.max(0, Math.ceil(span15 / ea.cfg.stepUsd) - 1))] || ea.layers[0]).cumLot)} 手），仅需 <b>0.6~2.1$</b> 正常微幅回调即可整组止盈平仓并重置为 <code>0.02</code> 手。`,
+      `<b>账户安全边界</b>：您的 $${ea.bal} 账户可安全抗住 <b>${f2(ea.warn.span)}$</b>（第 <b>${ea.warn.layer}</b> 层，上下安全边界 <b>${dnWarnPx}$ ~ ${upWarnPx}$</b>），强平极限为 <b>${f2(ea.hard.span)}$</b>（第 <b>${ea.hard.layer}</b> 层）。`
+    ];
+    resumeRule = `保持当前设置即可；系统每 15 秒自动监测 1M/5M 突变并实时更新操作指令。`;
+  }
+
+  return {
+    state,
+    needManual,
+    badgeTxt,
+    badgeCls,
+    headline,
+    pauseSideTxt,
+    steps,
+    resumeRule,
+    fastIdx,
+    midIdx,
+    blendIdx,
+    adj1,
+    adj5,
+    adj15,
+    adj60,
+    drop1M,
+    drop5M,
+    drop15M,
+    fastDrop,
+    maxDrop14Fast,
+    domDir,
+    domDirTxt,
+    dirScore,
+    price,
+    upWarnPx,
+    upHardPx,
+    dnWarnPx,
+    dnHardPx,
+    trailBuyPx,
+    trailSellPx
+  };
+}
+
+// 仅对 1M 和 5M 的震荡指数与价格数字本身触发背景颜色高亮动画
+function triggerFlash() {
+  document.querySelectorAll('.fast-num').forEach((el) => {
+    el.classList.remove('flash-num');
+    void el.offsetWidth;
+    el.classList.add('flash-num');
+  });
+}
+
+async function load(force, fastOnly = false) {
+  const b = fastOnly ? $('btnFast') : $('btnFetch');
+  if (!fastOnly) { b.disabled = true; b.textContent = '获取中…'; }
+  try {
+    const q = force ? '?force=1' : (fastOnly ? '?fast=1' : '');
+    const r = await fetch('/api/data' + q);
+    D = await r.json();
+    render();
+    triggerFlash();
+    if (force) toast('已全量刷新最新数据');
+  } catch (e) { $('meta').innerHTML = '<span class="err">获取失败: ' + e.message + '</span>'; }
+  if (!fastOnly) { b.disabled = false; b.textContent = '🔄 全量刷新所有数据'; }
+}
+
+const G_ = '#2ecc8f', Y_ = '#f0b429', R_ = '#ef5b5b';
+const PCT_ZONES = [[20, G_, '低'], [80, Y_, '中'], [100, R_, '高']];
+const GAUGES = [
+  { name: 'ADX(14) 趋势强度', key: 'adx', max: 50, url: 'https://www.tradingview.com/scripts/search/ADX/', zones: [[20, G_, '低·震荡'], [25, Y_, '过渡'], [50, R_, '高·趋势']], tip: '<20 震荡, >25 趋势' },
+  { name: 'CHOP(14) 震荡指数', key: 'chop', max: 100, url: 'https://www.tradingview.com/scripts/search/CHOP/', zones: [[38.2, R_, '低·趋势'], [61.8, Y_, '中性'], [100, G_, '高·震荡']], tip: '>61.8 震荡, <38.2 趋势' },
+  { name: 'ATR比率 (14/100)', key: 'atrRatio', max: 2, url: 'https://www.tradingview.com/scripts/search/ATR%20Ratio/', zones: [[0.82, G_, '挤压'], [1.25, Y_, '正常'], [2, R_, '扩张']], sub: (t) => `ATR14 ${f2(t.atrFast)}$ / ATR100 ${f2(t.atrSlow)}$`, tip: '<0.82 挤压(蓄势), >1.25 扩张(趋势启动)' },
+  { name: '效率比 ER(20)', key: 'er', max: 1, url: 'https://www.tradingview.com/scripts/search/Efficiency%20Ratio/', zones: [[0.25, G_, '低·拉锯'], [0.5, Y_, '中性'], [1, R_, '高·单向']], tip: '净位移/路径长度, <0.25 来回震荡, >0.5 单向趋势' },
+  { name: '布林带宽分位(%)', key: 'bbwPct', max: 100, url: 'https://www.tradingview.com/scripts/search/Bollinger%20Bandwidth/', zones: PCT_ZONES, sub: (t) => `BBW ${t.bbw}%`, tip: '低=带宽收窄(挤压), 高=带宽张开' },
+  { name: 'ATR 历史分位(%)', key: 'atrPct', max: 100, url: 'https://www.tradingview.com/scripts/search/ATR/', zones: PCT_ZONES, tip: '当前波动在近期历史中的位置' },
+  { name: 'EMA50 偏离(ATR倍数)', key: 'emaDist', max: 4, abs: true, url: 'https://www.tradingview.com/scripts/search/EMA/', zones: [[1, G_, '贴近均线'], [2, Y_, '偏离'], [4, R_, '远离·趋势']], sub: (t) => `EMA50 ${f2(t.ema50)}$ (${t.emaDist >= 0 ? '价格在上方·偏多' : '价格在下方·偏空'})`, tip: '价格距EMA50越远越像单边' },
+  { name: 'RSI(14)', key: 'rsi', max: 100, url: 'https://www.tradingview.com/scripts/search/RSI/', zones: [[30, R_, '超卖·空头强'], [40, Y_, '偏弱'], [60, G_, '中枢·震荡'], [70, Y_, '偏强'], [100, R_, '超买·多头强']], tip: '40-60 中枢多为震荡, 极端区动能强' },
+  { name: '震荡指数单次跌幅(跳水预警)', key: 'idxDrop1', max: 20, url: 'https://wallstreetcn.com/markets/codes/XAUUSD.OTC', zones: [[4, G_, '平稳·安全'], [8, Y_, '异动·警惕'], [20, R_, '急跌·K线巨震']], sub: (t) => `单次变化 ${(t.idxChg1 ?? 0) >= 0 ? '+' : ''}${t.idxChg1 ?? 0}分 · 3根累计跌 ${t.idxDrop3 ?? 0}分 · 14根最大单次跌 ${t.maxDrop14 ?? 0}分(对应K线波幅${f2(t.maxDropBarSpan14)}$)`, tip: '震荡指数单次下跌达到一定幅度(≥8分)时K线波动极大,严禁入场' },
+  { name: '均线回归穿刺(20根穿MA20次数)', key: 'maCross20', max: 12, url: 'https://www.tradingview.com/scripts/search/MA%20Cross/', zones: [[1.5, R_, '单侧悬空·阴涨跌'], [4, Y_, '偶有回踩'], [12, G_, '高频穿线·极佳网格']], sub: (t) => `近20根K线触碰布林中轨 ${t.maCross20 ?? 0} 次 (${(t.maCross20 ?? 0) <= 1 ? '单侧不回头,警惕累单' : '围绕中轨来回震荡'})`, tip: '网格最怕单侧悬空阴涨阴跌(0~1次), 最喜欢围绕中轨高频来回穿刺(≥4次)' },
+];
+function gauge(g, v, apiUrl, sub) {
+  if (v == null) return `<div class="g"><div class="gh">${g.name}</div><span class="mut">无数据</span></div>`;
+  const val = g.abs ? Math.abs(v) : v;
+  const pos = Math.max(0, Math.min(100, val / g.max * 100));
+  let prev = 0, zname = '', zcol = '', segs = '';
+  for (const [to, col, nm] of g.zones) {
+    const isHit = !zname && (val <= to || to === g.zones[g.zones.length - 1][0]);
+    if (isHit) { zname = nm; zcol = col; }
+    segs += `<div class="${isHit ? 'z-active' : ''}" style="width:${(to - prev) / g.max * 100}%;background:${col}" title="${nm}"></div>`;
+    prev = to;
+  }
+  const isErr = zcol === R_;
+  const isWarn = zcol === Y_;
+  const cardCls = isErr ? 'g g-err' : isWarn ? 'g g-warn' : 'g';
+  const pillCls = isErr ? 'pill TREND' : isWarn ? 'pill MIXED' : 'pill NEUT';
+  const ticks = g.zones.slice(0, -1).map((z) => `<span style="left:${z[0] / g.max * 100}%">${z[0]}</span>`).join('');
+  const title = g.url ? `<a href="${g.url}" target="_blank" rel="noopener">${g.name}</a>` : g.name;
+  return `<div class="${cardCls}" title="${g.tip || ''}"><div class="gh"><span>${title}</span><span><b style="color:#fff;margin-right:4px">${lk(apiUrl, v)}</b><span class="${pillCls}">${zname}</span></span></div>
+    <div class="bar">${segs}<div class="mk" style="left:${pos}%"></div></div><div class="ticks">${ticks}</div>${sub ? `<div class="mut sm" style="margin-top:2px;font-size:11.5px">${sub}</div>` : ''}</div>`;
+}
+
+const IDX_ZONES = [[30, R_, '强单边'], [45, R_, '偏单边'], [55, Y_, '过渡'], [70, G_, '偏震荡'], [100, G_, '强震荡']];
+function idxBar(v) {
+  if (v == null) return '';
+  const pos = Math.max(0, Math.min(100, v));
+  let prev = 0, hit = false, segs = '';
+  for (const [to, col, nm] of IDX_ZONES) {
+    const isHit = !hit && (pos <= to || to === 100);
+    if (isHit) hit = true;
+    segs += `<div class="${isHit ? 'z-active' : ''}" style="width:${to - prev}%;background:${col}" title="${nm}"></div>`;
+    prev = to;
+  }
+  const ticks = [30, 45, 55, 70].map((t) => `<span style="left:${t}%">${t}</span>`).join('');
+  return `<div class="bar" style="margin-top:6px">${segs}<div class="mk" style="left:${pos}%"></div></div><div class="ticks">${ticks}</div>`;
+}
+
+// 计算每个时间点的「震荡指数单次跌幅」与「是否适合入场评分(0-100)及状态」
+function calcEntrySeries(rawArr, tol) {
+  if (!rawArr || !rawArr.length) return [];
+  const base = rawArr.map((p) => ({ ...p, adjV: adjBySpan(p.v, p.span, tol) }));
+  return base.map((p, i) => {
+    const prev = i > 0 ? base[i - 1] : p;
+    const adjChg1 = r1(p.adjV - prev.adjV);
+    const adjDrop1 = r1(Math.max(0, prev.adjV - p.adjV));
+    const rawDrop1 = p.drop1 != null ? p.drop1 : r1(Math.max(0, prev.v - p.v));
+    const effDrop1 = r1(Math.max(rawDrop1, adjDrop1));
+    const effChg1 = p.chg1 != null && Math.abs(p.chg1) > Math.abs(adjChg1) ? p.chg1 : adjChg1;
+    let p3Max = p.adjV;
+    for (let j = Math.max(0, i - 3); j < i; j++) p3Max = Math.max(p3Max, base[j].adjV);
+    const effDrop3 = r1(Math.max(p.drop3 || 0, Math.max(0, p3Max - p.adjV)));
+    const barSpan = p.barSpan != null ? p.barSpan : +(((p.h ?? p.c) - (p.l ?? p.c)) || 0).toFixed(2);
+
+    // 入场适宜度评分: 以校准后震荡指数为基准, 叠加「震荡指数单次急跌扣分」+「单根K线巨震扣分」+「布林带破位扣分」
+    let score = p.adjV;
+    if (effDrop1 >= 3.5) score -= (effDrop1 - 3) * 3.4; // 单次急跌重罚(指数单次跳水=K线剧烈突破)
+    if (effDrop3 >= 8) score -= (effDrop3 - 7) * 1.6;   // 连续3根急跌追罚
+    if (tol > 0 && barSpan > tol * 0.32) score -= Math.min(22, (barSpan / tol - 0.32) * 48); // 单根K线波幅过大
+    const bbBreak = p.bbU != null && p.bbL != null && (p.c > p.bbU || p.c < p.bbL);
+    if (bbBreak) score -= 10; // 突破布林带上下轨
+    const entryScore = r1(clamp(score, 0, 100));
+
+    let entryState, entryTxt, entryCls, entryCol, entryReason;
+    if (effDrop1 >= 7.5) {
+      entryState = 'NO'; entryTxt = '🔴 禁止入场(指数急跌)'; entryCls = 'TREND'; entryCol = '#ef5b5b';
+      entryReason = `震荡指数单次急跌-${effDrop1}分,K线剧烈波动`;
+    } else if (p.span > tol * 1.15) {
+      entryState = 'NO'; entryTxt = '🔴 禁止入场(波幅超标)'; entryCls = 'TREND'; entryCol = '#ef5b5b';
+      entryReason = `14根波幅${f2(p.span)}$超出${f2(tol)}$目标`;
+    } else if (entryScore < 45 || p.adjV < 45) {
+      entryState = 'NO'; entryTxt = '🔴 禁止入场(单边趋势)'; entryCls = 'TREND'; entryCol = '#ef5b5b';
+      entryReason = p.dir === 'UP' ? '当前处于上涨单边趋势' : '当前处于下跌单边趋势';
+    } else if (entryScore >= 60 && p.adjV >= 55 && effDrop1 < 4.5 && !bbBreak) {
+      entryState = 'OK'; entryTxt = '🟢 适合入场'; entryCls = 'RANGE'; entryCol = '#2ecc8f';
+      entryReason = `指数平稳(单次Δ${effChg1 >= 0 ? '+' : ''}${effChg1})且波幅在${f2(tol)}$内`;
+    } else {
+      entryState = 'WAIT'; entryTxt = '🟡 谨慎观望'; entryCls = 'MIXED'; entryCol = '#f0b429';
+      entryReason = effDrop1 >= 4 ? `指数单次下滑-${effDrop1}分,等企稳再入` : (bbBreak ? '价格触及布林轨外侧,观望' : '处于过渡区,建议轻仓观望');
+    }
+    return { ...p, barSpan, effChg1, effDrop1, effDrop3, entryScore, entryState, entryTxt, entryCls, entryCol, entryReason };
+  });
+}
+
+// 一图一屏大型 SVG 图表 (含: ①震荡指数+单次急跌标记 ②时间1:1对齐的「是否适合入场」时序图 ③可选K线蜡烛图+布林带)
+function bigChartSvg(rawArr, tf) {
+  if (!rawArr || rawArr.length < 2) return '<div class="mut">暂无趋势数据</div>';
+  const showC = !!SHOW_CANDLE[tf];
+  const arr = calcEntrySeries(rawArr, TOL);
+  const W = 1200, H = showC ? 720 : 540, L = 66, R = 112, T = 24, B = 48;
+  const cw = W - L - R, n = arr.length;
+  const xOf = (i) => L + (i / (n - 1)) * cw;
+
+  // 面板1: 震荡指数走势图 | 面板2: 时间轴1:1对齐的「是否适合入场」时序图 | 面板3(可选): 黄金K线蜡烛图+布林带
+  const idxTop = T, idxH = showC ? 210 : 255, idxBot = idxTop + idxH;
+  const entTop = idxBot + 32, entH = showC ? 155 : 175, entBot = entTop + entH;
+  const canTop = entBot + 32, canH = showC ? (H - B - canTop) : 0, canBot = canTop + canH;
+  const yIdx = (v) => idxTop + (1 - v / 100) * idxH;
+  const yEnt = (v) => entTop + (1 - v / 100) * entH;
+
+  let pMin = Infinity, pMax = -Infinity;
+  if (showC) {
+    arr.forEach((p) => {
+      const hi = Math.max(p.h ?? p.c ?? -Infinity, p.bbU ?? -Infinity);
+      const lo = Math.min(p.l ?? p.c ?? Infinity, p.bbL ?? Infinity);
+      if (isFinite(hi) && hi > pMax) pMax = hi;
+      if (isFinite(lo) && lo < pMin) pMin = lo;
+    });
+    if (pMax <= pMin) { pMax += 1; pMin -= 1; }
+    const pad = (pMax - pMin) * 0.06;
+    pMax += pad; pMin -= pad;
+  }
+  const yPrice = (v) => canTop + (1 - (v - pMin) / (pMax - pMin)) * canH;
+
+  // 保存几何信息供鼠标十字准星高频调用
+  CHART_PTS[tf] = { arr, W, H, L, R, T, B, cw, idxTop, idxH, idxBot, entTop, entH, entBot, canTop, canH, canBot, showC, pMin, pMax };
+
+  const pts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yIdx(p.adjV).toFixed(1)}`).join(' ');
+  const rawPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yIdx(p.v).toFixed(1)}`).join(' ');
+  const area = `${xOf(0).toFixed(1)},${idxBot.toFixed(1)} ${pts} ${xOf(n - 1).toFixed(1)},${idxBot.toFixed(1)}`;
+  const y70 = yIdx(70), y55 = yIdx(55), y45 = yIdx(45), y30 = yIdx(30);
+
+  const yTicks = [100, 70, 55, 45, 30, 0].map((v) => {
+    const y = yIdx(v).toFixed(1);
+    const col = v === 55 || v === 70 ? '#2ecc8f' : v === 45 || v === 30 ? '#ef5b5b' : '#262d3b';
+    const dash = (v === 100 || v === 0) ? '' : 'stroke-dasharray="4,4"';
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="${col}" stroke-width="1" ${dash} opacity="0.65"/>
+      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#8a93a6" font-size="11">${v}</text>`;
+  }).join('');
+
+  const rLabels = [
+    [(yIdx(100) + y70) / 2, '强震荡(≥70)', '#2ecc8f'],
+    [(y70 + y55) / 2, '偏震荡(55-70)', '#2ecc8f'],
+    [(y55 + y45) / 2, '过渡(45-55)', '#f0b429'],
+    [(y45 + y30) / 2, '偏单边(30-45)', '#ef5b5b'],
+    [(y30 + yIdx(0)) / 2, '强单边(<30)', '#ef5b5b'],
+  ].map(([y, txt, c]) => `<text x="${W - R + 6}" y="${y + 4}" fill="${c}" font-size="11">${txt}</text>`).join('');
+
+  const step = Math.max(1, Math.floor((n - 1) / 7));
+  const idxs = [];
+  for (let i = 0; i < n - 1; i += step) idxs.push(i);
+  idxs.push(n - 1);
+  const gridBottom = showC ? canBot : entBot;
+  const xTicks = idxs.map((i) => {
+    const x = xOf(i).toFixed(1), tm = fmtBJ(arr[i].t), p = arr[i];
+    const stShort = p.entryState === 'OK' ? '🟢可入' : p.entryState === 'WAIT' ? '🟡观望' : '🔴禁入';
+    return `<line x1="${x}" y1="${T}" x2="${x}" y2="${gridBottom}" stroke="#262d3b" stroke-width="1" stroke-dasharray="2,4"/>
+      <line x1="${x}" y1="${gridBottom}" x2="${x}" y2="${gridBottom + 5}" stroke="#8a93a6" stroke-width="1"/>
+      <text x="${x}" y="${gridBottom + 20}" text-anchor="middle" fill="#c6cddb" font-size="12">${tm}</text>
+      <text x="${x}" y="${gridBottom + 36}" text-anchor="middle" fill="${p.entryCol}" font-size="11">${p.adjV}分·${stShort}</text>`;
+  }).join('');
+
+  // 震荡指数点 + 单次急跌跳水闪电标记 (当 effDrop1 >= 7 时标注 ⚡-跌幅)
+  const dots = arr.map((p, i) => {
+    const x = xOf(i), y = yIdx(p.adjV);
+    const col = p.adjV >= 55 ? '#2ecc8f' : p.adjV < 45 ? '#ef5b5b' : '#f0b429';
+    const isLast = i === n - 1;
+    const isPlunge = p.effDrop1 >= 7;
+    const dirTxt = p.dir === 'UP' ? '上涨趋势↑' : '下跌趋势↓';
+    const plungeTag = isPlunge
+      ? `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5" fill="none" stroke="#ff4d4f" stroke-width="2"/>
+         <text x="${x.toFixed(1)}" y="${Math.max(idxTop + 12, y - 8).toFixed(1)}" text-anchor="middle" fill="#ff6b6b" font-size="10" font-weight="bold">⚡-${p.effDrop1}</text>`
+      : '';
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${isLast ? 5.5 : 2.3}" fill="${col}" stroke="#0f1218" stroke-width="1.2"/>` +
+      plungeTag +
+      (isLast ? `<text x="${(x - 10).toFixed(1)}" y="${Math.max(idxTop + 16, y - 12).toFixed(1)}" text-anchor="end" fill="#fff" font-size="13" font-weight="bold">当前 ${p.adjV} (${p.adjV < 45 ? dirTxt : '震荡/过渡'})</text>` : '');
+  }).join('');
+
+  // 面板2: 时间轴 1:1 对齐的「是否适合入场」时序图 (含绿/黄/红入场信号柱 + 入场适宜度曲线 + 单次急跌禁入警示)
+  const eY60 = yEnt(60), eY45 = yEnt(45);
+  const entTicks = [100, 60, 45, 0].map((v) => {
+    const y = yEnt(v).toFixed(1);
+    const col = v === 60 ? '#2ecc8f' : v === 45 ? '#ef5b5b' : '#262d3b';
+    const dash = (v === 100 || v === 0) ? '' : 'stroke-dasharray="4,4"';
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="${col}" stroke-width="1" ${dash} opacity="0.65"/>
+      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#8a93a6" font-size="11">${v}</text>`;
+  }).join('');
+  const entRLabels = [
+    [(entTop + eY60) / 2, '🟢适合入场(≥60)', '#2ecc8f'],
+    [(eY60 + eY45) / 2, '🟡谨慎观望(45-60)', '#f0b429'],
+    [(eY45 + entBot) / 2, '🔴禁止入场(<45)', '#ef5b5b'],
+  ].map(([y, txt, c]) => `<text x="${W - R + 6}" y="${y + 4}" fill="${c}" font-size="11" font-weight="600">${txt}</text>`).join('');
+
+  const ebw = Math.max(3, Math.min(8.5, cw / n * 0.72));
+  const entBars = arr.map((p, i) => {
+    const x = xOf(i), y = yEnt(p.entryScore), h = Math.max(2, entBot - y);
+    return `<rect x="${(x - ebw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${ebw.toFixed(1)}" height="${h.toFixed(1)}" fill="${p.entryCol}" opacity="0.38" rx="1"/>`;
+  }).join('');
+  const entPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yEnt(p.entryScore).toFixed(1)}`).join(' ');
+  const entDots = arr.map((p, i) => {
+    const x = xOf(i), y = yEnt(p.entryScore), isLast = i === n - 1;
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${isLast ? 5.5 : 2.2}" fill="${p.entryCol}" stroke="#0f1218" stroke-width="1"/>` +
+      (isLast ? `<text x="${(x - 10).toFixed(1)}" y="${Math.max(entTop + 15, y - 10).toFixed(1)}" text-anchor="end" fill="${p.entryCol}" font-size="13" font-weight="bold">当前: ${p.entryTxt} (${p.entryScore}分)</text>` : '');
+  }).join('');
+
+  const entryPanelSvg = `
+    <line x1="${L}" y1="${idxBot + 14}" x2="${W - R}" y2="${idxBot + 14}" stroke="#262d3b" stroke-width="1.5"/>
+    <text x="${L + 6}" y="${entTop - 7}" fill="#e8b84a" font-size="12" font-weight="bold">🚦 是否适合网格入场 · 时序图 (与上方震荡指数时间点 1:1 严格对齐 | 绿≥60适合入场 · 黄45-60观望 · 红&lt;45或指数单次急跌禁止入场)</text>
+    <rect x="${L}" y="${entTop}" width="${cw}" height="${eY60 - entTop}" fill="#2ecc8f" opacity="0.07"/>
+    <rect x="${L}" y="${eY60}" width="${cw}" height="${eY45 - eY60}" fill="#f0b429" opacity="0.05"/>
+    <rect x="${L}" y="${eY45}" width="${cw}" height="${entBot - eY45}" fill="#ef5b5b" opacity="0.07"/>
+    ${entTicks}${entRLabels}${entBars}
+    <polyline fill="none" stroke="#ffffff" stroke-width="1.8" points="${entPts}" opacity="0.85"/>
+    ${entDots}`;
+
+  // 面板3: 黄金价格 K 线蜡烛图 + 布林带 BB(20,2) 子面板 (仅当用户点击开启时渲染)
+  let candleSvg = '';
+  if (showC) {
+    const pTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+      const pv = pMin + (1 - f) * (pMax - pMin), py = (canTop + f * canH).toFixed(1);
+      return `<line x1="${L}" y1="${py}" x2="${W - R}" y2="${py}" stroke="#262d3b" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>
+        <text x="${L - 8}" y="${+py + 4}" text-anchor="end" fill="#8a93a6" font-size="11">${pv.toFixed(2)}</text>
+        <text x="${W - R + 6}" y="${+py + 4}" fill="#8a93a6" font-size="11">${pv.toFixed(2)}$</text>`;
+    }).join('');
+    const bbValid = arr.map((p, i) => ({ p, i })).filter(({ p }) => p.bbU != null && p.bbM != null && p.bbL != null);
+    let bbSvg = '';
+    if (bbValid.length >= 2) {
+      const uPts = bbValid.map(({ p, i }) => `${xOf(i).toFixed(1)},${yPrice(p.bbU).toFixed(1)}`);
+      const mPts = bbValid.map(({ p, i }) => `${xOf(i).toFixed(1)},${yPrice(p.bbM).toFixed(1)}`);
+      const lPts = bbValid.map(({ p, i }) => `${xOf(i).toFixed(1)},${yPrice(p.bbL).toFixed(1)}`);
+      const bandArea = [...uPts, ...lPts.slice().reverse()].join(' ');
+      bbSvg = `<polygon points="${bandArea}" fill="#58a6ff" opacity="0.09"/>
+        <polyline fill="none" stroke="#58a6ff" stroke-width="1.35" points="${uPts.join(' ')}" opacity="0.9"/>
+        <polyline fill="none" stroke="#f0b429" stroke-width="1.4" stroke-dasharray="4,3" points="${mPts.join(' ')}" opacity="0.95"/>
+        <polyline fill="none" stroke="#58a6ff" stroke-width="1.35" points="${lPts.join(' ')}" opacity="0.9"/>`;
+    }
+    const bw = Math.max(2.5, Math.min(8, cw / n * 0.68));
+    const candles = arr.map((p, i) => {
+      const x = xOf(i), o = p.o ?? p.c, c = p.c, h = p.h ?? Math.max(o, c), l = p.l ?? Math.min(o, c);
+      const up = c >= o, col = up ? '#2ecc8f' : '#ef5b5b';
+      const yh = yPrice(h).toFixed(1), yl = yPrice(l).toFixed(1);
+      const yo = yPrice(o), yc = yPrice(c), yt = Math.min(yo, yc).toFixed(1), bh = Math.max(1.5, Math.abs(yc - yo)).toFixed(1);
+      return `<line x1="${x.toFixed(1)}" y1="${yh}" x2="${x.toFixed(1)}" y2="${yl}" stroke="${col}" stroke-width="1.2"/>
+        <rect x="${(x - bw / 2).toFixed(1)}" y="${yt}" width="${bw.toFixed(1)}" height="${bh}" fill="${col}"/>`;
+    }).join('');
+    candleSvg = `<line x1="${L}" y1="${entBot + 14}" x2="${W - R}" y2="${entBot + 14}" stroke="#262d3b" stroke-width="1.5"/>
+      <text x="${L + 6}" y="${canTop - 7}" fill="#e8b84a" font-size="12" font-weight="bold">🕯️ 现货黄金 XAUUSD K线蜡烛图 + 布林带 BB(20,2)  (0秒延迟实时 · 蓝实线=上下轨 · 黄虚线=中轨MA20)</text>
+      ${pTicks}${bbSvg}${candles}`;
+  }
+
+  return `<svg class="big-svg" id="svg-${tf}" style="height:${showC ? 'calc(100vh - 220px);min-height:580px;max-height:760px' : 'calc(100vh - 275px);min-height:460px;max-height:660px'}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onChartMove(event,'${tf}')" onmouseleave="onChartLeave('${tf}')">
+    <defs>
+      <linearGradient id="ag-${tf}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#e8b84a" stop-opacity="0.28"/>
+        <stop offset="100%" stop-color="#e8b84a" stop-opacity="0.02"/>
+      </linearGradient>
+    </defs>
+    <text x="${L + 6}" y="${idxTop - 7}" fill="#e8b84a" font-size="12" font-weight="bold">📈 实时量化震荡指数走势 (金色实线=策略校准指数 · 灰虚线=原始指数 · ⚡=单次急跌≥7分跳水点)</text>
+    <rect x="${L}" y="${idxTop}" width="${cw}" height="${y55 - idxTop}" fill="#2ecc8f" opacity="0.08"/>
+    <rect x="${L}" y="${y55}" width="${cw}" height="${y45 - y55}" fill="#f0b429" opacity="0.05"/>
+    <rect x="${L}" y="${y45}" width="${cw}" height="${idxBot - y45}" fill="#ef5b5b" opacity="0.08"/>
+    ${yTicks}${rLabels}${xTicks}
+    <polygon points="${area}" fill="url(#ag-${tf})"/>
+    <polyline fill="none" stroke="#8a93a6" stroke-width="1.2" stroke-dasharray="3,3" points="${rawPts}" opacity="0.6"/>
+    <polyline fill="none" stroke="#e8b84a" stroke-width="2.6" points="${pts}"/>
+    ${dots}
+    ${entryPanelSvg}
+    ${candleSvg}
+    <!-- 十字准星交互层 -->
+    <g id="xh-${tf}" style="display:none;pointer-events:none">
+      <line id="xh-v-${tf}" x1="0" y1="${T}" x2="0" y2="${gridBottom}" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,4" opacity="0.85"/>
+      <line id="xh-h-${tf}" x1="${L}" y1="0" x2="${W - R}" y2="0" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,4" opacity="0.85"/>
+      <circle id="xh-dot-${tf}" cx="0" cy="0" r="6" fill="#e8b84a" stroke="#fff" stroke-width="2"/>
+      <circle id="xh-edot-${tf}" cx="0" cy="0" r="6" fill="#2ecc8f" stroke="#fff" stroke-width="2"/>
+      <!-- 底部时间标签 -->
+      <rect id="xh-xbg-${tf}" x="0" y="${gridBottom + 4}" width="118" height="22" rx="4" fill="#e8b84a"/>
+      <text id="xh-xtxt-${tf}" x="0" y="${gridBottom + 19}" text-anchor="middle" fill="#121620" font-size="12" font-weight="bold"></text>
+      <!-- 右侧Y轴实时标签 -->
+      <rect id="xh-ybg-${tf}" x="${W - R + 2}" y="0" width="104" height="22" rx="4" fill="#e8b84a"/>
+      <text id="xh-ytxt-${tf}" x="${W - R + 54}" y="0" text-anchor="middle" fill="#121620" font-size="12" font-weight="bold"></text>
+      <!-- 顶部悬浮详情框 -->
+      <rect id="xh-tbg-${tf}" x="0" y="0" width="490" height="88" rx="6" fill="rgba(15,18,24,0.95)" stroke="#e8b84a" stroke-width="1.2"/>
+      <text id="xh-t1-${tf}" x="0" y="0" fill="#e8b84a" font-size="12.5" font-weight="bold"></text>
+      <text id="xh-t2-${tf}" x="0" y="0" fill="#2ecc8f" font-size="12.5" font-weight="bold"></text>
+      <text id="xh-t3-${tf}" x="0" y="0" fill="#e6e9ef" font-size="12"></text>
+      <text id="xh-t4-${tf}" x="0" y="0" fill="#58a6ff" font-size="12"></text>
+    </g>
+  </svg>`;
+}
+
+// 鼠标移动十字准星与实时数值浮窗
+window.onChartMove = function(ev, tf) {
+  const cfg = CHART_PTS[tf];
+  const svg = $('svg-' + tf), g = $('xh-' + tf);
+  if (!cfg || !svg || !g) return;
+  const rect = svg.getBoundingClientRect();
+  const mx = (ev.clientX - rect.left) / rect.width * cfg.W;
+  const my = (ev.clientY - rect.top) / rect.height * cfg.H;
+  const n = cfg.arr.length;
+  const idx = Math.max(0, Math.min(n - 1, Math.round((mx - cfg.L) / cfg.cw * (n - 1))));
+  const p = cfg.arr[idx];
+  const x = cfg.L + (idx / (n - 1)) * cfg.cw;
+  const yPoint = cfg.idxTop + (1 - p.adjV / 100) * cfg.idxH;
+  const yEntPoint = cfg.entTop + (1 - p.entryScore / 100) * cfg.entH;
+  const gridBottom = cfg.showC ? cfg.canBot : cfg.entBot;
+  const hy = Math.max(cfg.T, Math.min(gridBottom, my));
+
+  g.style.display = 'block';
+  const vLine = $('xh-v-' + tf), hLine = $('xh-h-' + tf), dot = $('xh-dot-' + tf), edot = $('xh-edot-' + tf);
+  vLine.setAttribute('x1', x); vLine.setAttribute('x2', x);
+  hLine.setAttribute('y1', hy); hLine.setAttribute('y2', hy);
+  dot.setAttribute('cx', x); dot.setAttribute('cy', yPoint);
+  edot.setAttribute('cx', x); edot.setAttribute('cy', yEntPoint);
+  edot.setAttribute('fill', p.entryCol);
+
+  // X轴时间标签
+  const tm = fmtBJ(p.t);
+  const xbg = $('xh-xbg-' + tf), xtxt = $('xh-xtxt-' + tf);
+  const xClamped = Math.max(cfg.L + 59, Math.min(cfg.W - cfg.R - 59, x));
+  xbg.setAttribute('x', xClamped - 59);
+  xtxt.setAttribute('x', xClamped);
+  xtxt.textContent = tm;
+
+  // Y轴标签 (按鼠标所在子面板显示对应刻度的实时值)
+  const ybg = $('xh-ybg-' + tf), ytxt = $('xh-ytxt-' + tf);
+  ybg.setAttribute('y', hy - 11);
+  ytxt.setAttribute('y', hy + 4);
+  if (cfg.showC && hy >= cfg.canTop) {
+    const pv = cfg.pMax - (hy - cfg.canTop) / cfg.canH * (cfg.pMax - cfg.pMin);
+    ytxt.textContent = pv.toFixed(2) + '$';
+  } else if (hy >= cfg.entTop && hy <= cfg.entBot) {
+    const evScore = clamp(100 - (hy - cfg.entTop) / cfg.entH * 100, 0, 100);
+    ytxt.textContent = '入场 ' + evScore.toFixed(1) + '分';
+  } else {
+    const iv = clamp(100 - (hy - cfg.idxTop) / cfg.idxH * 100, 0, 100);
+    ytxt.textContent = '指数 ' + iv.toFixed(1);
+  }
+
+  // 顶部详情浮窗 (含时间、震荡指数、单次跌幅、是否适合入场、K线与布林带)
+  const tbg = $('xh-tbg-' + tf), t1 = $('xh-t1-' + tf), t2 = $('xh-t2-' + tf), t3 = $('xh-t3-' + tf), t4 = $('xh-t4-' + tf);
+  const hasBB = p.bbU != null && p.bbM != null && p.bbL != null;
+  const boxW = 500, boxH = hasBB ? 88 : 68;
+  tbg.setAttribute('width', boxW);
+  tbg.setAttribute('height', boxH);
+  const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
+  const by = Math.max(cfg.T + 4, Math.min(gridBottom - boxH - 6, yPoint - 28));
+  tbg.setAttribute('x', bx); tbg.setAttribute('y', by);
+  t1.setAttribute('x', bx + 10); t1.setAttribute('y', by + 18);
+  t2.setAttribute('x', bx + 10); t2.setAttribute('y', by + 38);
+  t3.setAttribute('x', bx + 10); t3.setAttribute('y', by + 58);
+  t4.setAttribute('x', bx + 10); t4.setAttribute('y', by + 77);
+  const dirTxt = p.dir === 'UP' ? '📈上涨' : '📉下跌';
+  const chgStr = `${p.effChg1 >= 0 ? '+' : ''}${p.effChg1}分${p.effDrop1 >= 7 ? '(⚡急跌)' : ''}`;
+  t1.textContent = `🕒 ${tm}  |  震荡指数: ${p.adjV}分(原${p.v})  |  单次变化: ${chgStr}  |  ${dirTxt}`;
+  t2.setAttribute('fill', p.entryCol);
+  t2.textContent = `🚦 是否适合入场: ${p.entryTxt} (入场适宜度 ${p.entryScore}/100 · ${p.entryReason})`;
+  t3.textContent = `黄金K线: 开${f2(p.o)} 高${f2(p.h)} 低${f2(p.l)} 收${f2(p.c)}$ | 单根波幅:${f2(p.barSpan)}$ | 14根波幅:${f2(p.span)}$`;
+  t4.textContent = hasBB ? `布林带 BB(20,2): 上轨 ${f2(p.bbU)}$  ·  中轨 ${f2(p.bbM)}$  ·  下轨 ${f2(p.bbL)}$` : '';
+};
+
+window.onChartLeave = function(tf) {
+  const g = $('xh-' + tf);
+  if (g) g.style.display = 'none';
+};
+
+window.toggleCandle = function(tf) {
+  SHOW_CANDLE[tf] = !SHOW_CANDLE[tf];
+  render();
+};
+
+function render() {
+  if (!D) return;
+  saveUiState();
+  const d = D;
+  const ea = calcEaModel(ACC_BAL, EA_CFG, CUR_LAYERS, USED_MARGIN);
+  const fTime = new Date(d.fastUpdatedAt || d.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  const sTime = new Date(d.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  $('meta').innerHTML = `<span class="live-dot"></span><b>全周期+跨市场实时(每15秒·0延迟): ${fTime}</b> · 日线/周历(每3分钟): ${sTime} · 账户: <b style="color:var(--gold)">$${ACC_BAL}</b>(可亏线:$${ea.riskLossUsd}) · <b>净敞口 N=${f2(ea.netLots)}手</b>($${ea.netLossPerUsd}/$) · 预付款比例: <b style="color:var(--green)">${ea.marginLevelBal}%</b>(${ea.usedMargin}$) · 可抗单边: <b style="color:var(--gold)">${f2(TOL)}$ (${Math.round(TOL * 100)}点)</b> · 账户极限: <b style="color:var(--red)">${f2(ea.hard.span)}$ (${ea.hard.pts}点)</b>` +
+    (d.errors.length ? ` · <span class="err">异常: ${d.errors.join(' | ')}</span>` : '');
+
+  if ($('lotDetectBadge')) {
+    $('lotDetectBadge').innerHTML = `⚖️ <b>净敞口 N=${f2(ea.netLots)}手</b> ($${ea.netLossPerUsd}/美金) · 买<b>${f2(ea.buyLots)}手</b>(≈${ea.buyInfo.layer}层) − 卖<b>${f2(ea.sellLots)}手</b>(≈${ea.sellInfo.layer}层) · 双边共${f2(ea.totalBothLots)}手`;
+  }
+  if ($('lotQuickStrip')) {
+    const netChips = [0.25, 0.43, 0.50, 1.00, 1.50, 2.00, 3.00].map((nVal) => {
+      const active = Math.abs(ea.netLots - nVal) < 0.015;
+      const dRisk = r1(ea.riskLossUsd / (nVal * 100));
+      const pts = Math.round(dRisk * 100);
+      return `<span onclick="pickQuickNetLots(${nVal})" style="cursor:pointer;padding:2px 8px;border-radius:5px;border:1px solid ${active ? '#34d399' : '#263042'};background:${active ? 'rgba(16,185,129,0.18)' : '#141923'};color:${active ? '#34d399' : '#cbd5e1'};font-weight:${active ? '700' : '400'}" title="点击一键测试净敞口 N=${f2(nVal)}手：按可亏$${ea.riskLossUsd}算，D = ${ea.riskLossUsd} ÷ (${f2(nVal)}×100) = ${f2(dRisk)}$ (${pts}点)">净<b>${f2(nVal)}</b>手 → 抗<b>${f2(dRisk)}$</b>(${pts}点)</span>`;
+    }).join('');
+    const chips = ea.layers.slice(0, 15).map((r) => {
+      const active = r.n === ea.curLayerNum;
+      return `<span onclick="pickQuickLayer(${r.n})" style="cursor:pointer;padding:2px 7px;border-radius:5px;border:1px solid ${active ? 'var(--gold)' : '#263042'};background:${active ? 'rgba(234,179,8,0.18)' : '#141923'};color:${active ? 'var(--gold)' : '#cbd5e1'};font-weight:${active ? '700' : '400'}" title="第${r.n}层：当层单笔 ${f2(r.lot)}手，单向加起来总手数=${f2(r.cumLot)}手。点击一键将该单边手数填入">${r.n}层=<b>${f2(r.cumLot)}</b>手</span>`;
+    }).join('');
+    $('lotQuickStrip').innerHTML = `
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+        <span style="color:#34d399;font-weight:700">⚡ 多空净敞口 N=|买-卖| 抗单边速查 (公式: D = 可亏$${ea.riskLossUsd} ÷ [N×100]，点击一键代入)：</span>
+        ${netChips}
+      </div>
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.07)">
+        <span style="color:var(--gold);font-weight:700">🔍 单边手数反推层数对照表 (单向加起来多少手 = 第几层，点击可填入)：</span>
+        ${chips}
+      </div>`;
+  }
+  const m = d.model;
+  if (m) {
+    const W = m.weights || { '1M': 0.05, '5M': 0.1, '15M': 0.2, '1H': 0.4, '4H': 0.25 };
+    const adjMap = {}, lvMap = {};
+    let sw = 0, ss = 0;
+    for (const k of ['1M', '5M', '15M', '1H', '4H', '1D']) {
+      const t = d.timeframes[k];
+      if (!t || t.rangeIndex == null) continue;
+      const adj = adjBySpan(t.rangeIndex, t.span14, TOL);
+      adjMap[k] = adj;
+      lvMap[k] = levelFor(adj, t.trendDir);
+      if (W[k]) { sw += W[k]; ss += adj * W[k]; }
+    }
+    const adjCurrent = sw ? r1(ss / sw) : m.current;
+    const adjDelta = (m.run ?? 0) - (m.current ?? 0);
+    const adjRun = r1(clamp(adjCurrent + adjDelta));
+    const curLv = levelFor(adjCurrent, m.overallDir);
+    const runLv = levelFor(adjRun, m.overallDir);
+
+    // 预计算各周期入场序列
+    const eMap = {};
+    for (const k of ['1M', '5M', '15M', '1H', '4H']) {
+      const sp = (m.sparks && m.sparks[k]) || [];
+      const ser = calcEntrySeries(sp, TOL);
+      eMap[k] = { ser, last: ser[ser.length - 1] || { entryTxt: '-', entryCls: 'MIXED', entryScore: '-', entryState: 'WAIT', entryReason: '-', effDrop1: 0, effChg1: 0 } };
+    }
+    const mainEntry = (eMap['15M'] && eMap['15M'].last) || (eMap['1H'] && eMap['1H'].last);
+    if ($('nav-entry') && mainEntry) {
+      $('nav-entry').textContent = mainEntry.entryState === 'OK' ? '适合' : mainEntry.entryState === 'WAIT' ? '观望' : '禁入';
+      $('nav-entry').className = 'pill ' + mainEntry.entryCls;
+    }
+
+    // ========== 计算 EA 实时手动操作指令 (以 1M+5M 为主 65%，参考 15M+1H 35%) ==========
+    const eaDir = calcEaDirective(d, ea, adjMap, eMap);
+    if ($('nav-ea')) {
+      const navTxt = eaDir.state === 'PAUSE_SELL' ? '禁空Sell' : eaDir.state === 'PAUSE_BUY' ? '禁多Buy' : eaDir.state === 'STOP_ALL' ? '紧急停EA' : eaDir.state === 'CAUTION_WATCH' ? '戒备观察' : '自动运行';
+      $('nav-ea').textContent = navTxt;
+      $('nav-ea').className = 'pill ' + eaDir.badgeCls + ' fast-num';
+    }
+
+    // 渲染 #eaActionBox：实时手动操作指令台 + 账户风控推演卡片
+    if ($('eaActionBox')) {
+      const bdrCol = eaDir.badgeCls === 'TREND' ? 'rgba(239,91,91,.55)' : eaDir.badgeCls === 'MIXED' ? 'rgba(240,180,41,.45)' : 'rgba(46,204,143,.45)';
+      const bgGrad = eaDir.badgeCls === 'TREND'
+        ? 'linear-gradient(135deg,rgba(239,91,91,.13),rgba(19,25,38,.96))'
+        : eaDir.badgeCls === 'MIXED'
+        ? 'linear-gradient(135deg,rgba(240,180,41,.11),rgba(19,25,38,.96))'
+        : 'linear-gradient(135deg,rgba(46,204,143,.10),rgba(19,25,38,.96))';
+      const statusCol = eaDir.badgeCls === 'TREND' ? 'var(--red)' : eaDir.badgeCls === 'MIXED' ? 'var(--gold)' : 'var(--green)';
+      const floatLossNote = ea.hasAvgPx
+        ? `实时净浮亏: <b style="color:${ea.actualNetFloatLoss > 0 ? 'var(--red)' : 'var(--green)'}">${ea.actualNetFloatLoss >= 0 ? '-$' + f2(ea.actualNetFloatLoss) : '+$' + f2(-ea.actualNetFloatLoss)}</b> (净值预付款比 ${ea.marginLevelEq.toLocaleString()}%)`
+        : `买${f2(ea.buyLots)}手(≈${ea.buyInfo.layer}层) − 卖${f2(ea.sellLots)}手(≈${ea.sellInfo.layer}层) · 预付款比 <b>${ea.marginLevelBal.toLocaleString()}%</b>`;
+
+      $('eaActionBox').innerHTML = `
+        <div style="border:1.5px solid ${bdrCol};background:${bgGrad};border-radius:10px;padding:14px 16px;box-shadow:0 6px 20px rgba(0,0,0,.28)">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span class="pill ${eaDir.badgeCls} fast-num" style="font-size:13px;padding:5px 12px">${eaDir.badgeTxt}</span>
+              <span style="font-size:15px;font-weight:800;color:${statusCol}">${eaDir.pauseSideTxt}</span>
+            </div>
+            <div class="sm mut">
+              黄金现价: <b class="fast-num" style="color:var(--text);font-size:14px">${f2(eaDir.price)}$</b> ·
+              1M/5M短线触发指数: <b class="fast-num" style="color:${eaDir.fastIdx < 50 ? 'var(--red)' : eaDir.fastIdx < 58 ? 'var(--gold)' : 'var(--green)'}">${eaDir.fastIdx}</b>
+              <span class="xs">(1M:${eaDir.adj1} / 5M:${eaDir.adj5} / 单次跌:${eaDir.fastDrop}分)</span> ·
+              15M/1H趋势参考: <b>${eaDir.midIdx}</b> <span class="xs">(15M:${eaDir.adj15} / 1H:${eaDir.adj60})</span>
+            </div>
+          </div>
+
+          <div style="margin-top:10px;font-size:13.5px;font-weight:700;color:var(--text);line-height:1.55">
+            ${eaDir.headline}
+          </div>
+
+          <div class="grid4" style="margin-top:10px;gap:8px">
+            <div style="background:rgba(12,16,23,.75);border:1px solid var(--border);border-radius:7px;padding:8px 10px">
+              <div class="xs mut">① 多空相抵净敞口 N & 浮亏速度 (核心)</div>
+              <div style="font-size:14.5px;font-weight:800;color:#34d399;margin-top:2px">
+                净敞口 N = <b>${f2(ea.netLots)}手</b> <span class="xs mut">($${f2(ea.netLossPerUsd)}/美金)</span>
+              </div>
+              <div class="xs mut" style="margin-top:2px">${floatLossNote}</div>
+            </div>
+            <div style="background:rgba(12,16,23,.75);border:1px solid var(--border);border-radius:7px;padding:8px 10px">
+              <div class="xs mut">② 按可亏/爆仓线($${ea.riskLossUsd})推算抗单边 D</div>
+              <div style="font-size:15px;font-weight:800;color:var(--gold);margin-top:2px">
+                可抗单边: <b>${f2(ea.warn.span)}$</b> <span class="xs mut">(折合 <b>${ea.warn.pts}点</b>)</span>
+              </div>
+              <div class="xs mut" style="margin-top:2px">公式: $${ea.riskLossUsd} ÷ (${f2(ea.effNetLots)}手×100) · 重仓侧回调 <b>${f2(ea.curInfo.pullbackUsd)}$</b> 止盈</div>
+            </div>
+            <div style="background:rgba(12,16,23,.75);border:1px solid var(--border);border-radius:7px;padding:8px 10px">
+              <div class="xs mut">③ 按账户总本金($${ea.bal})推算极限抗单边</div>
+              <div style="font-size:15px;font-weight:800;color:var(--red);margin-top:2px">
+                账户极限: <b>${f2(ea.hard.span)}$</b> <span class="xs mut">(折合 <b>${ea.hard.pts}点</b>)</span>
+              </div>
+              <div class="xs mut" style="margin-top:2px">对比单边无对冲死加链: 强平20%约 <b>${f2(ea.uncontrolled20.span)}$</b> / 强平50%约 <b>${f2(ea.uncontrolled50.span)}$</b></div>
+            </div>
+            <div style="background:rgba(12,16,23,.75);border:1px solid var(--border);border-radius:7px;padding:8px 10px">
+              <div class="xs mut">④ 当前现价 ${f2(eaDir.price)}$ 净敞口防守边界</div>
+              <div style="font-size:13px;font-weight:700;color:var(--text);margin-top:2px">
+                上防: <b style="color:var(--gold)">${eaDir.upWarnPx}$</b> <span class="xs mut">(极限 ${eaDir.upHardPx}$)</span><br>
+                下防: <b style="color:var(--gold)">${eaDir.dnWarnPx}$</b> <span class="xs mut">(极限 ${eaDir.dnHardPx}$)</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:10px;background:rgba(12,16,23,.82);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+            <div style="font-size:12.5px;font-weight:700;color:var(--gold);margin-bottom:6px">📋 具体怎么操作（MT4 / MT5 实盘操作步骤 · 核心目标：把多空净敞口 N 控制在 0.5~1.0 手以内，防止净敞口失控膨胀）：</div>
+            <ol style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7;color:var(--text)">
+              ${eaDir.steps.map((s) => `<li style="margin-bottom:4px">${s}</li>`).join('')}
+            </ol>
+            <div class="xs" style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--border);color:var(--muted)">
+              🔄 <b>何时恢复双向自动运行</b>：${eaDir.resumeRule}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // 渲染 #tolResult：各周期实际波幅 vs 净敞口抗单跨度 + 净敞口速查表 & 4种情况对比 & 24层明细表
+    const tolRows = ['1M', '5M', '15M', '1H', '4H', '1D'].map((k) => {
+      const t = d.timeframes[k]; if (!t) return '';
+      const span = t.span14, s24 = t.span24;
+      const isFast = k === '1M' || k === '5M';
+      const roleTag = isFast ? `<span class="pill MIXED" style="font-size:10px;padding:1px 5px">主触发 65%</span>` : (k === '15M' || k === '1H') ? `<span class="pill FLAT" style="font-size:10px;padding:1px 5px">趋势参考 35%</span>` : '';
+      // 按当前多空净敞口 N 手 (每1美元波动净盈亏 = N * 100 美元) 折算该周期净单边波动的浮亏影响
+      const netMove = Math.abs(t.net14 || 0);
+      const effLoss = Math.round(netMove * ea.netLossPerUsd);
+      const spanLoss = Math.round(span * ea.netLossPerUsd);
+      const dirBadge = `<span class="pill ${t.trendDir}">${t.trendDirText} (${t.net14 >= 0 ? '+' : ''}${f2(t.net14)}$)</span>`;
+      const fitBadge = span <= TOL
+        ? `<span class="pill RANGE">✅ 在 ${f2(TOL)}$(${Math.round(TOL * 100)}点) 安全区内 (余量 ${f2(TOL - span)}$)</span>`
+        : span <= ea.hard.span
+        ? `<span class="pill MIXED">⚠️ 超 $${ea.riskLossUsd} 风控线 (+${f2(span - TOL)}$) · 仍在 $${ea.bal} 极限 ${f2(ea.hard.span)}$ 内</span>`
+        : `<span class="pill TREND">🛑 超出净敞口极限 (+${f2(span - ea.hard.span)}$)</span>`;
+      const lv = lvMap[k];
+      return `<tr>
+        <td><b>${k}</b> ${roleTag}</td>
+        <td><b>${f2(span)}$</b> <span class="mut sm">(${Math.round(span * 100)}点 · ${f2(t.lo14)}~${f2(t.hi14)})</span></td>
+        <td>${f2(s24)}$ <span class="mut sm">(${Math.round(s24 * 100)}点)</span></td>
+        <td>净涨跌折算 <b>$${effLoss}</b> <span class="mut sm">(全振幅折算 $${spanLoss} · 占$${ea.riskLossUsd}的 ${r1(effLoss / ea.riskLossUsd * 100)}%)</span></td>
+        <td>${fitBadge}</td>
+        <td>${dirBadge}</td>
+        <td><b class="num-chip ${isFast ? 'fast-num' : ''}" style="color:var(--gold);font-size:15px">${adjMap[k]}</b> <span class="mut sm">(原始 ${t.rangeIndex})</span> <span class="pill ${lv.cls}">${lv.name}</span></td>
+      </tr>`;
+    }).join('');
+
+    const netExpRows = ea.netExposureTable.map((row) => {
+      const rowBg = row.isCurrent ? 'background:rgba(16,185,129,.18);' : '';
+      return `<tr style="${rowBg}">
+        <td><b>${f2(row.nLot)} 手</b> ${row.isCurrent ? '<span class="pill RANGE" style="font-size:10px;padding:1px 6px">📍 当前净敞口</span>' : ''}</td>
+        <td><b>$${row.lossPerUsd}</b> / 美金</td>
+        <td style="color:var(--gold)"><b>${f2(row.dRisk)} 美元</b></td>
+        <td style="color:var(--gold)"><b>${row.ptsRisk.toLocaleString()} 点</b></td>
+        <td style="color:#34d399"><b>${f2(row.dBal)} 美元</b></td>
+        <td style="color:#34d399"><b>${row.ptsBal.toLocaleString()} 点</b></td>
+        <td><button class="sm" onclick="pickQuickNetLots(${row.nLot})" style="padding:2px 8px;font-size:11px">代入 N=${f2(row.nLot)}手</button></td>
+      </tr>`;
+    }).join('');
+
+    const layerRows = ea.layers.map((r) => {
+      const isCur = ea.curLayerNum === r.n;
+      const isHard = r.ddUsd >= ea.bal;
+      const isWarn = !isHard && r.ddUsd >= ea.riskLossUsd;
+      const rowBg = isCur ? 'background:rgba(79,156,249,.18);' : isHard ? 'background:rgba(239,91,91,.13);' : isWarn ? 'background:rgba(240,180,41,.11);' : '';
+      const statusBadge = isCur
+        ? `<span class="pill RANGE">📍 当前重仓侧对应层</span>`
+        : r.ddUsd >= ea.bal
+        ? `<span class="pill TREND">🛑 单边无对冲死加至此层触及$${ea.bal}</span>`
+        : r.ddUsd >= ea.riskLossUsd
+        ? `<span class="pill MIXED">⚠️ 单边无对冲触及$${ea.riskLossUsd}</span>`
+        : `<span class="pill RANGE">🟢 安全层</span>`;
+      return `<tr style="${rowBg}">
+        <td><b>第 ${r.n} 层</b> <span class="xs mut">(n=${r.idx})</span></td>
+        <td><b>${f2(r.lot)}</b> 手 ${r.isCapped ? '<span class="xs" style="color:var(--gold)">[封顶]</span>' : ''}</td>
+        <td><b>${f2(r.cumLot)}</b> 手</td>
+        <td>$${f2(r.lossPerUsd)}/$</td>
+        <td style="color:var(--gold)"><b>${f2(ea.riskLossUsd / r.lossPerUsd)}$</b> (${Math.round((ea.riskLossUsd / r.lossPerUsd) * 100)}点)</td>
+        <td><b>${f2(r.pullbackUsd)}$</b> <span class="xs mut">(止盈+$${f2(r.tpUsd)})</span></td>
+        <td>$${f2(r.ddUsd)} <span class="xs mut">(仅单边无对冲时适用)</span></td>
+        <td>${statusBadge}</td>
+      </tr>`;
+    }).join('');
+
+    $('tolResult').innerHTML = `
+      <div style="overflow-x:auto"><table>
+        <tr><th>周期</th><th>近14根K线实际振幅</th><th>近24根K线振幅</th><th>按净敞口 N=${f2(ea.netLots)}手 ($${ea.netLossPerUsd}/$) 折算净浮亏</th><th>对比净敞口可抗区间 ${f2(TOL)}$ (${Math.round(TOL * 100)}点)</th><th>当前走势方向(14根净涨跌)</th><th>按净敞口修正后震荡指数 & 结论</th></tr>
+        ${tolRows}
+      </table></div>
+      <details id="fold-ea-layers" ${window.OPEN_FOLDS && window.OPEN_FOLDS['fold-ea-layers'] ? 'open' : ''} ontoggle="window.OPEN_FOLDS&&(window.OPEN_FOLDS[this.id]=this.open)" style="margin-top:10px;background:rgba(12,16,23,.65);border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+        <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--gold);user-select:none">
+          📊 展开查看：多空对冲净敞口反推表 (D = $${ea.riskLossUsd} ÷ [N×100]) + 4种实盘情况对比 + 1~${ea.cfg.totals}层单边手数明细表
+        </summary>
+        <div class="sm mut" style="margin:6px 0 8px;line-height:1.6">
+          💡 <b>核心结论（为什么实盘能扛 15~35+ 美元，远超理论单边链的 5~13 美元）</b>：马丁网格的“抗单边点数”<b>不等于“累计总手数 × 点数”</b>，而主要看<b>多空对冲后的净敞口 <code>N = |买单总手数 − 卖单总手数|</code></b>！双向都有单时，顺势单盈利会抵消逆势单亏损，且 EA 会不断把盈利方向整组平仓重置（<code>StopProfit=4.0$×层数</code>），只有<b>净敞口 N</b> 才决定净值下降速度：<code>可抗单边 D = 可亏金额 ÷ (N × 100)</code>。
+        </div>
+        <div class="grid2" style="gap:10px;margin-bottom:10px">
+          <div style="background:rgba(15,20,30,.85);border:1px solid var(--border);border-radius:7px;padding:8px 10px;overflow-x:auto">
+            <div style="font-size:12px;font-weight:700;color:#34d399;margin-bottom:6px">① 用“可亏 $${ea.riskLossUsd} / 账户 $${ea.bal}”反推不同净敞口 N 可抗单边 (D = L ÷ [N×100])</div>
+            <table>
+              <tr><th>多空净敞口 N</th><th>每1$波动净盈亏</th><th>亏 $${ea.riskLossUsd} 可抗单边 D</th><th>折合点数</th><th>亏 $${ea.bal}(全额) 可抗</th><th>折合点数</th><th>操作</th></tr>
+              ${netExpRows}
+            </table>
+          </div>
+          <div style="background:rgba(15,20,30,.85);border:1px solid var(--border);border-radius:7px;padding:8px 10px;overflow-x:auto">
+            <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:6px">② $${ea.bal} 账户 (1000倍杠杆) · 4种实盘情况真实抗单边对比</div>
+            <table>
+              <tr><th>实盘运行情况</th><th>净敞口 / 计费口径</th><th>大致能抗单边 (美元 / 点数)</th></tr>
+              <tr style="background:rgba(16,185,129,.14)">
+                <td><b>📍 您当前实盘持仓 (买${f2(ea.buyLots)}手 / 卖${f2(ea.sellLots)}手)</b></td>
+                <td><b>净敞口 N = ${f2(ea.netLots)} 手</b> ($${ea.netLossPerUsd}/$)</td>
+                <td style="color:#34d399"><b>${f2(ea.warn.span)} ~ ${f2(ea.hard.span)} 美元 (${ea.warn.pts} ~ ${ea.hard.pts} 点)</b></td>
+              </tr>
+              <tr>
+                <td><b>双向对冲 · 净敞口 0.5 手左右</b> (常态震荡/对冲良好)</td>
+                <td>净敞口 0.50 手 ($50/$)</td>
+                <td style="color:var(--gold)"><b>约 ${f2(ea.riskLossUsd / 50)} ~ ${f2(ea.bal / 50)} 美元 (${Math.round(ea.riskLossUsd / 50 * 100)} ~ ${Math.round(ea.bal / 50 * 100)} 点)</b></td>
+              </tr>
+              <tr>
+                <td><b>双向对冲 · 净敞口 1.0 手左右</b> (中度单边偏离)</td>
+                <td>净敞口 1.00 手 ($100/$)</td>
+                <td style="color:var(--gold)"><b>约 ${f2(ea.riskLossUsd / 100)} ~ ${f2(ea.bal / 100)} 美元 (${Math.round(ea.riskLossUsd / 100 * 100)} ~ ${Math.round(ea.bal / 100 * 100)} 点)</b></td>
+              </tr>
+              <tr>
+                <td><b>单边无对冲 · 一条链死加 (强平比例 20%)</b></td>
+                <td>0对冲 + 从0.02连续倍投至第${ea.uncontrolled20.layer}层</td>
+                <td class="mut">约 <b>${f2(ea.uncontrolled20.span)} 美元 (${Math.round(ea.uncontrolled20.span * 100)} 点)</b> <span class="xs">(仅无对冲死扛时适用)</span></td>
+              </tr>
+              <tr>
+                <td><b>单边无对冲 · 一条链死加 (强平比例 50%)</b></td>
+                <td>0对冲 + 从0.02连续倍投至第${ea.uncontrolled50.layer}层</td>
+                <td class="mut">约 <b>${f2(ea.uncontrolled50.span)} 美元 (${Math.round(ea.uncontrolled50.span * 100)} 点)</b> <span class="xs">(仅无对冲死扛时适用)</span></td>
+              </tr>
+            </table>
+          </div>
+        </div>
+        <div id="eaLayerScrollBox" class="thin-scroll" style="overflow-x:auto;max-height:320px;overflow-y:auto">
+          <table>
+            <tr>
+              <th>单向层数</th>
+              <th>当层新加手数</th>
+              <th>该方向累计总手数</th>
+              <th>若无对冲每1$盈亏</th>
+              <th>若净敞口等于该手数可抗(亏$${ea.riskLossUsd})</th>
+              <th>该方向整组止盈所需回调</th>
+              <th>单边无对冲阶梯浮亏</th>
+              <th>说明</th>
+            </tr>
+            ${layerRows}
+          </table>
+        </div>
+      </details>`;
+
+    if ($('nav-tol')) $('nav-tol').textContent = f2(TOL) + '$';
+    if ($('nav-run')) { $('nav-run').textContent = adjRun; $('nav-run').className = 'pill ' + runLv.cls; }
+    for (const k of ['1M', '5M', '15M', '1H', '4H']) {
+      const el = $('nav-' + k);
+      if (el && adjMap[k] != null) {
+        el.textContent = adjMap[k];
+        el.className = 'pill ' + lvMap[k].cls + ((k === '1M' || k === '5M') ? ' fast-num' : '');
+      }
+    }
+
+    // ========== 前排「⚡ 实时异动监控区」：仅展示异动较大的指标，平稳指标一律静默隐藏 ==========
+    const anoms = [];
+    let quietCount = 0;
+
+    // 0. 检查 EA 实时手动操作指令是否触发锁方向/暂停挂单
+    if (eaDir.needManual) {
+      anoms.push({
+        sev: 'high',
+        tag: '🛡️ EA 实盘手动操作预警',
+        title: eaDir.badgeTxt.replace(/^[🚨🛑⚠️]+\s*/, ''),
+        val: eaDir.pauseSideTxt,
+        desc: `${eaDir.headline}（$${ea.bal} 账户 65%警戒跨度 ${f2(ea.warn.span)}$ / 强平跨度 ${f2(ea.hard.span)}$）`,
+        href: '#tolSec'
+      });
+    } else quietCount++;
+
+    // A. 检查跨市场长周期指标异动 (不计入短周期震荡指数，仅在异动较大时浮现前排)
+    const mc = d.macro;
+    if (mc && mc.dxy) {
+      const dxy = mc.dxy || {}, us10 = mc.us10y || {}, xag = mc.xag || {}, vix = mc.vix || {};
+      if ((mc.dxyAdx != null && mc.dxyAdx >= 25) || Math.abs(dxy.chgPct || 0) >= 0.45) {
+        anoms.push({
+          sev: (mc.dxyAdx >= 32 || Math.abs(dxy.chgPct || 0) >= 0.7) ? 'high' : 'med',
+          tag: '跨市场长周期异动',
+          title: `美元指数 (DXY) 走单边趋势`,
+          val: `DXY ${f2(dxy.last)} (${dxy.chgPct >= 0 ? '+' : ''}${f2(dxy.chgPct)}%) · 15M ADX = ${f2(mc.dxyAdx)}`,
+          desc: `美元趋势强度超阈值(≥25)，易从外部驱动黄金走出单边行情（注：长周期指标未计入短周期震荡指数，仅作前排风控预警）`,
+          href: '#macroSec'
+        });
+      } else quietCount++;
+
+      if (mc.corrXauDxy != null && mc.corrXauDxy >= 0.35) {
+        anoms.push({
+          sev: 'high',
+          tag: '跨市场相关性异动',
+          title: `黄金与美元呈同涨正相关 (r = +${f2(mc.corrXauDxy)})`,
+          val: `20根K线相关系数 ${f2(mc.corrXauDxy)} (正常应为负相关)`,
+          desc: `同涨代表避险买盘强力主导，技术面超买极易钝化，严防单边逼空`,
+          href: '#macroSec'
+        });
+      } else quietCount++;
+
+      if (Math.abs(us10.chgPct || 0) >= 1.5) {
+        anoms.push({
+          sev: Math.abs(us10.chgPct) >= 2.5 ? 'high' : 'med',
+          tag: '跨市场利率异动',
+          title: `10年期美债收益率剧烈波动`,
+          val: `${f2(us10.last)}% (日内 ${us10.chgPct >= 0 ? '+' : ''}${f2(us10.chgPct)}%)`,
+          desc: `美债实际利率大幅波动，黄金定价锚正在重估，警惕趋势延续`,
+          href: '#macroSec'
+        });
+      } else quietCount++;
+
+      if (mc.agLead != null && Math.abs(mc.agLead) >= 0.8) {
+        anoms.push({
+          sev: Math.abs(mc.agLead) >= 1.4 ? 'high' : 'med',
+          tag: '贵金属联动异动',
+          title: `现货白银相对黄金明显${mc.agLead > 0 ? '领涨' : '领跌'}`,
+          val: `银-金日内强弱差 ${mc.agLead >= 0 ? '+' : ''}${f2(mc.agLead)}% (白银 ${xag.chgPct >= 0 ? '+' : ''}${f2(xag.chgPct)}%)`,
+          desc: `白银弹性高，常比黄金提前 15~30 分钟发动破位，需留意同向突破`,
+          href: '#macroSec'
+        });
+      } else quietCount++;
+
+      if ((vix.last || 0) >= 22 || Math.abs(vix.chgPct || 0) >= 8) {
+        anoms.push({
+          sev: (vix.last || 0) >= 26 ? 'high' : 'med',
+          tag: '宏观情绪异动',
+          title: `VIX 恐慌指数异动`,
+          val: `VIX ${f2(vix.last)} (${vix.chgPct >= 0 ? '+' : ''}${f2(vix.chgPct)}%)`,
+          desc: `市场避险情绪升温，跨资产波动放大`,
+          href: '#macroSec'
+        });
+      } else quietCount++;
+    }
+    if (d.gvz && d.gvz.pct1y >= 75) {
+      anoms.push({
+        sev: d.gvz.pct1y >= 88 ? 'high' : 'med',
+        tag: '期权隐波异动',
+        title: `GVZ 黄金波动率处于 1 年高分位`,
+        val: `GVZ ${f2(d.gvz.value)} (1年分位 ${d.gvz.pct1y}%)`,
+        desc: `期权市场定价高波动，建议放宽网格间距`,
+        href: '#sessionSec'
+      });
+    } else quietCount++;
+
+    // B. 检查各周期 K 线单次跳水、波幅超标、单侧悬空异动
+    for (const k of ['1M', '5M', '15M', '1H', '4H']) {
+      const t = d.timeframes[k];
+      if (!t) continue;
+      const lastE = eMap[k] ? eMap[k].last : {};
+      // 1) 单次跌幅异动
+      if ((lastE.effDrop1 || 0) >= 4.5 || (t.maxDrop14 || 0) >= 7.5) {
+        const isNow = (lastE.effDrop1 || 0) >= 4.5;
+        anoms.push({
+          sev: (lastE.effDrop1 >= 7.5 || t.maxDrop14 >= 10) ? 'high' : 'med',
+          tag: `${k} 周期跳水预警`,
+          title: isNow ? `${k} 震荡指数正在单次急跌 (-${lastE.effDrop1}分)` : `${k} 近14根内曾出现单次急跌 (-${t.maxDrop14}分)`,
+          val: `当前单次Δ ${lastE.effChg1 >= 0 ? '+' : ''}${lastE.effChg1}分 · 最大跌对应K线波幅 ${f2(t.maxDropBarSpan14)}$`,
+          desc: `震荡指数单次大跌往往伴随大阳/大阴线破位巨震，点击查看 ${k} 入场时序图`,
+          href: `#chart-${k}`
+        });
+      } else quietCount++;
+
+      // 2) 波幅超出策略容忍度区间 (针对 15M/1H/4H 提示，或 1M/5M 超出)
+      if (t.span14 > TOL) {
+        anoms.push({
+          sev: t.span14 > TOL * 1.35 ? 'high' : 'med',
+          tag: `${k} 波幅超标`,
+          title: `${k} 近14根实际波幅超出 ${f2(TOL)}$ 策略区间`,
+          val: `实际波幅 ${f2(t.span14)}$ (超标 +${f2(t.span14 - TOL)}$ · ${t.trendDirText})`,
+          desc: `当前周期波动跨度已超过您设定的 ${f2(TOL)}$ 容忍边界，策略指数已下调至 ${adjMap[k]} 分`,
+          href: `#chart-${k}`
+        });
+      } else quietCount++;
+
+      // 3) 20根穿MA20次数过少 (单侧悬空阴涨/阴跌)
+      if ((k === '15M' || k === '1H' || k === '4H') && t.maCross20 != null && t.maCross20 <= 1) {
+        anoms.push({
+          sev: 'med',
+          tag: `${k} 均线不回头`,
+          title: `${k} 近20根K线仅穿刺 MA20 中轨 ${t.maCross20} 次`,
+          val: `价格沿布林中轨单侧悬空运行 (${t.trendDirText})`,
+          desc: `缺乏围绕均线的来回折返，容易形成单向慢牛/阴跌推土机累单`,
+          href: `#ind-${k}`
+        });
+      } else quietCount++;
+    }
+
+    // C. 波动率挤压蓄势异动
+    if (m.squeeze && m.squeeze.strength >= 35) {
+      anoms.push({
+        sev: m.squeeze.strength >= 60 ? 'high' : 'med',
+        tag: '变盘蓄势异动',
+        title: `多周期波动率挤压预警 (强度 ${m.squeeze.strength}%)`,
+        val: m.squeeze.why.join(' · '),
+        desc: `盘面极度收窄蓄势，未来数小时至1~2天随时可能爆发单边突破`,
+        href: '#verdict'
+      });
+    } else quietCount++;
+
+    // D. 未来 4 小时内 ≥4 星重磅财经事件异动
+    const nowMs = Date.now();
+    const soonEvs = ((d.calendar && d.calendar.items) || []).filter((e) => {
+      if ((e.star || 0) < 4) return false;
+      const tMs = Date.parse(e.time);
+      return Number.isFinite(tMs) && tMs >= nowMs - 30 * 60e3 && tMs <= nowMs + 4 * 3600e3;
+    });
+    if (soonEvs.length) {
+      anoms.push({
+        sev: 'high',
+        tag: '重磅数据临近',
+        title: `未来 4 小时内有 ${soonEvs.length} 项 ★4~5星高危数据/事件`,
+        val: soonEvs.map((e) => `${e.time.slice(11, 16)} ${e.country}${e.summary || e.title}`).join('；'),
+        desc: `重大数据公布前后极易瞬间扫损拉出单边，建议提前暂停新开网格`,
+        href: '#calSec'
+      });
+    } else quietCount++;
+
+    // E. 特朗普言论实时监控异动 (仅近3小时内出现涉及关税/贸易/联储/地缘的中高冲击言论时才浮现前排)
+    if (d.trump && d.trump.items) {
+      const recentTrump = d.trump.items.filter((x) => x.ageMin <= 180 && (x.impact === 'HIGH' || x.impact === 'MED'));
+      if (recentTrump.length) {
+        const topT = recentTrump[0];
+        const ageStr = topT.ageMin < 60 ? `${topT.ageMin}分钟前` : `${(topT.ageMin / 60).toFixed(1)}小时前`;
+        anoms.push({
+          sev: topT.impact === 'HIGH' ? 'high' : 'med',
+          tag: `🦅 特朗普涉金言论 (${ageStr})`,
+          title: topT.title || topT.text.slice(0, 46) + '...',
+          val: `[${topT.tags.join('·')}] 冲击分 ${topT.impactScore}/100 · ${topT.goldBias}`,
+          desc: topT.text.slice(0, 95) + (topT.text.length > 95 ? '...' : ''),
+          href: '#trumpSec'
+        });
+      } else quietCount++;
+    }
+
+    if ($('nav-anom')) {
+      $('nav-anom').textContent = anoms.length ? `${anoms.length}项异动` : '平稳';
+      $('nav-anom').className = 'pill ' + (anoms.some((a) => a.sev === 'high') ? 'TREND' : anoms.length ? 'MIXED' : 'RANGE');
+    }
+
+    if (anoms.length) {
+      const highCnt = anoms.filter((a) => a.sev === 'high').length;
+      $('anomalySec').innerHTML = `
+        <div class="vhead" style="margin-bottom:4px">
+          <h2 style="margin:0">⚡ 实时异动监控区 <span class="pill ${highCnt ? 'TREND' : 'MIXED'}">当前检出 ${anoms.length} 项显著异动${highCnt ? ` (含 ${highCnt} 项高危)` : ''}</span></h2>
+          <span class="mut sm">已自动静默过滤 ${quietCount} 项平稳指标 · 长周期跨市场指标不计入短周期震荡指数，仅在此处异动预警</span>
+        </div>
+        <div class="anom-grid">
+          ${anoms.map((a) => `<div class="anom-card sev-${a.sev}" onclick="location.hash='${a.href}'">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+              <span class="pill ${a.sev === 'high' ? 'TREND' : 'MIXED'}">${a.sev === 'high' ? '🚨 显著异动' : '⚠️ 偏离关注'} · ${a.tag}</span>
+              <span class="mut sm">查看详情 →</span>
+            </div>
+            <div style="font-weight:700;color:#fff;font-size:13.5px;margin-top:2px">${a.title}</div>
+            <div style="color:var(--gold);font-size:12.5px;font-weight:600">${a.val}</div>
+            <div class="mut sm" style="font-size:11.5px;line-height:1.4">${a.desc}</div>
+          </div>`).join('')}
+        </div>`;
+    } else {
+      $('anomalySec').innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="pill RANGE">✅ 全市场无重大异动</span>
+            <span class="sm">当前跨市场长周期指标(DXY/美债/白银/VIX)、各周期震荡指数单次跌幅、策略波幅边界及近4h财经日历均处于平稳区间（共 ${quietCount} 项平稳指标已自动隐藏）。</span>
+          </div>
+          <a href="#macroSec" class="mut sm" style="text-decoration:none">查看底部跨市场备查 →</a>
+        </div>`;
+    }
+
+    // ========== 核心总览区 (`#verdict`)：三大重点 Hero Focus Cards + 极简 5 周期矩阵 ==========
+    const tfStr = ['1M', '5M', '15M', '1H', '4H'].filter((k) => adjMap[k] != null).map((k) => `${k} <b style="color:#fff" class="num-chip ${(k === '1M' || k === '5M') ? 'fast-num' : ''}">${adjMap[k]}</b>`).join(' · ');
+    const adjStr = (m.runAdj || []).map((a) => `${a.name} <b>${a.v >= 0 ? '+' + a.v : a.v}</b>`).join(' , ');
+
+    const runHeroCls = runLv.cls === 'RANGE' ? 'hl-green' : runLv.cls === 'MIXED' ? 'hl-yel' : 'hl-red';
+    const entryHeroCls = mainEntry && mainEntry.entryCls === 'RANGE' ? 'hl-green' : mainEntry && mainEntry.entryCls === 'MIXED' ? 'hl-yel' : 'hl-red';
+    const refTf = d.timeframes['1H'] || d.timeframes['15M'] || {};
+    const priceHeroCls = (refTf.span14 || 0) <= TOL ? 'hl-gold' : 'hl-red';
+
+    const entryPillsRow = ['1M', '5M', '15M', '1H', '4H'].map((k) => {
+      const e = eMap[k] ? eMap[k].last : null;
+      if (!e) return '';
+      const shortSt = e.entryState === 'OK' ? '🟢适合' : e.entryState === 'WAIT' ? '🟡观望' : '🔴禁入';
+      return `<a href="#chart-${k}" style="text-decoration:none" title="${k}: ${e.entryTxt} (${e.entryScore}分) - ${e.entryReason}"><span class="pill ${e.entryCls}">${k} ${shortSt}</span></a>`;
+    }).join(' ');
+
+    const tfCards = ['1M', '5M', '15M', '1H', '4H'].map((k) => {
+      const t = d.timeframes[k];
+      if (!t || adjMap[k] == null) return '';
+      const lv = lvMap[k];
+      const isFast = k === '1M' || k === '5M';
+      const inRange = t.span14 <= TOL;
+      const lastE = eMap[k] ? eMap[k].last : { entryTxt: '-', entryCls: 'MIXED', entryScore: '-', effDrop1: t.idxDrop1 || 0, effChg1: t.idxChg1 || 0 };
+      const dropWarn = (lastE.effDrop1 >= 5)
+        ? `<span class="err" style="font-weight:600">⚡急跌-${lastE.effDrop1}分</span>`
+        : `<span class="mut">单次Δ ${(lastE.effChg1 ?? 0) >= 0 ? '+' : ''}${lastE.effChg1 ?? 0}</span>`;
+      return `<div class="tfcard" id="tfcard-${k}" onclick="location.hash='#chart-${k}'" title="点击跳转到 ${k} 一图一屏大图">
+        <div class="vhead" style="margin-bottom:4px">
+          <span><b style="color:#fff;font-size:15px">${k}</b> ${isFast ? '<span class="live-dot" title="每15秒实时更新"></span>' : ''}<span class="mut sm">权重${Math.round((W[k] || 0) * 100)}%</span></span>
+          <span class="pill ${lv.cls}">${lv.name.replace(/\(.*?\)/, '')}</span>
+        </div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
+          <div><span class="fcscore num-chip ${isFast ? 'fast-num' : ''}">${lk(API[k], adjMap[k])}</span> <span class="mut sm">/ 100 <span style="font-size:11px">(原${t.rangeIndex})</span></span></div>
+          <span class="pill ${lastE.entryCls}">${lastE.entryState === 'OK' ? '🟢适合入场' : lastE.entryState === 'WAIT' ? '🟡观望' : '🔴禁入'}(${lastE.entryScore})</span>
+        </div>
+        ${idxBar(adjMap[k])}
+        <div class="sm" style="margin-top:8px;padding-top:6px;border-top:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;color:var(--mut)">
+          <span>14根波幅 <b style="color:${inRange ? '#e2e8f0' : '#fb7185'}">${f2(t.span14)}$</b>/${f2(TOL)}$</span>
+          ${dropWarn}
+        </div>
+        <div class="sm mut" style="margin-top:3px;display:flex;justify-content:space-between">
+          <span>${t.trendDirText}</span>
+          <span>ADX ${t.adx} · CHOP ${t.chop}</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    $('verdict').innerHTML = `
+      <div class="vhead" style="margin-bottom:12px">
+        <h2 style="margin:0">📊 核心量化决策总览 <span class="mut sm" style="font-weight:400">(已按 <b>${f2(TOL)}美元</b> 策略容忍区间校准 · 短周期指数纯由黄金K线驱动)</span></h2>
+        <span class="pill NEUT">主导方向: ${m.overallDirText}</span>
+      </div>
+      <div class="hero-grid">
+        <div class="hero-box ${runHeroCls}">
+          <div class="hero-lbl"><span>① 当前实盘运行震荡指数</span><span class="pill ${runLv.cls}">${runLv.name}</span></div>
+          <div class="hero-val"><span>${adjRun}</span><span class="mut" style="font-size:14px;font-weight:400">/ 100 (技术面 ${adjCurrent})</span></div>
+          ${idxBar(adjRun)}
+          <div class="sm" style="margin-top:8px;color:#e2e8f0;font-weight:600">📌 结论：${runLv.advice}</div>
+          <div class="mut sm" style="margin-top:3px">时段/日历修正: ${adjStr || '无'} · 分周期: ${tfStr}</div>
+        </div>
+        <div class="hero-box ${entryHeroCls}">
+          <div class="hero-lbl"><span>② 当前网格是否适合入场</span><a href="#entrySec" class="mut sm" style="text-decoration:none">查看时序图 →</a></div>
+          <div class="hero-val" style="font-size:30px;margin:8px 0 10px">
+            <span class="pill ${mainEntry ? mainEntry.entryCls : 'MIXED'}" style="font-size:18px;padding:4px 14px;min-height:34px">${mainEntry ? mainEntry.entryTxt : '-'} (适宜度 ${mainEntry ? mainEntry.entryScore : '-'}分)</span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${entryPillsRow}</div>
+          <div class="mut sm">主周期判定依据：<b style="color:#cbd5e1">${mainEntry ? mainEntry.entryReason : '-'}</b></div>
+        </div>
+        <div class="hero-box ${priceHeroCls}">
+          <div class="hero-lbl"><span>③ 实时金价 & ${f2(TOL)}$ 容忍边界</span><span class="pill ${(refTf.span14 || 0) <= TOL ? 'RANGE' : 'TREND'}">${(refTf.span14 || 0) <= TOL ? '✅ 主周期在区间内' : '⚠️ 主周期波幅超标'}</span></div>
+          <div class="hero-val"><span class="num-chip fast-num" style="color:var(--gold)">${f2(d.timeframes['1M'] ? d.timeframes['1M'].price : refTf.price)}$</span><span class="mut" style="font-size:13px;font-weight:400">XAUUSD 0延迟</span></div>
+          <div class="sm" style="margin-top:8px;display:flex;justify-content:space-between;color:var(--mut)">
+            <span>15M近14根波幅: <b style="color:${(d.timeframes['15M'] && d.timeframes['15M'].span14 <= TOL) ? '#fff' : '#fb7185'}">${d.timeframes['15M'] ? f2(d.timeframes['15M'].span14) : '-'}$</b></span>
+            <span>1H近14根波幅: <b style="color:${(d.timeframes['1H'] && d.timeframes['1H'].span14 <= TOL) ? '#fff' : '#fb7185'}">${d.timeframes['1H'] ? f2(d.timeframes['1H'].span14) : '-'}$</b></span>
+          </div>
+          <div class="mut sm" style="margin-top:6px">可在下方 <a href="#tolSec" style="color:var(--gold)">🎯 策略区间校准器</a> 随时拖动滑块切换容忍度</div>
+        </div>
+      </div>
+      <div class="tfidx-grid">${tfCards}</div>`;
+
+    // 渲染「🚦 多周期是否适合入场 · 时序信号对照图 & 震荡指数单次跳水监控」
+    const entryRowsHtml = ['1M', '5M', '15M', '1H', '4H'].map((k) => {
+      const t = d.timeframes[k];
+      if (!t) return '';
+      const sp = calcEntrySeries((m.sparks && m.sparks[k]) || [], TOL);
+      if (!sp.length) return '';
+      const lastE = sp[sp.length - 1];
+      const okCnt = sp.filter((p) => p.entryState === 'OK').length;
+      const okPct = Math.round(okCnt / sp.length * 100);
+      const plungeCnt = sp.filter((p) => p.effDrop1 >= 7).length;
+      const strip = sp.map((p) => {
+        const tm = fmtBJ(p.t);
+        const hPct = Math.max(25, p.entryScore);
+        const plungeMark = p.effDrop1 >= 7 ? 'border-top:2px solid #fff;' : '';
+        return `<div style="flex:1;height:28px;display:flex;align-items:flex-end;background:#0f1218" title="${tm} | ${p.entryTxt} (${p.entryScore}分) | 震荡指数:${p.adjV}分(单次Δ${p.effChg1 >= 0 ? '+' : ''}${p.effChg1}分) | K线:${f2(p.c)}$(单根波幅${f2(p.barSpan)}$)"><div style="width:100%;height:${hPct}%;background:${p.entryCol};opacity:0.88;${plungeMark}"></div></div>`;
+      }).join('');
+      const fTm = fmtBJ(sp[0].t), lTm = fmtBJ(sp[sp.length - 1].t);
+      const isFast = k === '1M' || k === '5M';
+      return `<div style="padding:10px 12px;background:#131720;border:1px solid var(--bd);border-radius:10px;margin-bottom:10px;cursor:pointer" onclick="location.hash='#chart-${k}'" title="点击查看 ${k} 震荡指数与是否适合入场同步大图">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+            <b>${k} 周期 ${isFast ? '<span class="live-dot"></span>' : ''}</b>
+            <span class="pill ${lastE.entryCls}">${lastE.entryTxt} (适宜度 ${lastE.entryScore}分)</span>
+            <span class="mut sm">原因: <b style="color:var(--tx)">${lastE.entryReason}</b></span>
+          </div>
+          <div class="sm" style="display:flex;align-items:center;flex-wrap:wrap;gap:10px">
+            <span>当前单次变化: <b class="${lastE.effDrop1 >= 7 ? 'err' : ''}">${lastE.effChg1 >= 0 ? '+' : ''}${lastE.effChg1}分</b></span>
+            <span>14根最大单次跌: <b class="${(t.maxDrop14 || 0) >= 7 ? 'err' : ''}">-${t.maxDrop14 ?? 0}分</b><span class="mut">(K线波幅${f2(t.maxDropBarSpan14)}$)</span></span>
+            <span class="mut">近120根适合入场率: <b>${okPct}%</b> (急跌跳水 ${plungeCnt} 次)</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:1px;border-radius:5px;overflow:hidden;border:1px solid #262d3b">${strip}</div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:3px"><span>${fTm}</span><span>← 鼠标悬停色块查看该时间点入场结论 · 点击展开 ${k} 大图 →</span><span>${lTm} (当前)</span></div>
+      </div>`;
+    }).join('');
+    $('entrySec').innerHTML = `<h2>🚦 是否适合入场 · 多周期时序信号总览 & 震荡指数单次跳水监控 <span class="mut sm" style="font-weight:400">(每个色块对应1根K线时间点: 绿=适合入场, 黄=谨慎观望, 红=禁止入场, 顶部白线=震荡指数单次急跌≥7分跳水点)</span></h2>
+      <div class="mut sm" style="margin-bottom:10px;padding:8px 12px;background:#131720;border-radius:8px;border-left:3px solid var(--green)">
+        💡 <b>入场判定规则 (已结合您发现的「震荡指数单次大跌 = K线剧烈波动」规律)</b>：
+        当某时间点同时满足 ① 策略校准震荡指数 $\ge 55$（波幅在 ${f2(TOL)}$ 内）、② <b>震荡指数单次跌幅 $&lt; 4.5$ 分</b>（无跳水异动）、③ 价格未突破布林带上下轨 且 入场适宜度 $\ge 60$ 分时，标记为 <span class="pill RANGE">🟢 适合入场</span>；
+        一旦<b>震荡指数单次急跌 $\ge 7.5$ 分</b>（此时 K 线往往正在拉出大阳/大阴线破位巨震）或波幅超出容忍度/进入单边趋势，立即强制标记为 <span class="pill TREND">🔴 禁止入场</span>！下方各周期大图内均已同步内置 1:1 时间对齐的「是否适合入场」子图。
+      </div>
+      ${entryRowsHtml}`;
+
+    // 渲染 5 个周期的「一图一屏幕」大型趋势图 (顶部标签全部采用 .mchip 严格水平等高对齐 + 内置是否适合入场时序图 + 蜡烛图对比开关按钮)
+    const TF_DESC = { '1M': '1分钟超短线 (每15秒0延迟更新)', '5M': '5分钟短线 (每15秒0延迟更新)', '15M': '15分钟波段 (每15秒0延迟更新)', '1H': '1小时主周期 (每15秒0延迟更新)', '4H': '4小时大周期 (每15秒0延迟更新)' };
+    $('bigCharts').innerHTML = ['1M', '5M', '15M', '1H', '4H'].map((k) => {
+      const t = d.timeframes[k];
+      if (!t) return '';
+      const lv = lvMap[k];
+      const sp = (m.sparks && m.sparks[k]) || [];
+      const eSer = calcEntrySeries(sp, TOL);
+      const lastE = eSer[eSer.length - 1] || { entryTxt: '-', entryCls: 'MIXED', entryScore: '-', effDrop1: t.idxDrop1 || 0, effChg1: t.idxChg1 || 0 };
+      const firstT = sp.length ? fmtBJ(sp[0].t) : '-', lastT = sp.length ? fmtBJ(sp[sp.length - 1].t) : '-';
+      const isFast = k === '1M' || k === '5M';
+      const inRange = t.span14 <= TOL;
+      const showC = !!SHOW_CANDLE[k];
+      const plungeCls = (lastE.effDrop1 >= 7.5) ? 'TREND' : (lastE.effDrop1 >= 4 ? 'MIXED' : 'RANGE');
+      const plungeTxt = (lastE.effDrop1 >= 7.5) ? '🚨单次急跌巨震' : (lastE.effDrop1 >= 4 ? '⚠️指数下滑' : '✅指数平稳');
+      return `<section class="card screen-card" id="chart-${k}" style="margin-bottom:18px">
+        <div>
+          <div class="vhead">
+            <h2 style="margin:0;font-size:18px;display:flex;align-items:center;flex-wrap:wrap;gap:6px">${isFast ? '<span class="live-dot"></span>' : ''}<span>📈 ${k} 实时震荡指数 & 是否适合入场大图</span><span class="mut sm" style="font-weight:400">— ${TF_DESC[k]} · 时间: ${firstT} 至 ${lastT}</span></h2>
+            <div class="btns">
+              <button class="sm ${showC ? 'on' : ''}" onclick="toggleCandle('${k}')">🕯️ ${showC ? '隐藏黄金K线蜡烛图+布林带' : '显示黄金K线蜡烛图+布林带'}</button>
+              <a href="#ind-${k}"><button class="sm">🎛️ 查看 ${k} 10项指标明细</button></a>
+              <a href="${API[k]}" target="_blank" rel="noopener"><button class="sm">🔗 验证 ${k} 原始K线</button></a>
+            </div>
+          </div>
+          <div class="meta-strip">
+            <div class="mchip"><span>策略(${f2(TOL)}$)震荡指数:</span><span class="big-num num-chip ${isFast ? 'fast-num' : ''}">${adjMap[k]}</span><span class="mut">/100 (原${t.rangeIndex})</span><span class="pill ${lv.cls}">${lv.name}</span></div>
+            <div class="mchip"><span>当前是否适合入场:</span><span class="pill ${lastE.entryCls}">${lastE.entryTxt} (${lastE.entryScore}分)</span></div>
+            <div class="mchip"><span class="pill ${plungeCls}">${plungeTxt}</span><span class="mut">单次Δ:</span><b>${(lastE.effChg1 ?? 0) >= 0 ? '+' : ''}${lastE.effChg1 ?? 0}分</b><span class="mut">(14根最大跌 <b>-${t.maxDrop14 ?? 0}分</b>)</span></div>
+            <div class="mchip"><span class="pill ${t.trendDir}">${t.trendDirText}</span><span class="mut">14根净涨跌:</span><b>${t.net14 >= 0 ? '+' : ''}${f2(t.net14)}$</b></div>
+            <div class="mchip"><span class="pill ${inRange ? 'RANGE' : 'TREND'}">${inRange ? '✅ 在合理区间内' : '⚠️ 超出合理区间'}</span><span class="mut">14根波幅:</span><b>${f2(t.span14)}$ / 目标${f2(TOL)}$</b></div>
+            <div class="mchip"><span class="mut">最新黄金价:</span><b class="num-chip ${isFast ? 'fast-num' : ''}" style="color:var(--gold)">${f2(t.price)}$</b><span class="mut">(${fmtBJ(t.lastBarTime)})</span></div>
+          </div>
+        </div>
+        <div class="chart-wrap">${bigChartSvg(sp, k)}</div>
+        <div class="legend" style="justify-content:space-between">
+          <div><span><i style="background:#e8b84a"></i>金色实线: 策略震荡指数</span><span style="margin-left:12px"><i style="background:#ffffff"></i>白色实线: 入场适宜度(0-100)</span><span style="margin-left:12px"><i style="background:#2ecc8f"></i>🟢适合入场(≥60)</span><span style="margin-left:12px"><i style="background:#f0b429"></i>🟡谨慎观望(45-60)</span><span style="margin-left:12px"><i style="background:#ef5b5b"></i>🔴禁止入场(&lt;45或⚡单次急跌≥7分)</span>${showC ? `<span style="margin-left:12px"><i style="background:#58a6ff"></i>布林带BB(20,2)</span>` : ''}</div>
+          <span>🎯 鼠标移入显示十字准星(同时对齐震荡指数、是否适合入场、单次跌幅与K线价格)</span>
+        </div>
+      </section>`;
+    }).join('');
+
+    const knn = m.knn;
+    const knnNote = knn ? `<div class="mut sm" style="margin-top:10px;padding-top:8px;border-top:1px solid var(--bd)">
+      🧠 <b>10年日线 kNN 历史相似行情匹配</b> (样本 ${knn.samples} 天, 截止 ${knn.lastDate}, 日线震荡指数 <b>${knn.dailyIndex}</b>):
+      在过去10年中寻找与当前7维技术特征最相似的 150 个交易日, 统计其后 1~5 天的实际震荡日比例:
+      ${knn.horizons.map((h) => `T+${h.h}天 <b>${h.p}%</b>(历史基准${h.base}%)`).join(' · ')}。<br>
+      最相似历史日期(后3天走势): ${knn.similar.map((s) => `${s.date}(${s.next3})`).join('、')}。
+      ${knn.validation ? `模型在近500天样本外回测准确率: 预测低震荡组实际震荡率 ${knn.validation.lowGroup}% vs 预测高震荡组 ${knn.validation.highGroup}%(基准 ${knn.validation.all}%)。` : ''}
+    </div>` : '';
+
+    $('forecastSec').innerHTML = `<h2>🔮 未来 5 个交易日震荡指数预测 <span class="mut sm" style="font-weight:400">(当前日线方向: <b>${d.timeframes['1D'] ? d.timeframes['1D'].trendDirText : m.overallDirText}</b> · 综合技术面均值回归 + 10年kNN相似行情 + 波动率挤压释放 + GVZ + 金十日历冲击)</span></h2>
+      <div class="fcgrid">${m.forecast.map((f) => {
+        const p = f.parts;
+        const fLv = levelFor(f.index, m.overallDir);
+        const evHtml = f.events.length ? f.events.map((e) => `<div>• ${e.time.slice(5, 16)} ${e.country} ${'★'.repeat(e.star)} ${e.title} <span class="err">(-${e.p})</span></div>`).join('') : '<div>• 无重大高危事件</div>';
+        return `<div class="fccard">
+          <div class="fchead"><div><b>${f.label}</b> <span class="mut sm">${f.date.slice(5)}</span></div><span class="pill ${fLv.cls}">${fLv.name}</span></div>
+          <div><span class="fcscore">${f.index}</span> <span class="mut sm">/ 100</span>${idxBar(f.index)}</div>
+          <div class="sm" style="font-weight:600">${fLv.advice}</div>
+          <div class="fcparts">
+            <span>技术延续: <b>${p.tech}</b></span>
+            <span>kNN相似: <b>${p.knn ?? '-'}</b>${p.knnP != null ? `(${p.knnP}%)` : ''}</span>
+            <span>挤压扣分: <b class="${p.squeeze < 0 ? 'err' : ''}">${p.squeeze}</b></span>
+            <span>GVZ修正: <b>${p.gvz >= 0 ? '+' + p.gvz : p.gvz}</b></span>
+            <span style="grid-column:1/-1">日历事件冲击: <b class="${p.events < 0 ? 'err' : ''}">${p.events}</b></span>
+          </div>
+          <div class="fcevs"><div style="margin-bottom:2px;color:var(--tx)">主要风险事件:</div>${evHtml}</div>
+        </div>`;
+      }).join('')}</div>${knnNote}`;
+  }
+
+  // 渲染「🌐 跨市场长周期先行指数备查区」：仅直接展示当前有显著异动的跨市场指标，平稳指标默认折叠收纳
+  const mc = d.macro;
+  if (mc && mc.dxy) {
+    const dxy = mc.dxy || {};
+    const us10 = mc.us10y || {};
+    const us2 = mc.us2y || {};
+    const xag = mc.xag || {};
+    const vix = mc.vix || {};
+    const autd = mc.autd || {};
+    const uReal = mc.realUrl;
+    const uDxy = mc.dxyKlineUrl;
+
+    const fmtChg = (o) => o && o.chgPct != null ? `<span style="color:${o.chgPct >= 0 ? '#34d399' : '#fb7185'};font-weight:600;font-size:12px">${o.chgPct >= 0 ? '+' : ''}${f2(o.chgPct)}% (${o.chg >= 0 ? '+' : ''}${f2(o.chg)})</span>` : '-';
+
+    const macroCards = [
+      {
+        isAnom: (mc.dxyAdx != null && mc.dxyAdx >= 25) || Math.abs(dxy.chgPct || 0) >= 0.45 || (mc.corrXauDxy != null && mc.corrXauDxy >= 0.35),
+        html: `<div class="tfcard" style="cursor:default">
+          <div class="vhead"><span><b>💵 美元指数 (DXY)</b> <span class="mut sm">${dxy.time ? fmtBJ(dxy.time) : ''}</span></span><span class="pill ${(mc.dxyAdx || 0) >= 25 ? 'TREND' : 'NEUT'}">${(mc.dxyAdx || 0) >= 25 ? '⚠️ 美元单边' : '平稳震荡'}</span></div>
+          <div><span class="fcscore">${lk(uReal, f2(dxy.last))}</span> ${fmtChg(dxy)}</div>
+          <div class="sm" style="margin-top:6px">15M ADX趋势强度: <b>${lk(uDxy, f2(mc.dxyAdx))}</b> <span class="mut">(${(mc.dxyAdx || 0) < 20 ? '盘整' : '趋势强劲'})</span></div>
+          <div class="sm" style="margin-top:4px">金-美20根相关性 r: <b style="color:${(mc.corrXauDxy || 0) > 0.3 ? '#fb7185' : '#e2e8f0'}">${mc.corrXauDxy != null ? f2(mc.corrXauDxy) : '-'}</b> <span class="mut">(${(mc.corrXauDxy || 0) < -0.3 ? '正常负相关' : (mc.corrXauDxy || 0) > 0.3 ? '⚠️同涨避险' : '弱相关'})</span></div>
+        </div>`
+      },
+      {
+        isAnom: Math.abs(us10.chgPct || 0) >= 1.5,
+        html: `<div class="tfcard" style="cursor:default">
+          <div class="vhead"><span><b>🏛️ 美债收益率 (10Y / 2Y)</b></span><span class="pill ${Math.abs(us10.chgPct || 0) >= 1.5 ? 'TREND' : 'NEUT'}">${Math.abs(us10.chgPct || 0) >= 1.5 ? '⚠️ 利率异动' : '利率平稳'}</span></div>
+          <div><span class="fcscore">${lk(uReal, f2(us10.last) + '%')}</span> ${fmtChg(us10)}</div>
+          <div class="sm" style="margin-top:6px">2年期美债(US02Y): <b>${lk(uReal, f2(us2.last) + '%')}</b> (${us2.chgPct >= 0 ? '+' : ''}${f2(us2.chgPct)}%)</div>
+          <div class="sm" style="margin-top:4px">10Y-2Y 期限利差: <b>${mc.yieldSpread != null ? (mc.yieldSpread >= 0 ? '+' : '') + f2(mc.yieldSpread) + 'bp' : '-'}</b> <span class="mut">(定价锚)</span></div>
+        </div>`
+      },
+      {
+        isAnom: mc.agLead != null && Math.abs(mc.agLead) >= 0.8,
+        html: `<div class="tfcard" style="cursor:default">
+          <div class="vhead"><span><b>🥈 现货白银 & 金银比</b></span><span class="pill ${Math.abs(mc.agLead || 0) >= 0.8 ? 'MIXED' : 'NEUT'}">${Math.abs(mc.agLead || 0) >= 0.8 ? '⚠️ 白银领涨跌' : '金银同步'}</span></div>
+          <div><span class="fcscore">${lk(uReal, f2(xag.last) + '$')}</span> ${fmtChg(xag)}</div>
+          <div class="sm" style="margin-top:6px">实时金银比 (XAU/XAG): <b>${lk(uReal, f2(mc.gsr))}</b></div>
+          <div class="sm" style="margin-top:4px">银-金日内强弱差: <b style="color:${Math.abs(mc.agLead || 0) >= 0.8 ? '#fbbf24' : '#e2e8f0'}">${mc.agLead != null ? (mc.agLead >= 0 ? '+' : '') + f2(mc.agLead) + '%' : '-'}</b></div>
+        </div>`
+      },
+      {
+        isAnom: (vix.last || 0) >= 22 || Math.abs(vix.chgPct || 0) >= 8,
+        html: `<div class="tfcard" style="cursor:default">
+          <div class="vhead"><span><b>⚡ VIX 恐慌指数</b></span><span class="pill ${(vix.last || 0) >= 22 ? 'TREND' : 'NEUT'}">${(vix.last || 0) >= 22 ? '⚠️ 市场恐慌' : '情绪温和'}</span></div>
+          <div><span class="fcscore">${lk(uReal, f2(vix.last))}</span> ${fmtChg(vix)}</div>
+          <div class="sm" style="margin-top:6px">日内区间: <b>${f2(vix.low)} ~ ${f2(vix.high)}</b></div>
+          <div class="sm mut" style="margin-top:4px">VIX &lt; 20 利好黄金技术面震荡</div>
+        </div>`
+      },
+      {
+        isAnom: Math.abs(autd.chgPct || 0) >= 1.2,
+        html: `<div class="tfcard" style="cursor:default">
+          <div class="vhead"><span><b>🇨🇳 上海黄金TD (AUTD)</b></span><span class="pill NEUT">内盘联动</span></div>
+          <div><span class="fcscore">${lk(uReal, f2(autd.last) + '元')}</span> ${fmtChg(autd)}</div>
+          <div class="sm" style="margin-top:6px">日内区间: <b>${f2(autd.low)} ~ ${f2(autd.high)} 元/克</b></div>
+          <div class="sm mut" style="margin-top:4px">亚盘时段内盘资金参考</div>
+        </div>`
+      }
+    ];
+
+    const anomMacro = macroCards.filter((c) => c.isAnom);
+    const calmMacro = macroCards.filter((c) => !c.isAnom);
+
+    if ($('nav-macro')) {
+      $('nav-macro').textContent = anomMacro.length ? `${anomMacro.length}异动` : '平稳';
+      $('nav-macro').className = 'pill ' + (anomMacro.length ? 'MIXED' : 'NEUT');
+    }
+
+    $('macroSec').innerHTML = `
+      <div class="vhead">
+        <h2 style="margin:0">🌐 跨市场长周期先行指标 <span class="mut sm" style="font-weight:400">(不计入短周期震荡指数 · 异动较大的指标已同步提取至顶部【⚡ 实时异动监控区】)</span></h2>
+        <div class="btns">
+          <a href="${uReal}" target="_blank" rel="noopener"><button class="sm">🔗 验证跨市场 JSON</button></a>
+          <a href="${uDxy}" target="_blank" rel="noopener"><button class="sm">🔗 验证 DXY K线</button></a>
+        </div>
+      </div>
+      ${anomMacro.length ? `<div class="tfidx-grid" style="margin-bottom:10px">${anomMacro.map((c) => c.html).join('')}</div>` : ''}
+      ${calmMacro.length ? `<details class="clean-fold" id="fold-macro-calm" ${window.OPEN_FOLDS && window.OPEN_FOLDS['fold-macro-calm'] ? 'open' : ''} ontoggle="window.OPEN_FOLDS&&(window.OPEN_FOLDS[this.id]=this.open)"><summary>➕ 当前有 ${calmMacro.length} 项跨市场指标波动平稳（点击展开查看平稳指标明细）</summary><div class="tfidx-grid" style="margin-top:8px">${calmMacro.map((c) => c.html).join('')}</div></details>` : ''}`;
+  } else {
+    $('macroSec').innerHTML = `<h2>🌐 跨市场长周期先行指标</h2><span class="mut">正在加载跨市场实时数据...</span>`;
+  }
+
+  const s = d.session;
+  if (s) {
+    const [hh, mm] = (s.bjTime || '00:00').split(':').map(Number);
+    const curMin = (hh || 0) * 60 + (mm || 0);
+    const curPct = Math.max(0, Math.min(100, +(curMin / 1440 * 100).toFixed(2)));
+    const volCls = s.volatility.includes('峰值') || s.volatility.includes('最高') ? 'TREND' : s.volatility.includes('升高') ? 'MIXED' : 'RANGE';
+    if ($('nav-sess')) {
+      $('nav-sess').textContent = s.bjTime;
+      $('nav-sess').className = 'pill ' + volCls;
+    }
+
+    // 4大时段定义 (与表格完全一致: 亚洲 07-15 较低, 欧洲 15-24 逐渐升高, 美洲 21-05 最高, 欧美重叠 20-24 峰值)
+    const SESSIONS = [
+      { name: '亚洲时段', range: '07:00 - 15:00', shortRange: '07-15', start: 7 * 60, end: 15 * 60, vol: '较低', cls: 'RANGE', col: '#10b981', desc: '亚盘波幅温和，适合网格刷单' },
+      { name: '欧洲时段', range: '15:00 - 24:00', shortRange: '15-24', start: 15 * 60, end: 24 * 60, vol: '逐渐升高', cls: 'MIXED', col: '#f59e0b', desc: '伦敦开市，波动开始放大' },
+      { name: '美洲时段', range: '21:00 - 05:00(次日)', shortRange: '21-05', start: 21 * 60, end: 29 * 60, vol: '最高', cls: 'TREND', col: '#f43f5e', desc: '纽约主盘+重磅数据，单边高发' },
+      { name: '欧美重叠', range: '20:00 - 24:00', shortRange: '20-24', start: 20 * 60, end: 24 * 60, vol: '峰值', cls: 'TREND', col: '#f43f5e', desc: '全天波动峰值，严防突破' },
+    ];
+
+    const fmtDur = (m) => {
+      const h = Math.floor(m / 60), r = Math.round(m % 60);
+      return h > 0 ? `${h}小时${r ? r + '分' : ''}` : `${r}分钟`;
+    };
+
+    const sessCardsHtml = SESSIONS.map((item) => {
+      const dur = item.end - item.start;
+      let adjCur = curMin;
+      if (item.end > 1440 && curMin < (item.end - 1440)) adjCur = curMin + 1440;
+      const isActive = adjCur >= item.start && adjCur < item.end;
+      let elapsedPct = 0, statusHtml = '';
+      if (isActive) {
+        const elapsed = adjCur - item.start;
+        const rem = item.end - adjCur;
+        elapsedPct = Math.max(0, Math.min(100, Math.round(elapsed / dur * 100)));
+        statusHtml = `<span style="color:#fff;font-weight:700">● 当前进行中 · 已过 ${elapsedPct}%</span> <span class="mut">(剩 ${fmtDur(rem)})</span>`;
+      } else {
+        let wait = item.start - curMin;
+        if (wait <= 0) wait += 1440;
+        statusHtml = `<span class="mut">○ 未开启 · 距开启 ${fmtDur(wait)}</span>`;
+      }
+
+      let segs = '';
+      if (item.end <= 1440) {
+        const left = (item.start / 1440 * 100).toFixed(2);
+        const width = (dur / 1440 * 100).toFixed(2);
+        const fillW = isActive ? ((adjCur - item.start) / 1440 * 100).toFixed(2) : '0';
+        segs = `<div style="position:absolute;left:${left}%;width:${width}%;height:100%;background:${isActive ? item.col : '#334155'};opacity:${isActive ? 0.28 : 0.35};border-radius:4px"></div>` +
+               (isActive ? `<div style="position:absolute;left:${left}%;width:${fillW}%;height:100%;background:${item.col};opacity:0.9;border-radius:4px"></div>` : '');
+      } else {
+        const w1 = ((1440 - item.start) / 1440 * 100).toFixed(2);
+        const l1 = (item.start / 1440 * 100).toFixed(2);
+        const w2 = ((item.end - 1440) / 1440 * 100).toFixed(2);
+        segs = `<div style="position:absolute;left:0%;width:${w2}%;height:100%;background:${isActive ? item.col : '#334155'};opacity:${isActive ? 0.28 : 0.35};border-radius:4px 0 0 4px"></div>` +
+               `<div style="position:absolute;left:${l1}%;width:${w1}%;height:100%;background:${isActive ? item.col : '#334155'};opacity:${isActive ? 0.28 : 0.35};border-radius:0 4px 4px 0"></div>`;
+        if (isActive) {
+          if (curMin >= item.start) {
+            const fw = ((curMin - item.start) / 1440 * 100).toFixed(2);
+            segs += `<div style="position:absolute;left:${l1}%;width:${fw}%;height:100%;background:${item.col};opacity:0.9;border-radius:0 4px 4px 0"></div>`;
+          } else {
+            const fw2 = (curMin / 1440 * 100).toFixed(2);
+            segs += `<div style="position:absolute;left:${l1}%;width:${w1}%;height:100%;background:${item.col};opacity:0.9"></div>` +
+                    `<div style="position:absolute;left:0%;width:${fw2}%;height:100%;background:${item.col};opacity:0.9;border-radius:4px 0 0 4px"></div>`;
+          }
+        }
+      }
+
+      return `<div style="background:${isActive ? '#171e2c' : 'var(--card2)'};border:1px solid ${isActive ? item.col : 'var(--bd)'};border-radius:9px;padding:10px 12px;min-width:0;opacity:${isActive ? '1' : '0.72'}">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
+          <b style="color:${isActive ? '#fff' : '#cbd5e1'}">${item.name} <span class="mut sm">(${item.shortRange})</span></b>
+          <span class="pill ${isActive ? item.cls : 'NEUT'}">波动: ${item.vol}</span>
+        </div>
+        <div class="sm" style="margin-bottom:6px">${statusHtml}</div>
+        <div class="bar" style="background:#1a2130;height:8px;border-radius:99px">
+          ${segs}
+          <div class="mk" style="left:${curPct}%" title="当前北京时间 ${s.bjTime}"></div>
+        </div>
+        <div class="ticks">
+          <span style="left:0%">00</span><span style="left:29.17%">07</span><span style="left:62.5%">15</span><span style="left:83.33%">20</span><span style="left:100%">24</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    const z0 = curMin < 300 ? 'z-active' : '';
+    const z1 = curMin >= 300 && curMin < 420 ? 'z-active' : '';
+    const z2 = curMin >= 420 && curMin < 900 ? 'z-active' : '';
+    const z3 = curMin >= 900 && curMin < 1200 ? 'z-active' : '';
+    const z4 = curMin >= 1200 ? 'z-active' : '';
+
+    $('topSessionSec').innerHTML = `
+      <div class="vhead" style="margin-bottom:8px">
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px">
+          <h2 style="margin:0"><span class="live-dot"></span>🕒 当前交易时段 (北京 <b style="color:var(--gold)">${s.bjTime}</b>)</h2>
+          <span class="pill ${volCls}">${s.active.join(' + ')} · 波动性: ${s.volatility}</span>
+          <span class="sm" style="color:#cbd5e1">${s.tip}</span>
+        </div>
+        <span class="mut sm">全天进度 <b>${curPct}%</b></span>
+      </div>
+      <div style="margin-bottom:12px;padding:8px 12px;background:var(--card2);border:1px solid var(--bd);border-radius:8px">
+        <div class="bar" style="height:10px">
+          <div class="${z0}" style="width:20.83%;background:#f59e0b" title="00:00-05:00 美洲下半场"></div>
+          <div class="${z1}" style="width:8.34%;background:#10b981" title="05:00-07:00 休整期"></div>
+          <div class="${z2}" style="width:33.33%;background:#10b981" title="07:00-15:00 亚洲时段 (较低)"></div>
+          <div class="${z3}" style="width:20.83%;background:#f59e0b" title="15:00-20:00 欧洲时段 (逐渐升高)"></div>
+          <div class="${z4}" style="width:16.67%;background:#f43f5e" title="20:00-24:00 欧美重叠+美盘 (峰值/最高)"></div>
+          <div class="mk" style="left:${curPct}%" title="当前北京时间 ${s.bjTime}"></div>
+        </div>
+        <div class="ticks" style="height:14px;margin-top:4px">
+          <span style="left:0%">00:00</span>
+          <span style="left:20.83%">05:00</span>
+          <span style="left:29.17%">07:00(亚洲)</span>
+          <span style="left:62.5%">15:00(欧洲)</span>
+          <span style="left:83.33%">20:00(欧美重叠)</span>
+          <span style="left:100%">24:00</span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:10px">
+        ${sessCardsHtml}
+      </div>`;
+
+    $('session').innerHTML = `<h2>当前时段(北京 ${s.bjTime})</h2><p><b>${s.active.join(' + ')}</b><br>波动性:<b>${s.volatility}</b><br><span class="mut">${s.tip}</span></p>
+      <table><tr><th>时段</th><th>北京时间</th><th>波动</th></tr><tr><td>亚洲</td><td>07-15</td><td>较低</td></tr><tr><td>欧洲</td><td>15-24</td><td>逐渐升高</td></tr><tr><td>美洲</td><td>21-05</td><td>最高</td></tr><tr><td>欧美重叠</td><td>20-24</td><td>峰值</td></tr></table>`;
+  }
+  const g = d.gvz;
+  $('gvz').innerHTML = g ? `<h2><a href="https://www.tradingview.com/symbols/CBOE-GVZ/" target="_blank" rel="noopener">GVZ 黄金波动率指数 🔗</a></h2><p style="font-size:30px;margin:0"><b>${lk(API.GVZ, f2(g.value))}</b> <span class="mut" style="font-size:13px">5日变化 ${g.change5d >= 0 ? '+' : ''}${f2(g.change5d)}</span></p>
+    <div id="gvzGauge"></div><p class="mut sm">区间 ${f2(g.min1y)} ~ ${f2(g.max1y)}<br>${g.note}</p>` : '<h2>GVZ</h2><span class="err">获取失败</span>';
+  let blocks = '';
+  for (const k of ['1M', '5M', '15M', '1H', '4H', '1D']) {
+    const t = d.timeframes[k]; if (!t) continue;
+    const u = API[k];
+    const adj = adjBySpan(t.rangeIndex, t.span14, TOL);
+    const lv = levelFor(adj, t.trendDir);
+    const isFast = k === '1M' || k === '5M';
+    blocks += `<div class="tfblock" id="ind-${k}"><div class="tfh">${isFast ? '<span class="live-dot"></span>' : ''}<b>${k} 周期 10项指标明细</b> · 价格 <span class="num-chip ${isFast ? 'fast-num' : ''}">${lk(u, f2(t.price) + '$')}</span> <span class="mut sm">(${fmtBJ(t.lastBarTime)})</span> · 策略(${f2(TOL)}$)震荡指数 <b class="num-chip ${isFast ? 'fast-num' : ''}">${adj ?? '-'}</b>/100 <span class="mut sm">(原始 ${t.rangeIndex})</span> <span class="pill ${lv.cls}">${lv.name}</span> <span class="pill ${t.trendDir}">${t.trendDirText}</span> <span class="mut">14根波幅 ${f2(t.span14)}$ · +DI ${t.pdi} / -DI ${t.mdi}</span> ${k !== '1D' ? `<a href="#chart-${k}" style="margin-left:auto;color:var(--gold);font-size:12px">↑ 回到 ${k} 大图</a>` : ''}</div><div class="gauges">` +
+      GAUGES.map((g) => gauge(g, t[g.key], u, g.sub ? g.sub(t) : '')).join('') + `</div></div>`;
+  }
+  $('tf').innerHTML = blocks + `<div class="legend"><span><i style="background:#2ecc8f"></i>偏震荡/低波动</span><span><i style="background:#f0b429"></i>过渡/中性</span><span><i style="background:#ef5b5b"></i>偏趋势/高波动</span><span class="mut">▼ 为当前位置</span></div>`;
+  if (g) $('gvzGauge').innerHTML = gauge({ name: 'GVZ 1年分位(%)', key: 'x', max: 100, zones: PCT_ZONES, tip: 'GVZ 在过去一年中的位置:低=市场平静, 高=波动剧烈' }, g.pct1y, API.GVZ, '');
+  renderTrump();
+  renderCal();
+  restoreUiState();
+}
+
+let TRUMP_ONLY_GOLD = true;
+window.setTrumpFilter = (onlyGold) => {
+  TRUMP_ONLY_GOLD = !!onlyGold;
+  if ($('btnTrumpGold')) $('btnTrumpGold').classList.toggle('on', TRUMP_ONLY_GOLD);
+  if ($('btnTrumpAll')) $('btnTrumpAll').classList.toggle('on', !TRUMP_ONLY_GOLD);
+  if (D) { saveUiState(); renderTrump(); restoreUiState(); }
+};
+
+function fmtAge(min) {
+  if (min < 1) return '刚刚';
+  if (min < 60) return `${min}分钟前`;
+  if (min < 1440) return `${(min / 60).toFixed(1)}小时前`;
+  return `${(min / 1440).toFixed(1)}天前`;
+}
+
+function renderTrump() {
+  const tr = D && D.trump;
+  if (!tr || !tr.items) {
+    $('trumpSec').innerHTML = `<h2>🦅 特朗普言论 & 关税/地缘/美联储实时监控</h2><span class="mut">正在加载7×24实时快讯流...</span>`;
+    return;
+  }
+  const allItems = tr.items || [];
+  const goldItems = allItems.filter((x) => x.isGoldRelevant || x.impact !== 'LOW');
+  const showItems = TRUMP_ONLY_GOLD ? goldItems : allItems;
+  const recentAlertCnt = allItems.filter((x) => x.ageMin <= 180 && (x.impact === 'HIGH' || x.impact === 'MED')).length;
+
+  if ($('nav-trump')) {
+    $('nav-trump').textContent = recentAlertCnt ? `${recentAlertCnt}条新` : '平稳';
+    $('nav-trump').className = 'pill ' + (recentAlertCnt ? 'MIXED' : 'NEUT');
+  }
+
+  const schedHtml = (tr.schedule && tr.schedule.length)
+    ? `<div style="margin-bottom:10px;padding:8px 12px;background:var(--card2);border:1px solid var(--bd);border-radius:8px;font-size:12.5px">
+        <b style="color:var(--gold)">📅 本周金十日历 · 特朗普/白宫重点日程：</b>
+        ${tr.schedule.map((s) => `<span class="pill NEUT" style="margin:2px 4px">${s.time.replace('T', ' ').slice(5, 16)} ${s.title}</span>`).join('')}
+      </div>`
+    : '';
+
+  const listHtml = showItems.length ? showItems.map((x) => {
+    const impCls = x.impact === 'HIGH' ? 'TREND' : x.impact === 'MED' ? 'MIXED' : 'NEUT';
+    const impTxt = x.impact === 'HIGH' ? `🚨 高危冲击(${x.impactScore}分)` : x.impact === 'MED' ? `⚠️ 中等关注(${x.impactScore}分)` : `⚪ 一般内政(${x.impactScore}分)`;
+    const isRecent = x.ageMin <= 180 && x.impact !== 'LOW';
+    const bdrStyle = isRecent ? (x.impact === 'HIGH' ? 'border-left:3px solid var(--red);background:rgba(244,63,94,0.05);' : 'border-left:3px solid var(--yel);background:rgba(245,158,11,0.04);') : '';
+    const tagPills = (x.tags || []).map((t) => `<span class="pill NEUT">${t}</span>`).join(' ');
+    return `<div style="padding:10px 12px;background:var(--card2);border:1px solid var(--bd);border-radius:8px;margin-bottom:8px;${bdrStyle}">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:5px">
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+          <span class="pill ${impCls}">${impTxt}</span>
+          <span class="pill ${x.biasCls || 'NEUT'}">${x.goldBias}</span>
+          ${tagPills}
+          ${x.isDirect ? `<span class="pill" style="background:rgba(234,179,8,0.14);color:var(--gold);border:1px solid rgba(234,179,8,0.3)">🎙️ 直接表态/动作</span>` : ''}
+        </div>
+        <div class="sm mut" style="display:flex;align-items:center;gap:8px">
+          <span><b style="color:${x.ageMin <= 120 ? 'var(--gold)' : '#94a3b8'}">${fmtAge(x.ageMin)}</b> (${fmtBJ(x.time)})</span>
+          <a href="${x.uri}" target="_blank" rel="noopener" style="color:var(--gold);text-decoration:none">🔗 原文验证</a>
+        </div>
+      </div>
+      ${x.title ? `<div style="font-weight:700;color:#fff;font-size:13.5px;margin-bottom:3px">${x.title}</div>` : ''}
+      <div class="sm" style="color:#cbd5e1;line-height:1.5">${x.text}</div>
+    </div>`;
+  }).join('') : `<div class="mut sm">暂无符合筛选条件的言论动态</div>`;
+
+  $('trumpSec').innerHTML = `
+    <div class="vhead" style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0"><span class="live-dot"></span>🦅 特朗普言论 & 关税/联储/地缘实时监控 <span class="mut sm" style="font-weight:400">(7×24秒级快讯流 · 每15秒同步 · 近3h涉金异动自动置顶到页面最前方)</span></h2>
+        <span class="pill ${recentAlertCnt ? 'MIXED' : 'NEUT'}">${recentAlertCnt ? `近3小时有 ${recentAlertCnt} 条涉金表态` : '近3小时无高危涉金突发言论'}</span>
+      </div>
+      <div class="btns">
+        <button class="sm ${TRUMP_ONLY_GOLD ? 'on' : ''}" id="btnTrumpGold" onclick="setTrumpFilter(true)">🎯 仅看黄金相关 (${goldItems.length})</button>
+        <button class="sm ${!TRUMP_ONLY_GOLD ? 'on' : ''}" id="btnTrumpAll" onclick="setTrumpFilter(false)">📋 全部动态含内政 (${allItems.length})</button>
+        <a href="${tr.apiUrl}" target="_blank" rel="noopener"><button class="sm">🔗 验证实时快讯 JSON</button></a>
+      </div>
+    </div>
+    ${schedHtml}
+    <div id="trumpScrollBox" class="thin-scroll" style="max-height:460px;overflow-y:auto;padding-right:6px">
+      ${listHtml}
+    </div>`;
+}
+
+let CAL_RANGE = 'week'; // 'week' | '2d' | 'today'
+window.setCalRange = (mode) => {
+  CAL_RANGE = mode;
+  ['Week', '2d', 'Today'].forEach((k) => {
+    const el = $('calMode' + k);
+    if (el) el.classList.toggle('on', mode === k.toLowerCase());
+  });
+  if (D) renderCal();
+};
+
+function renderCal() {
+  if (D.calendar.url && $('calApi')) $('calApi').href = D.calendar.url;
+  const c = D.calendar, only = $('onlyImp').checked;
+  if (c.error && !(c.items && c.items.length)) {
+    $('cal').innerHTML = `<span class="err">金十日历获取失败: ${c.error}</span><br><span class="mut">可能被风控或网络不通,请点击「一键获取」重试,或直接访问 <a style="color:var(--gold)" href="https://rili.jin10.com/" target="_blank">rili.jin10.com</a></span>`;
+    return;
+  }
+
+  // 1) 渲染与金十数据《一周财经日历(weeklyEconomic)》官网 1:1 完全一致的 7天周报总览表 (日期 | 重要数据公布 | 事件与假期)
+  let gridHtml = '';
+  if (c.weeklyGrid && c.weeklyGrid.length) {
+    const rows = c.weeklyGrid.map((g) => {
+      const bgStyle = g.isToday ? 'background:rgba(232,184,74,0.09);border-left:3px solid var(--gold);' : '';
+      const dayBadge = g.isToday
+        ? `<div style="font-weight:700;color:var(--gold);font-size:14px">${g.md}<br><span class="pill MIXED" style="margin-top:3px">今 · ${g.wd}</span></div>`
+        : `<div style="font-weight:600;color:var(--tx);font-size:13px">${g.md}<br><span class="mut sm">${g.wd}</span></div>`;
+
+      const dataTags = g.dataTags && g.dataTags.length
+        ? g.dataTags.map((d) => {
+            const starCol = d.star >= 4 ? '#ef5b5b' : '#e8b84a';
+            const valStr = d.actual ? `公布:${d.actual}` : (d.consensus ? `预期:${d.consensus}` : (d.previous ? `前值:${d.previous}` : ''));
+            const tip = `${d.hm} [${d.country}] ${'★'.repeat(d.star)} ${d.title} | 前值:${d.previous || '-'} 预期:${d.consensus || '-'} 公布:${d.actual || '-'}`;
+            return `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;margin:2px 4px 2px 0;border-radius:6px;background:#181e29;border:1px solid ${d.star >= 4 ? 'rgba(239,91,91,0.5)' : '#2a3242'};font-size:12px" title="${tip}">
+              <b style="color:${starCol}">${d.summary}</b>
+              <span class="mut" style="font-size:11px">${d.hm}${valStr ? ' · ' + valStr : ''}</span>
+            </span>`;
+          }).join('')
+        : `<span class="mut sm">无重要数据</span>`;
+
+      const evTags = [];
+      if (g.evTags && g.evTags.length) {
+        g.evTags.forEach((ev) => {
+          const tip = `${ev.hm || '待定'} [${ev.country}] ${ev.title}`;
+          if (ev.kind === 'holiday') {
+            evTags.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;margin:2px 4px 2px 0;border-radius:6px;background:rgba(240,180,41,0.14);border:1px solid rgba(240,180,41,0.4);color:#f0b429;font-size:12px" title="${tip}">🏖️ <b>${ev.summary}</b></span>`);
+          } else {
+            evTags.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;margin:2px 4px 2px 0;border-radius:6px;background:rgba(88,166,255,0.12);border:1px solid rgba(88,166,255,0.35);color:#8ec5ff;font-size:12px" title="${tip}">🎙️ <b>${ev.summary}</b>${ev.hm && ev.hm !== '待定' ? `<span class="mut" style="font-size:11px">${ev.hm}</span>` : ''}</span>`);
+          }
+        });
+      }
+      const evHtml = evTags.length ? evTags.join('') : `<span class="mut sm">无重大事件/假期</span>`;
+
+      return `<tr style="${bgStyle}">
+        <td style="width:82px;text-align:center;vertical-align:middle">${dayBadge}</td>
+        <td style="vertical-align:middle;line-height:1.7">${dataTags}</td>
+        <td style="width:34%;vertical-align:middle;line-height:1.7">${evHtml}</td>
+      </tr>`;
+    }).join('');
+
+    gridHtml = `<div style="margin-bottom:14px">
+      <div class="sm" style="margin-bottom:6px;color:var(--mut);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <span>📌 <b>金十数据《一周财经日历》官方周报同款 7天总览表</b>（词条取自官方接口 <code>summary</code> 字段，与官网周报 1:1 严格一致；鼠标悬停词条可看全称与前值/预期/公布值）</span>
+        <span class="mut">红色边框 = ★4~5星高危数据 · 蓝色 = 央行/政要事件 · 黄色 = 休市假期</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <tr><th style="width:82px;text-align:center">日期</th><th>重要数据公布 (金十周报核心词条)</th><th style="width:34%">事件与假期 (央行决议 / 讲话 / 休市)</th></tr>
+          ${rows}
+        </table>
+      </div>
+    </div>`;
+  }
+
+  // 2) 渲染分时明细表 (可切换 本周全部7天 / 今明两日 / 仅看今日)
+  const items = (c.items || []).filter((e) => {
+    if (only && e.star < 3 && e.kind !== 'holiday') return false;
+    if (CAL_RANGE === 'today') return e.date === c.today;
+    if (CAL_RANGE === '2d') return e.date === c.today || e.date === c.tomorrow;
+    return true;
+  });
+
+  const typeBadge = (e) => {
+    if (e.kind === 'holiday') return `<span class="pill MIXED">🏖️休市</span>`;
+    if (e.kind === 'event') return `<span class="pill" style="background:rgba(88,166,255,0.18);color:#8ec5ff">🎙️事件</span>`;
+    return `<span class="pill" style="background:#1c2331;color:var(--mut)">📊数据</span>`;
+  };
+  const affectBadge = (af) => {
+    if (!af) return '-';
+    if (af.includes('利多金银')) return `<span style="color:#2ecc8f;font-weight:600">${af}</span>`;
+    if (af.includes('利空金银')) return `<span style="color:#ef5b5b;font-weight:600">${af}</span>`;
+    return `<span class="mut">${af}</span>`;
+  };
+
+  $('cal').innerHTML = gridHtml +
+    `<div class="sm" style="margin:10px 0 6px;font-weight:600;color:var(--gold)">📋 分时详细数据表 (${CAL_RANGE === 'week' ? '本周全部7天' : CAL_RANGE === '2d' ? '今明两日' : '仅今日'} · 共 ${items.length} 条 · 已包含官方数值单位 % / 万人 / 万户 / 万桶)</div>` +
+    `<div style="overflow-x:auto"><table><tr><th>时间(北京)</th><th>国家</th><th>类型</th><th>重要性</th><th>事件 / 指标全称 <span class="mut">(金十周报词条)</span></th><th>前值</th><th>预期</th><th>公布</th><th>金十影响判定</th></tr>` +
+    items.map((e) => `<tr class="${e.star >= 4 ? 'imp' : ''}">
+      <td style="white-space:nowrap">${e.time.replace('T', ' ').slice(0, 16)}${e.date === c.today ? ' <span class="pill MIXED" style="padding:0 4px;font-size:10px">今</span>' : ''}</td>
+      <td>${e.country}</td>
+      <td>${typeBadge(e)}</td>
+      <td class="star">${e.kind === 'holiday' ? '休市' : '★'.repeat(e.star)}</td>
+      <td>${e.title}</td>
+      <td>${e.previous || '-'}</td>
+      <td>${e.consensus || '-'}</td>
+      <td><b>${e.actual || '-'}</b></td>
+      <td>${affectBadge(e.affect)}</td>
+    </tr>`).join('') + '</table></div>';
+}
+
+function buildText() {
+  const d = D, m = d.model, L = [];
+  const ea = calcEaModel(ACC_BAL, EA_CFG, CUR_LAYERS, USED_MARGIN);
+  const adjMap = {}, eMap = {};
+  for (const k of ['1M', '5M', '15M', '1H', '4H', '1D']) {
+    const t = d.timeframes[k];
+    if (t && t.rangeIndex != null) adjMap[k] = adjBySpan(t.rangeIndex, t.span14, TOL);
+  }
+  for (const k of ['1M', '5M', '15M', '1H', '4H']) {
+    const sp = (m && m.sparks && m.sparks[k]) || [];
+    const ser = calcEntrySeries(sp, TOL);
+    eMap[k] = { ser, last: ser[ser.length - 1] || {} };
+  }
+  const eaDir = calcEaDirective(d, ea, adjMap, eMap);
+
+  L.push('【黄金(XAUUSD)震荡/单边量化数据 — 用于 M1 双向追踪倍投马丁 EA 实盘风控判断】');
+  L.push(`我的账户余额: $${ACC_BAL} | 当前/风控层数: ${ea.curLayerNum}层(累计${f2(ea.curInfo.cumLot)}手,建仓浮亏$${f2(ea.curInfo.ddUsd)}) | 已用预付款: $${ea.usedMargin} (实时预付款比例: ${ea.marginLevelBal}%)`);
+  L.push(`在 ${ea.curLayerNum} 层仓位下推导65%安全震荡容忍区间: ${f2(TOL)}$ | 100%强平极限跨度: ${f2(ea.hard.span)}$ (若不锁方向连续死加则在第${ea.uncontrolledWarn.layer}~${ea.uncontrolledHard.layer}层触发倍投警戒)`);
+  L.push(`EA核心参数: 首单lot=${ea.cfg.lot}, 倍投K_Lot=${ea.cfg.kLot}, 单笔上限Maxlot=${ea.cfg.maxLot}, 最大层数Totals=${ea.cfg.totals}, 间距Step=${ea.cfg.stepUsd}$(100点), 整组止盈StopProfit=${ea.cfg.tpPerOrder}$×层数`);
+  L.push(`实时手动操作指令(以1M+5M为主65%、15M+1H为辅35%): 【${eaDir.badgeTxt}】 ${eaDir.pauseSideTxt}`);
+  L.push(`  - 核心判断: ${eaDir.headline}`);
+  L.push(`  - 恢复双向条件: ${eaDir.resumeRule.replace(/<[^>]+>/g, '')}`);
+  L.push('全周期+跨市场实时更新时间(北京): ' + new Date(d.fastUpdatedAt || d.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }));
+  L.push('全量更新时间(北京): ' + new Date(d.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }));
+  L.push('数据源: ' + d.symbol);
+  if (m) {
+    L.push(`\n■ 实时量化震荡指数 (0-100分, ≥70强震荡, 55-70偏震荡, 45-55过渡, 30-45偏单边, <30强单边)`);
+    L.push(`  - 当前主导趋势方向: ${m.overallDirText}`);
+    L.push(`  - 原始技术面震荡指数: ${m.current}/100 [${m.currentLevel.name}] | 实盘运行指数: ${m.run}/100 [${m.runLevel.name}]`);
+    L.push(`  - 分周期指数与波幅(对比 ${f2(TOL)}$ 区间): ` + ['1M', '5M', '15M', '1H', '4H', '1D'].filter((k) => d.timeframes[k]).map((k) => {
+      const t = d.timeframes[k], adj = adjBySpan(t.rangeIndex, t.span14, TOL);
+      return `${k}:策略指数${adj}(原${t.rangeIndex})/14根波幅${f2(t.span14)}$/${t.trendDirText}`;
+    }).join(' | '));
+    L.push(`  - 实时修正项: ` + (m.runAdj || []).map((a) => `${a.name} ${a.v >= 0 ? '+' + a.v : a.v}`).join(', '));
+    if (m.squeeze && m.squeeze.strength > 0) L.push(`  - 波动率挤压预警强度: ${m.squeeze.strength}% (${m.squeeze.why.join('、')})`);
+    L.push(`\n■ 未来 5 个交易日震荡指数预测:`);
+    m.forecast.forEach((f) => {
+      const p = f.parts;
+      const evs = f.events.map((e) => `${e.time.slice(5, 16)} ${e.country}${e.title}(-${e.p})`).join('; ');
+      L.push(`  - ${f.date}(${f.label}): ${f.index}/100 [${levelFor(f.index, m.overallDir).name}] | 构成: 技术${p.tech}, kNN${p.knn ?? '-'}(${p.knnP ?? '-'}%), 挤压${p.squeeze}, GVZ${p.gvz >= 0 ? '+' + p.gvz : p.gvz}, 事件${p.events} | 风险事件: ${evs || '无'}`);
+    });
+    if (m.knn) {
+      L.push(`  - 10年日线kNN相似行情(${m.knn.samples}样本): ` + m.knn.horizons.map((h) => `T+${h.h}天震荡概率${h.p}%(基准${h.base}%)`).join(', ') + ` | 最相似日期: ` + m.knn.similar.map((s) => `${s.date}(${s.next3})`).join('、'));
+    }
+  }
+  if (d.macro && d.macro.dxy) {
+    const mc = d.macro;
+    const dxy = mc.dxy || {}, us10 = mc.us10y || {}, us2 = mc.us2y || {}, xag = mc.xag || {}, vix = mc.vix || {}, autd = mc.autd || {};
+    L.push(`\n■ 跨市场实时先行指数矩阵 (0秒延迟):`);
+    L.push(`  - 美元指数(DXY): ${f2(dxy.last)} (${dxy.chgPct >= 0 ? '+' : ''}${f2(dxy.chgPct)}%) | DXY 15M ADX: ${f2(mc.dxyAdx)} | 金-美20根相关性 r=${f2(mc.corrXauDxy)}`);
+    L.push(`  - 美债收益率: 10年期 ${f2(us10.last)}% (${us10.chgPct >= 0 ? '+' : ''}${f2(us10.chgPct)}%) | 2年期 ${f2(us2.last)}% | 10Y-2Y利差 ${f2(mc.yieldSpread)}bp`);
+    L.push(`  - 现货白银(XAGUSD): ${f2(xag.last)}$ (${xag.chgPct >= 0 ? '+' : ''}${f2(xag.chgPct)}%) | 实时金银比 ${f2(mc.gsr)} | 白银-黄金日内强弱差 ${f2(mc.agLead)}%`);
+    L.push(`  - VIX恐慌指数: ${f2(vix.last)} (${vix.chgPct >= 0 ? '+' : ''}${f2(vix.chgPct)}%) | 上海黄金TD(AUTD): ${f2(autd.last)}元/克 (${autd.chgPct >= 0 ? '+' : ''}${f2(autd.chgPct)}%)`);
+  }
+  if (d.trump && d.trump.items) {
+    const tGold = d.trump.items.filter((x) => x.isGoldRelevant || x.impact !== 'LOW').slice(0, 6);
+    L.push(`\n■ 特朗普言论 & 关税/联储/地缘实时监控 (近3h涉金表态 ${d.trump.recent2hCount || 0} 条):`);
+    if (tGold.length) {
+      tGold.forEach((x) => L.push(`  - [${fmtBJ(x.time)} | ${fmtAge(x.ageMin)} | 冲击:${x.impact}(${x.impactScore}分) | ${x.goldBias}] ${x.title ? x.title + ': ' : ''}${x.text.slice(0, 140)}`));
+    } else {
+      L.push('  - 近期无涉及关税/美联储/地缘冲突的高危言论');
+    }
+  }
+  L.push(`\n■ 当前时段(北京 ${d.session.bjTime}): ${d.session.active.join('+')},波动性 ${d.session.volatility}。${d.session.tip}`);
+  L.push('\n■ 多周期10项技术指标明细(阈值: ADX<20震荡/>25趋势; CHOP>61.8震荡/<38.2趋势; ATR14/ATR100 <0.82挤压/>1.25扩张)');
+  for (const k of ['1M', '5M', '15M', '1H', '4H', '1D']) {
+    const t = d.timeframes[k]; if (!t) continue;
+    const sp = (m && m.sparks && m.sparks[k]) || [];
+    const eLast = calcEntrySeries(sp, TOL).slice(-1)[0];
+    const eStr = eLast ? ` | 入场判断:${eLast.entryTxt}(适宜度${eLast.entryScore}/100,${eLast.entryReason})` : '';
+    L.push(`[${k} | ${fmtBJ(t.lastBarTime)}] 价格 ${f2(t.price)}$ | 方向:${t.trendDirText}(14根净涨跌 ${f2(t.net14)}$) | 14根波幅 ${f2(t.span14)}$(24根 ${f2(t.span24)}$) | 策略(${f2(TOL)}$)震荡指数 ${adjBySpan(t.rangeIndex, t.span14, TOL)}/100(原始 ${t.rangeIndex}) | 指数单次变化 ${t.idxChg1 >= 0 ? '+' : ''}${t.idxChg1 ?? 0}分(单次跌 ${t.idxDrop1 ?? 0}分,14根最大单次跌 ${t.maxDrop14 ?? 0}分)${eStr} | ADX ${t.adx}(+DI ${t.pdi}/-DI ${t.mdi}) | CHOP ${t.chop} | ATR比率 ${t.atrRatio}`);
+    L.push(`   扩展: 效率比ER ${t.er} | 布林带宽 ${t.bbw}%(分位 ${t.bbwPct}%) | 20根穿MA20次数 ${t.maCross20 ?? '-'}次 | ATR分位 ${t.atrPct}% | EMA50 ${f2(t.ema50)}$(偏离 ${t.emaDist} 倍ATR) | RSI ${t.rsi}`);
+  }
+  if (d.gvz) L.push(`\n■ GVZ(黄金波动率指数): ${f2(d.gvz.value)},5日变化 ${f2(d.gvz.change5d)},1年分位 ${d.gvz.pct1y}%(1年区间 ${f2(d.gvz.min1y)}~${f2(d.gvz.max1y)}),${d.gvz.note}`);
+  L.push('\n■ 金十数据《一周财经日历》(本周重点数据与事件,★3以上,北京时间)');
+  const items = (d.calendar.items || []).filter((e) => e.star >= 3 || e.kind === 'holiday');
+  if (!items.length) L.push(d.calendar.error ? '(获取失败: ' + d.calendar.error + ')' : '(无重要事件)');
+  items.forEach((e) => L.push(`${e.time.replace('T', ' ').slice(0, 16)} [${e.country}] ${e.kind === 'holiday' ? '[休市]' : '★'.repeat(e.star)} ${e.title} | 前值 ${e.previous || '-'} 预期 ${e.consensus || '-'} 公布 ${e.actual || '-'} ${e.affect ? '| ' + e.affect : ''}`));
+  if (d.errors.length) L.push('\n(注意: 以下数据获取失败: ' + d.errors.join(' | ') + ')');
+  L.push(`\n请基于以上数据(并结合我 $${ACC_BAL} 账户、${ea.curLayerNum}层仓位、预付款比例 ${ea.marginLevelBal}% 以及 ${f2(TOL)}$ 安全震荡区间)判断:当前是否需要手动暂停开多单(Buy)或开空单(Sell)?未来数小时黄金更可能是震荡还是单边行情?`);
+  return L.join('\n');
+}
+
+// 初始化账户风控与EA参数输入框
+function syncEaInputs() {
+  if ($('accBalInput')) $('accBalInput').value = ACC_BAL;
+  if ($('riskLossInput')) $('riskLossInput').value = RISK_LOSS_USD;
+  if ($('buyLotsInput')) $('buyLotsInput').value = BUY_LOTS;
+  if ($('sellLotsInput')) $('sellLotsInput').value = SELL_LOTS;
+  if ($('buyAvgPxInput')) $('buyAvgPxInput').value = BUY_AVG_PX;
+  if ($('sellAvgPxInput')) $('sellAvgPxInput').value = SELL_AVG_PX;
+  if ($('stopOutPctInput')) $('stopOutPctInput').value = STOP_OUT_PCT;
+  if ($('curLayerInput')) $('curLayerInput').value = CUR_LAYERS;
+  if ($('usedMarginInput')) $('usedMarginInput').value = USED_MARGIN;
+  if ($('eaLot')) $('eaLot').value = EA_CFG.lot;
+  if ($('eaK')) $('eaK').value = EA_CFG.kLot;
+  if ($('eaMaxLot')) $('eaMaxLot').value = EA_CFG.maxLot;
+  if ($('eaTotals')) $('eaTotals').value = EA_CFG.totals;
+  if ($('eaStep')) $('eaStep').value = EA_CFG.stepUsd;
+  if ($('eaTp')) $('eaTp').value = EA_CFG.tpPerOrder;
+  if ($('tolSlider')) $('tolSlider').value = TOL;
+  if ($('tolInput')) $('tolInput').value = TOL;
+  if ($('tolValTxt')) $('tolValTxt').textContent = f2(TOL);
+}
+
+// 根据当前输入的账户金额 + 可亏线 + 买卖手数(净敞口N) + 已用预付款 + EA参数，自动按 D = L / (N * 100) 反推抗单跨度 TOL 并重算全站
+function applyAccountAndRecalc(customBal, triggerSource) {
+  if (customBal != null) {
+    ACC_BAL = Math.max(50, Math.min(1000000, Number(customBal) || 2700));
+    if (customBal === 2000 && RISK_LOSS_USD > 2000) RISK_LOSS_USD = 1500;
+  } else if ($('accBalInput')) {
+    ACC_BAL = Math.max(50, Math.min(1000000, Number($('accBalInput').value) || 2700));
+  }
+
+  if ($('riskLossInput') && customBal == null) RISK_LOSS_USD = Math.max(50, Math.min(1000000, Number($('riskLossInput').value) || 1500));
+  if ($('buyLotsInput')) BUY_LOTS = Math.max(0, Math.min(200, Number($('buyLotsInput').value) || 0));
+  if ($('sellLotsInput')) SELL_LOTS = Math.max(0, Math.min(200, Number($('sellLotsInput').value) || 0));
+  if ($('buyAvgPxInput')) BUY_AVG_PX = Math.max(0, Number($('buyAvgPxInput').value) || 0);
+  if ($('sellAvgPxInput')) SELL_AVG_PX = Math.max(0, Number($('sellAvgPxInput').value) || 0);
+  if ($('stopOutPctInput')) STOP_OUT_PCT = Math.max(0, Math.min(100, Number($('stopOutPctInput').value) || 20));
+  if ($('usedMarginInput')) USED_MARGIN = Math.max(1, Math.min(500000, Number($('usedMarginInput').value) || 14));
+  if ($('eaLot')) EA_CFG.lot = Math.max(0.01, Number($('eaLot').value) || 0.02);
+  if ($('eaK')) EA_CFG.kLot = Math.max(1.01, Number($('eaK').value) || 1.38);
+  if ($('eaMaxLot')) EA_CFG.maxLot = Math.max(EA_CFG.lot, Number($('eaMaxLot').value) || 1.32);
+  if ($('eaTotals')) EA_CFG.totals = Math.max(1, Math.min(60, Math.round(Number($('eaTotals').value) || 24)));
+  if ($('eaStep')) EA_CFG.stepUsd = Math.max(0.1, Number($('eaStep').value) || 1.00);
+  if ($('eaTp')) EA_CFG.tpPerOrder = Math.max(0.5, Number($('eaTp').value) || 4.0);
+
+  // 先用临时模型拿到各层累计手数序列，从而由买单/卖单手数自动识别层数
+  const tmpEa = calcEaModel(ACC_BAL, EA_CFG, CUR_LAYERS, USED_MARGIN);
+  if (triggerSource === 'layer') {
+    if ($('curLayerInput')) CUR_LAYERS = Math.max(1, Math.min(EA_CFG.totals, Number($('curLayerInput').value) || 7));
+    const targetCumLot = (tmpEa.layers[CUR_LAYERS - 1] || tmpEa.layers[0]).cumLot;
+    if (SELL_LOTS > BUY_LOTS) SELL_LOTS = targetCumLot;
+    else BUY_LOTS = targetCumLot;
+    if ($('buyLotsInput')) $('buyLotsInput').value = BUY_LOTS;
+    if ($('sellLotsInput')) $('sellLotsInput').value = SELL_LOTS;
+  } else {
+    // 优先由【当前买单手数 / 当前卖单手数】自动识别主层数，并以 |买-卖| 净敞口 N 计算抗单跨度
+    CUR_LAYERS = Math.max(1, tmpEa.buyInfo.layer, tmpEa.sellInfo.layer);
+    if ($('curLayerInput')) $('curLayerInput').value = CUR_LAYERS;
+  }
+
+  localStorage.setItem('gold_acc_bal', ACC_BAL);
+  localStorage.setItem('gold_risk_loss', RISK_LOSS_USD);
+  localStorage.setItem('gold_buy_lots', BUY_LOTS);
+  localStorage.setItem('gold_sell_lots', SELL_LOTS);
+  localStorage.setItem('gold_buy_avg_px', BUY_AVG_PX);
+  localStorage.setItem('gold_sell_avg_px', SELL_AVG_PX);
+  localStorage.setItem('gold_stop_out_pct', STOP_OUT_PCT);
+  localStorage.setItem('gold_cur_layers', CUR_LAYERS);
+  localStorage.setItem('gold_used_margin', USED_MARGIN);
+  localStorage.setItem('gold_ea_lot', EA_CFG.lot);
+  localStorage.setItem('gold_ea_klot', EA_CFG.kLot);
+  localStorage.setItem('gold_ea_maxlot', EA_CFG.maxLot);
+  localStorage.setItem('gold_ea_totals', EA_CFG.totals);
+  localStorage.setItem('gold_ea_step', EA_CFG.stepUsd);
+  localStorage.setItem('gold_ea_tp', EA_CFG.tpPerOrder);
+
+  const ea = calcEaModel(ACC_BAL, EA_CFG, CUR_LAYERS, USED_MARGIN);
+  TOL = ea.recommendedTol;
+  localStorage.setItem('gold_tol', TOL);
+  syncEaInputs();
+  render();
+  triggerFlash();
+  toast(`已重算：净敞口 N=${f2(ea.netLots)}手 ($${ea.netLossPerUsd}/$) · 亏$${ea.riskLossUsd}可抗 ${f2(TOL)}$ (${ea.warn.pts}点) · 账户极限 ${f2(ea.hard.span)}$`);
+}
+
+window.pickQuickNetLots = (nVal) => {
+  const targetNet = Math.max(0.02, Number(nVal) || 0.50);
+  const minor = 0.02;
+  if (SELL_LOTS > BUY_LOTS) {
+    BUY_LOTS = minor;
+    SELL_LOTS = Math.round((targetNet + minor) * 100) / 100;
+  } else {
+    SELL_LOTS = minor;
+    BUY_LOTS = Math.round((targetNet + minor) * 100) / 100;
+  }
+  syncEaInputs();
+  applyAccountAndRecalc(null, 'lots');
+};
+
+window.pickQuickLayer = (n) => {
+  if ($('curLayerInput')) $('curLayerInput').value = n;
+  applyAccountAndRecalc(null, 'layer');
+};
+window.setAccountBal = (v) => applyAccountAndRecalc(v);
+window.applyEaPreset = (mode) => {
+  if (mode === 'cur' || mode === 'current') {
+    EA_CFG = { lot: 0.02, kLot: 1.38, maxLot: 1.32, totals: 24, stepUsd: 1.00, tpPerOrder: 4.0 };
+    ACC_BAL = 2700;
+    RISK_LOSS_USD = 1500;
+    BUY_LOTS = 0.45;
+    SELL_LOTS = 0.02;
+    CUR_LAYERS = 7;
+    USED_MARGIN = 14;
+  } else if (mode === 'bal2000') {
+    EA_CFG = { lot: 0.02, kLot: 1.38, maxLot: 1.32, totals: 24, stepUsd: 1.00, tpPerOrder: 4.0 };
+    ACC_BAL = 2000;
+    RISK_LOSS_USD = 1500;
+    BUY_LOTS = 0.52;
+    SELL_LOTS = 0.02;
+    CUR_LAYERS = 7;
+    USED_MARGIN = 14;
+  } else if (mode === 'log') {
+    EA_CFG = { lot: 0.02, kLot: 1.38, maxLot: 3.50, totals: 50, stepUsd: 1.00, tpPerOrder: 4.0 };
+    ACC_BAL = 20000;
+    RISK_LOSS_USD = 15000;
+    BUY_LOTS = 0.45;
+    SELL_LOTS = 0.02;
+    CUR_LAYERS = 7;
+    USED_MARGIN = 14;
+  }
+  syncEaInputs();
+  applyAccountAndRecalc(ACC_BAL);
+};
+
+// 初始化时根据账户金额与净敞口同步一次 TOL
+{
+  const initEa = calcEaModel(ACC_BAL, EA_CFG, CUR_LAYERS, USED_MARGIN);
+  TOL = initEa.recommendedTol;
+  syncEaInputs();
+}
+
+if ($('btnCalcAccount')) $('btnCalcAccount').onclick = () => applyAccountAndRecalc();
+if ($('accBalInput')) $('accBalInput').onchange = () => applyAccountAndRecalc();
+if ($('riskLossInput')) $('riskLossInput').onchange = () => applyAccountAndRecalc();
+if ($('buyLotsInput')) $('buyLotsInput').onchange = () => applyAccountAndRecalc(null, 'lots');
+if ($('sellLotsInput')) $('sellLotsInput').onchange = () => applyAccountAndRecalc(null, 'lots');
+if ($('buyAvgPxInput')) $('buyAvgPxInput').onchange = () => applyAccountAndRecalc();
+if ($('sellAvgPxInput')) $('sellAvgPxInput').onchange = () => applyAccountAndRecalc();
+if ($('stopOutPctInput')) $('stopOutPctInput').onchange = () => applyAccountAndRecalc();
+if ($('curLayerInput')) $('curLayerInput').onchange = () => applyAccountAndRecalc(null, 'layer');
+if ($('usedMarginInput')) $('usedMarginInput').onchange = () => applyAccountAndRecalc();
+
+if ($('tolSlider')) $('tolSlider').oninput = (e) => {
+  if ($('tolInput')) $('tolInput').value = e.target.value;
+  if ($('tolValTxt')) $('tolValTxt').textContent = e.target.value;
+};
+if ($('tolInput')) $('tolInput').oninput = (e) => {
+  if ($('tolSlider')) $('tolSlider').value = e.target.value;
+  if ($('tolValTxt')) $('tolValTxt').textContent = e.target.value;
+};
+function applyTol(v) {
+  TOL = Math.max(3, Math.min(300, Number(v) || 14.2));
+  localStorage.setItem('gold_tol', TOL);
+  if ($('tolSlider')) $('tolSlider').value = TOL;
+  if ($('tolInput')) $('tolInput').value = TOL;
+  if ($('tolValTxt')) $('tolValTxt').textContent = f2(TOL);
+  render();
+  triggerFlash();
+  toast(`已手动微调安全震荡区间为 ${f2(TOL)} 美元并重新计算全部指数`);
+}
+window.setTol = (v) => applyTol(v);
+if ($('btnCalcTol')) $('btnCalcTol').onclick = () => applyTol($('tolInput').value);
+
+$('btnFetch').onclick = () => load(true, false);
+$('btnFast').onclick = () => { load(false, true); toast('已刷新全周期+跨市场实时数据'); };
+$('onlyImp').onchange = () => D && renderCal();
+$('btnCopy').onclick = async () => {
+  if (!D) return;
+  const text = buildText();
+  try { await navigator.clipboard.writeText(text); }
+  catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+  toast('已复制全部实时信息');
+};
+load(false, false);
+setInterval(() => load(false, true), 15 * 1000);      // 1M/5M/15M/1H/4H + 跨市场指数 每 15 秒实时自动刷新(仅 1M/5M 指数和价格数字背景闪烁)
+setInterval(() => load(false, false), 3 * 60 * 1000); // 日线/金十周报日历等全量数据每 3 分钟自动刷新
+</script>
+</body>
+</html>
