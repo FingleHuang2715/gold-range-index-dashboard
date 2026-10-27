@@ -4,11 +4,5 @@
     "api/data.js": {
       "maxDuration": 60
     }
-  },
-  "rewrites": [
-    {
-      "source": "/api/data",
-      "destination": "/api/data.js"
-    }
-  ]
+  }
 }
