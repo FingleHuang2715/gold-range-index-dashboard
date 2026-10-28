@@ -2098,7 +2098,7 @@ window.toggleCandle = function(tf) {
 function render() {
   if (!D) return;
   const d = D;
-  const mt4 = d.mt4 && d.mt4.balance > 0 && (Date.now() - d.mt4.ts < 120000) ? d.mt4 : null;
+  const mt4 = d.mt4 && d.mt4.balance > 0 && (Date.now() - d.mt4.ts < 3600000) ? d.mt4 : null;
   if (mt4) {
     ACC_BAL = Math.round(mt4.balance);
     BUY_LOTS = r2(mt4.buyLots);
@@ -4210,12 +4210,18 @@ function buildMql4Source(kind) {
     '   double mLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);',
     '   int    accNum = AccountNumber();',
     '   string srv    = AccountServer();',
+    '   StringReplace(srv, " ", "_");',
+    '   StringReplace(srv, "#", "");',
+    '   StringReplace(srv, "&", "");',
+    '   string symClean = Symbol();',
+    '   StringReplace(symClean, " ", "");',
+    '   StringReplace(symClean, "#", "");',
     '   int    sprd   = (int)MarketInfo(Symbol(), MODE_SPREAD);',
     '',
     '   string qs = StringConcatenate(',
     '      "?account=", IntegerToString(accNum),',
     '      "&server=", srv,',
-    '      "&symbol=", Symbol(),',
+    '      "&symbol=", symClean,',
     '      "&bid=", DoubleToString(Bid, 2),',
     '      "&ask=", DoubleToString(Ask, 2),',
     '      "&spread=", IntegerToString(sprd),',

@@ -1592,9 +1592,21 @@ function findEnvBySuffix(...suffixes) {
   }
   return '';
 }
-// 兼容自定义前缀(如 STORAGE_KV_REST_API_URL / STORAGE_UPSTASH_REDIS_REST_URL 等)
-const MT4_REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || findEnvBySuffix('KV_REST_API_URL', 'REDIS_REST_URL');
-const MT4_REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || findEnvBySuffix('KV_REST_API_TOKEN', 'REDIS_REST_TOKEN');
+function deriveUpstashFromRedisUrl() {
+  const rawUrl = process.env.STORAGE_URL || process.env.REDIS_URL || process.env.KV_URL || findEnvBySuffix('_URL');
+  if (!rawUrl || (!rawUrl.startsWith('redis://') && !rawUrl.startsWith('rediss://'))) return { url: '', token: '' };
+  try {
+    const u = new URL(rawUrl);
+    if (u.hostname && u.password) {
+      return { url: `https://${u.hostname}`, token: decodeURIComponent(u.password) };
+    }
+  } catch (e) {}
+  return { url: '', token: '' };
+}
+const _derivedRedis = deriveUpstashFromRedisUrl();
+// 兼容自定义前缀(如 STORAGE_REST_API_URL / STORAGE_KV_REST_API_URL / STORAGE_URL 等)
+const MT4_REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || findEnvBySuffix('REST_API_URL', 'REDIS_REST_URL') || _derivedRedis.url;
+const MT4_REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || findEnvBySuffix('REST_API_TOKEN', 'REDIS_REST_TOKEN') || _derivedRedis.token;
 const MT4_PUSH_TOKEN = process.env.MT4_TOKEN || '';
 async function mt4Redis(cmd) {
   if (!MT4_REDIS_URL || !MT4_REDIS_TOKEN) return null;
@@ -1715,7 +1727,7 @@ async function handleApiMt4(req, res) {
       if (live) latestMt4State = live;
     }
     res.writeHead(200, corsHeaders);
-    return res.end(JSON.stringify({ ok: true, connected: !!latestMt4State, mt4: latestMt4State }));
+    return res.end(JSON.stringify({ ok: true, redisOk: !!(MT4_REDIS_URL && MT4_REDIS_TOKEN), connected: !!latestMt4State, mt4: latestMt4State }));
   } catch (e) {
     res.writeHead(500, corsHeaders);
     return res.end(JSON.stringify({ ok: false, error: e.message }));

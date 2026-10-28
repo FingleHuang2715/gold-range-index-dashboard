@@ -87,12 +87,18 @@ void PushAccountDataToWeb() {
    double mLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
    int    accNum = AccountNumber();
    string srv    = AccountServer();
+   StringReplace(srv, " ", "_");
+   StringReplace(srv, "#", "");
+   StringReplace(srv, "&", "");
+   string symClean = Symbol();
+   StringReplace(symClean, " ", "");
+   StringReplace(symClean, "#", "");
    int    sprd   = (int)MarketInfo(Symbol(), MODE_SPREAD);
 
    string qs = StringConcatenate(
       "?account=", IntegerToString(accNum),
       "&server=", srv,
-      "&symbol=", Symbol(),
+      "&symbol=", symClean,
       "&bid=", DoubleToString(Bid, 2),
       "&ask=", DoubleToString(Ask, 2),
       "&spread=", IntegerToString(sprd),
