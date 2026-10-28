@@ -238,8 +238,10 @@
           <span id="mt4StatusPill" class="pill NEUT">等待 MT4 脚本推送数据...</span>
         </div>
         <div class="btns">
-          <button class="pri sm" onclick="downloadMt4Script()" style="background:#0284c7;border-color:#38bdf8;color:#fff;font-weight:800">📥 一键下载 GoldDashboardSync.mq4 脚本文件</button>
-          <button class="sm" onclick="copyMt4ScriptCode()" style="border-color:#38bdf8;color:#38bdf8;font-weight:700">📋 一键复制 MQL4 源码</button>
+          <button class="pri sm" onclick="downloadMt4Script('script')" style="background:#0284c7;border-color:#38bdf8;color:#fff;font-weight:800" title="放入 MQL4\Scripts，可与马丁EA挂在同一张图">📥 下载【脚本版】GoldDashboardSyncScript.mq4 → Scripts</button>
+          <button class="sm" onclick="copyMt4ScriptCode('script')" style="border-color:#38bdf8;color:#38bdf8;font-weight:700">📋 复制脚本版源码</button>
+          <button class="pri sm" onclick="downloadMt4Script('ea')" style="background:#7c3aed;border-color:#a78bfa;color:#fff;font-weight:800" title="放入 MQL4\Experts，需单独一张图表">📥 下载【EA版】GoldDashboardSync.mq4 → Experts</button>
+          <button class="sm" onclick="copyMt4ScriptCode('ea')" style="border-color:#a78bfa;color:#a78bfa;font-weight:700">📋 复制EA版源码</button>
           <button class="sm" onclick="simulateMt4Push()" title="模拟推送一笔 MT4 实盘持仓数据，测试网站实时联动效果">🧪 模拟MT4推送测试</button>
           <button class="sm" onclick="toggleMt4Guide()">✖ 收起面板</button>
         </div>
@@ -4075,23 +4077,19 @@ function updateMt4UiStatus(mt4, ea) {
   }
 }
 
-function buildMql4Source() {
+function buildMql4Source(kind) {
+  const isScript = kind === 'script';
   const apiUrl = window.location.origin + '/api/mt4';
-  return [
-    '//+------------------------------------------------------------------+',
-    '//|                                            GoldDashboardSync.mq4 |',
-    '//|        黄金震荡指数 & 马丁EA风控台 — MT4 实盘数据实时同步脚本     |',
-    '//|   100%只读安全保证：绝不调用任何下单/改单/平仓函数，零交易干预！  |',
-    '//+------------------------------------------------------------------+',
-    '#property copyright "Gold Range Index Dashboard"',
-    '#property version   "1.00"',
-    '#property strict',
-    '',
-    'input string DashboardUrl   = "' + apiUrl + '"; // 网站接收接口地址(若本地运行则为 http://localhost:3000/api/mt4)',
-    'input int    SyncIntervalSec = 3;               // 同步间隔秒数 (建议 2~5 秒)',
-    'input string GoldSymbolKey  = "XAU";            // 黄金品种匹配关键字 (自动兼容 XAUUSD / GOLD)',
-    'input int    MagicFilter    = 0;                // EA魔术号过滤 (0 = 统计账户内所有黄金订单)',
-    '',
+  const entryLines = isScript ? [
+    '// 脚本只运行一次，这里用循环常驻，直到手动移除脚本/关闭图表/关闭MT4',
+    'void OnStart() {',
+    '   while(!IsStopped()) {',
+    '      PushAccountDataToWeb();',
+    '      Sleep(MathMax(1, SyncIntervalSec) * 1000);',
+    '   }',
+    '   Comment("");',
+    '}'
+  ] : [
     'int OnInit() {',
     '   EventSetTimer(MathMax(1, SyncIntervalSec));',
     '   PushAccountDataToWeb();',
@@ -4108,7 +4106,25 @@ function buildMql4Source() {
     '',
     'void OnTimer() {',
     '   PushAccountDataToWeb();',
-    '}',
+    '}'
+  ];
+  return [
+    '//+------------------------------------------------------------------+',
+    isScript ? '//|                              GoldDashboardSyncScript.mq4 (脚本版) |' : '//|                                     GoldDashboardSync.mq4 (EA版) |',
+    '//|        黄金震荡指数 & 马丁EA风控台 — MT4 实盘数据实时同步脚本     |',
+    '//|   100%只读安全保证：绝不调用任何下单/改单/平仓函数，零交易干预！  |',
+    '//+------------------------------------------------------------------+',
+    '#property copyright "Gold Range Index Dashboard"',
+    '#property version   "1.00"',
+    '#property strict',
+    isScript ? '#property show_inputs' : '',
+    '',
+    'input string DashboardUrl   = "' + apiUrl + '"; // 网站接收接口地址(若本地运行则为 http://localhost:3000/api/mt4)',
+    'input int    SyncIntervalSec = 3;               // 同步间隔秒数 (建议 2~5 秒)',
+    'input string GoldSymbolKey  = "XAU";            // 黄金品种匹配关键字 (自动兼容 XAUUSD / GOLD)',
+    'input int    MagicFilter    = 0;                // EA魔术号过滤 (0 = 统计账户内所有黄金订单)',
+    '',
+    ...entryLines,
     '',
     'bool IsGoldSymbol(string sym) {',
     '   if(sym == Symbol()) return true;',
@@ -4202,23 +4218,25 @@ function buildMql4Source() {
   ].join('\r\n');
 }
 
-window.downloadMt4Script = function() {
-  const code = buildMql4Source();
+window.downloadMt4Script = function(kind) {
+  const isScript = kind === 'script';
+  const code = '\ufeff' + buildMql4Source(kind);
+  const fname = isScript ? 'GoldDashboardSyncScript.mq4' : 'GoldDashboardSync.mq4';
   const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'GoldDashboardSync.mq4';
+  a.download = fname;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  toast('已下载 GoldDashboardSync.mq4！请放入 MT4 的 MQL4/Experts 文件夹');
+  toast(`已下载 ${fname}！请放入 MT4 的 MQL4/${isScript ? 'Scripts' : 'Experts'} 文件夹`);
 };
 
-window.copyMt4ScriptCode = async function() {
-  const code = buildMql4Source();
+window.copyMt4ScriptCode = async function(kind) {
+  const code = buildMql4Source(kind);
   try { await navigator.clipboard.writeText(code); }
   catch { const ta = document.createElement('textarea'); ta.value = code; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-  toast('已复制完整 MQL4 源码！可在 MetaEditor 新建 EA 粘贴编译');
+  toast(`已复制${kind === 'script' ? '脚本版' : 'EA版'}完整 MQL4 源码！可在 MetaEditor 新建${kind === 'script' ? '脚本' : 'EA'}粘贴编译`);
 };
 
 window.copyMt4WhitelistUrl = async function() {
