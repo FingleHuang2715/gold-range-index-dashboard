@@ -1597,6 +1597,9 @@ function handleApiMt4(req, res) {
   }
   try {
     const u = new URL(req.url || '/api/mt4', 'http://localhost');
+    if (u.searchParams.has('bal') || u.searchParams.has('balance')) {
+      console.log(`[MT4] ${new Date().toLocaleTimeString()} 收到推送 from ${req.socket && req.socket.remoteAddress} · ${u.searchParams.get('bal') || u.searchParams.get('balance')} / buy ${u.searchParams.get('buyCnt') || u.searchParams.get('buyCount')}`);
+    }
     // 若包含 bal 参数，说明是 MT4 EA WebRequest 推送过来的实时实盘状态
     if (u.searchParams.has('bal') || u.searchParams.has('balance')) {
       const ALIAS = { bal: 'balance', eq: 'equity', marginLvl: 'marginLevel', lev: 'leverage', buyCnt: 'buyCount', sellCnt: 'sellCount', buyAvg: 'buyAvgPrice', sellAvg: 'sellAvgPrice', buyStopCnt: 'buyStopCount', sellStopCnt: 'sellStopCount' };
