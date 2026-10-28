@@ -1063,10 +1063,12 @@ function analyzePullback(bars1m, bars5m, tf1m, tf5m, tf15m, sentiment, keyLevels
       const curDrop = buyPeak - buyTrough;
       const bounce = bar.h - buyTrough;
       if (bounce > buyMaxBounceInLeg) buyMaxBounceInLeg = bounce;
-      // 如果已经下跌超过 3.2$（至少加了3~4层多单），且随后反弹达到 TARGET_PB (2.7$)，则判定多单整组止盈清仓重置！
-      if (curDrop >= 3.2 && bounce >= TARGET_PB) {
-        buyClears++;
-        buyBounceHistory.push(+bounce.toFixed(2));
+      // 只要从波谷反弹达到 TARGET_PB (2.7$)，该方向马丁篮子即完成止盈清仓重置（若原跌幅 >=2.8$ 计入一次有效深回调解套）
+      if (bounce >= TARGET_PB) {
+        if (curDrop >= 2.8) {
+          buyClears++;
+          buyBounceHistory.push(+bounce.toFixed(2));
+        }
         buyPeak = bar.h;
         buyTrough = bar.l;
         buyMaxBounceInLeg = 0;
@@ -1085,10 +1087,12 @@ function analyzePullback(bars1m, bars5m, tf1m, tf5m, tf15m, sentiment, keyLevels
       const curRally = sellPeak - sellTrough;
       const dip = sellPeak - bar.l;
       if (dip > sellMaxDipInLeg) sellMaxDipInLeg = dip;
-      // 如果已经上涨超过 3.2$（至少加了3~4层空单），且随后回调达到 TARGET_PB (2.7$)，则判定空单整组止盈清仓重置！
-      if (curRally >= 3.2 && dip >= TARGET_PB) {
-        sellClears++;
-        sellDipHistory.push(+dip.toFixed(2));
+      // 只要从波峰回调达到 TARGET_PB (2.7$)，空单马丁篮子即完成止盈清仓重置（若原涨幅 >=2.8$ 计入一次有效深回调解套）
+      if (dip >= TARGET_PB) {
+        if (curRally >= 2.8) {
+          sellClears++;
+          sellDipHistory.push(+dip.toFixed(2));
+        }
         sellTrough = bar.l;
         sellPeak = bar.h;
         sellMaxDipInLeg = 0;
