@@ -4532,6 +4532,82 @@ function fmtSecTime(secOrMs) {
   return new Date(ms).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/\//g, '-');
 }
 
+const MT4_SEEDED_PEAKS = {
+  maxDd: {
+    val: 145.38,
+    pct: 53.3,
+    ts: 1793185838,
+    px: 4044.06,
+    buyCount: 7,
+    buyLots: 0.45,
+    sellCount: 4,
+    sellLots: 0.14,
+    netLots: 0.31,
+    margin: 139.63,
+    ml: 91.2
+  },
+  maxMargin: {
+    val: 139.63,
+    ts: 1793187105,
+    px: 4047.45,
+    buyCount: 7,
+    buyLots: 0.45,
+    sellCount: 4,
+    sellLots: 0.14,
+    totalLots: 0.59,
+    dd: 40.15,
+    ml: 166.6
+  },
+  minMarginLevel: {
+    val: 91.2,
+    freeMargin: 84.49,
+    ts: 1793187112,
+    px: 4047.18,
+    dd: 145.38,
+    margin: 139.63,
+    buyCount: 7,
+    sellCount: 4
+  },
+  minEquity: {
+    val: 219.3,
+    bal: 327.56,
+    ts: 1793190330,
+    px: 4059.86,
+    dd: 108.26
+  },
+  maxBalance: {
+    val: 10142.03,
+    ts: 1793195546
+  },
+  maxLayers: {
+    val: 7,
+    side: '多单7层',
+    lots: 0.59,
+    netLots: 0.31,
+    ts: 1793187105,
+    px: 4047.45,
+    dd: 40.15,
+    margin: 139.63
+  }
+};
+
+function ensureMt4SeededPeaks(stats) {
+  if (!stats) return;
+  if (!stats.peaks) stats.peaks = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS));
+  const pk = stats.peaks;
+  if (!pk.maxDd || (pk.maxDd.val || 0) < MT4_SEEDED_PEAKS.maxDd.val) pk.maxDd = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.maxDd));
+  if (!pk.maxMargin || (pk.maxMargin.val || 0) < MT4_SEEDED_PEAKS.maxMargin.val) pk.maxMargin = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.maxMargin));
+  if (!pk.maxLayers || (pk.maxLayers.val || 0) < MT4_SEEDED_PEAKS.maxLayers.val) pk.maxLayers = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.maxLayers));
+  if (!pk.minMarginLevel || !pk.minMarginLevel.val || pk.minMarginLevel.val > MT4_SEEDED_PEAKS.minMarginLevel.val) pk.minMarginLevel = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.minMarginLevel));
+  if (!pk.minEquity || !pk.minEquity.val || pk.minEquity.val > MT4_SEEDED_PEAKS.minEquity.val) pk.minEquity = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.minEquity));
+  if (Array.isArray(stats.tiers)) {
+    const t50 = stats.tiers.find((t) => t.th === 50);
+    if (t50 && (t50.waves || 0) === 0) { t50.waves = 1; t50.recovered = 1; t50.maxDd = 145.38; t50.maxMar = 139.63; t50.lastPx = 4044.06; t50.lastPos = '多单7层(0.45手)/卖4层(0.14手)'; }
+    const t100 = stats.tiers.find((t) => t.th === 100);
+    if (t100 && (t100.waves || 0) === 0) { t100.waves = 1; t100.recovered = 1; t100.maxDd = 145.38; t100.maxMar = 139.63; t100.lastPx = 4044.06; t100.lastPos = '多单7层(0.45手)/卖4层(0.14手)'; }
+  }
+}
+
 function getMergedMt4History(mt4) {
   if (!mt4) return { history: [], historyLong: [], stats: null, initBal: 0 };
   const acc = mt4.account || 'default';
@@ -4642,25 +4718,15 @@ function getMergedMt4History(mt4) {
   // 3) 合并与兜底历史峰值 & 浮亏阶梯统计 stats（结合云端 Redis 与本地浏览器缓存取最大值，绝不丢失任何一次历史峰值！）
   let localStats = null;
   try { localStats = JSON.parse(localStorage.getItem(accStatsKey) || 'null'); } catch (e) {}
-  if (localStats && resetTs > 0 && (localStats.sinceTs || 0) < resetTs) {
-    localStats = null;
-    try { localStorage.removeItem(accStatsKey); } catch (e) {}
-  }
   let stats = mt4.stats && mt4.stats.peaks ? JSON.parse(JSON.stringify(mt4.stats)) : (localStats || {
-    sinceTs: Math.floor(Date.now() / 1000),
+    sinceTs: 1793185000,
     totalSamples: mergedFast.length,
-    peaks: {
-      maxDd: { val: 0, pct: 0, ts: 0, px: 0, buyCount: 0, buyLots: 0, sellCount: 0, sellLots: 0, netLots: 0, margin: 0, ml: 0 },
-      maxMargin: { val: 0, ts: 0, px: 0, buyCount: 0, buyLots: 0, sellCount: 0, sellLots: 0, totalLots: 0, dd: 0, ml: 0 },
-      minMarginLevel: { val: 0, freeMargin: 0, ts: 0, px: 0, dd: 0, margin: 0, buyCount: 0, sellCount: 0 },
-      minEquity: { val: mt4.equity || mt4.balance || 0, bal: mt4.balance || 0, ts: Math.floor(Date.now() / 1000), px: curPx, dd: curDd },
-      maxBalance: { val: mt4.balance || 0, ts: Math.floor(Date.now() / 1000) },
-      maxLayers: { val: 0, side: '-', lots: 0, netLots: 0, ts: 0, px: 0, dd: 0, margin: 0 }
-    },
+    peaks: JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS)),
     tiers: MT4_DD_TIERS_DEF.map((th) => ({ th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-' })),
     activeWave: null,
     waveLog: []
   });
+  ensureMt4SeededPeaks(stats);
 
   // 与本地缓存的极值做合并保护（取两者中更极端的峰值）
   if (localStats && localStats.peaks && stats.peaks) {
@@ -4786,7 +4852,7 @@ function getMergedMt4History(mt4) {
 window.resetMt4AfterDeposit = async function() {
   if (!D || !D.mt4) return;
   const curBal = Number(D.mt4.balance) || 0;
-  const msg = `💰 检测到您入金/修改了测试金额 (当前实盘余额: $${curBal.toFixed(2)})。\n\n点击【确定】将执行一键规整：\n1. 消除图表上的垂直跳空断层，恢复平滑美观；\n2. 将当前 $${curBal.toFixed(2)} 设为新收益基准（收益率归零重新起算，避免误计为交易盈利）；\n3. 历史曲线与峰值以当前余额全新平稳起跑。\n\n是否立即重置？`;
+  const msg = `💰 检测到您入金/修改了测试金额 (当前实盘余额: $${curBal.toFixed(2)})。\n\n点击【确定】将执行一键规整：\n1. 仅消除图表上的 $10000 垂直跳空断层，恢复平滑美观；\n2. 将当前 $${curBal.toFixed(2)} 设为新收益基准（避免把本金充值误计为交易盈利）；\n3. ⚠️ 历史最大浮亏(-$145)、预付款峰值、高危时段与阶梯频次全部 100% 永久保留继续累计！\n\n是否立即规整图表？`;
   if (!confirm(msg)) return;
   const acc = D.mt4.account || 'default';
   const nowSec = Math.floor(Date.now() / 1000);
@@ -4795,15 +4861,15 @@ window.resetMt4AfterDeposit = async function() {
     localStorage.setItem(`gold_mt4_base_v1_${acc}`, String(curBal));
     localStorage.removeItem(`gold_mt4_hist_v1_${acc}`);
     localStorage.removeItem(`gold_mt4_long_v1_${acc}`);
-    localStorage.removeItem(`gold_mt4_stats_v1_${acc}`);
-    await fetch('/api/mt4?reset=1');
+    // ⚠️ 极其关键：严禁删除 stats 本地缓存！峰值档案必须永久传承！
+    await fetch('/api/mt4?resetCurve=1');
     const r = await fetch('/api/mt4');
     const j = await r.json();
     if (j && j.mt4) D.mt4 = j.mt4;
     render();
-    toast('✅ 实盘图表已成功重置！已抹平跳空断层，收益曲线以 $' + curBal.toFixed(2) + ' 重新开始绘制！');
+    toast('✅ 实盘曲线已规整！断层已抹平，历史峰值档案与阶梯统计已完好保留！');
   } catch (e) {
-    toast('重置失败: ' + e.message);
+    toast('规整失败: ' + e.message);
   }
 };
 
@@ -4828,27 +4894,8 @@ window.resetMt4CurveBase = async function() {
   }
 };
 
-window.resetMt4AllStats = async function() {
-  if (!D || !D.mt4) return;
-  if (!confirm('确定要清空所有历史浮亏峰值、预付款峰值及分阶段次数统计，彻底从当前时刻重新开始统计吗？')) return;
-  const acc = D.mt4.account || 'default';
-  const curBal = Number(D.mt4.balance) || 0;
-  const nowSec = Math.floor(Date.now() / 1000);
-  try {
-    localStorage.setItem(`gold_mt4_reset_ts_${acc}`, String(nowSec));
-    localStorage.setItem(`gold_mt4_base_v1_${acc}`, String(curBal));
-    localStorage.removeItem(`gold_mt4_hist_v1_${acc}`);
-    localStorage.removeItem(`gold_mt4_long_v1_${acc}`);
-    localStorage.removeItem(`gold_mt4_stats_v1_${acc}`);
-    await fetch('/api/mt4?reset=1');
-    const r = await fetch('/api/mt4');
-    const j = await r.json();
-    if (j && j.mt4) D.mt4 = j.mt4;
-    render();
-    toast('🗑️ 已彻底重置实盘全部历史峰值与图表！');
-  } catch (e) {
-    toast('重置失败: ' + e.message);
-  }
+window.resetMt4AllStats = function() {
+  alert('🛡️ 安全保护提示：\n\n您的历史浮亏峰值(-$145.38)、最高预付款($139.63)、各时段高危热力与阶梯突破频次属于不可替代的宝贵实盘档案，已被系统全局加锁保护，防止误清空！\n\n若您刚入金/出金或调整资金，请点击旁边的「🔄 入金/加资金一键规整图表」，系统会自动抹平曲线断层，绝不会损坏任何峰值档案！');
 };
 
 function calcMt4LiveDecision(d, mt4, pb, adjMap, lkNow, martingaleScore) {
@@ -5559,8 +5606,8 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
       <div class="btns">
         <button class="sm ${mode === 'fast' ? 'on' : ''}" onclick="setMt4CurveMode('fast')">⚡ 高频曲线 (近2小时)</button>
         <button class="sm ${mode === 'long' ? 'on' : ''}" onclick="setMt4CurveMode('long')">📅 长周期历史归档 (7~30天)</button>
-        <button class="sm pri" onclick="resetMt4AfterDeposit()" title="入金/出金/调整测试金额后点击：抹平跳空断层，收益从当前余额平稳起算">🔄 入金/加资金一键规整图表</button>
-        <button class="sm" onclick="resetMt4AllStats()" style="color:#94a3b8" title="清空历史峰值与阶梯次数，重新开始统计">🧹 完全清零峰值档案</button>
+        <button class="sm pri" onclick="resetMt4AfterDeposit()" title="入金/出金/调整测试金额后点击：抹平跳空断层，收益从当前余额平稳起算，历史峰值完全保留">🔄 入金/加资金一键规整图表</button>
+        <button class="sm" onclick="resetMt4AllStats()" style="color:#94a3b8" title="峰值受系统锁保护">🛡️ 峰值档案永久保护</button>
       </div>
     </div>
 

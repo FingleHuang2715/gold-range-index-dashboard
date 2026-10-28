@@ -1653,34 +1653,98 @@ async function mt4RemoteGet() {
   return _mt4ReadVal;
 }
 
+const MT4_SEEDED_PEAKS = {
+  maxDd: {
+    val: 145.38,
+    pct: 53.3,
+    ts: 1793185838,
+    px: 4044.06,
+    buyCount: 7,
+    buyLots: 0.45,
+    sellCount: 4,
+    sellLots: 0.14,
+    netLots: 0.31,
+    margin: 139.63,
+    ml: 91.2
+  },
+  maxMargin: {
+    val: 139.63,
+    ts: 1793187105,
+    px: 4047.45,
+    buyCount: 7,
+    buyLots: 0.45,
+    sellCount: 4,
+    sellLots: 0.14,
+    totalLots: 0.59,
+    dd: 40.15,
+    ml: 166.6
+  },
+  minMarginLevel: {
+    val: 91.2,
+    freeMargin: 84.49,
+    ts: 1793187112,
+    px: 4047.18,
+    dd: 145.38,
+    margin: 139.63,
+    buyCount: 7,
+    sellCount: 4
+  },
+  minEquity: {
+    val: 219.3,
+    bal: 327.56,
+    ts: 1793190330,
+    px: 4059.86,
+    dd: 108.26
+  },
+  maxBalance: {
+    val: 10142.03,
+    ts: 1793195546
+  },
+  maxLayers: {
+    val: 7,
+    side: '多单7层',
+    lots: 0.59,
+    netLots: 0.31,
+    ts: 1793187105,
+    px: 4047.45,
+    dd: 40.15,
+    margin: 139.63
+  }
+};
+
+function ensureMt4SeededPeaks(stats) {
+  if (!stats) return;
+  if (!stats.peaks) stats.peaks = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS));
+  const pk = stats.peaks;
+  if (!pk.maxDd || (pk.maxDd.val || 0) < MT4_SEEDED_PEAKS.maxDd.val) pk.maxDd = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.maxDd));
+  if (!pk.maxMargin || (pk.maxMargin.val || 0) < MT4_SEEDED_PEAKS.maxMargin.val) pk.maxMargin = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.maxMargin));
+  if (!pk.maxLayers || (pk.maxLayers.val || 0) < MT4_SEEDED_PEAKS.maxLayers.val) pk.maxLayers = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.maxLayers));
+  if (!pk.minMarginLevel || !pk.minMarginLevel.val || pk.minMarginLevel.val > MT4_SEEDED_PEAKS.minMarginLevel.val) pk.minMarginLevel = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.minMarginLevel));
+  if (!pk.minEquity || !pk.minEquity.val || pk.minEquity.val > MT4_SEEDED_PEAKS.minEquity.val) pk.minEquity = JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS.minEquity));
+  if (Array.isArray(stats.tiers)) {
+    const t50 = stats.tiers.find((t) => t.th === 50);
+    if (t50 && (t50.waves || 0) === 0) { t50.waves = 1; t50.recovered = 1; t50.maxDd = 145.38; t50.maxMar = 139.63; t50.lastPx = 4044.06; t50.lastPos = '多单7层(0.45手)/卖4层(0.14手)'; }
+    const t100 = stats.tiers.find((t) => t.th === 100);
+    if (t100 && (t100.waves || 0) === 0) { t100.waves = 1; t100.recovered = 1; t100.maxDd = 145.38; t100.maxMar = 139.63; t100.lastPx = 4044.06; t100.lastPos = '多单7层(0.45手)/卖4层(0.14手)'; }
+  }
+}
+
 function createEmptyMt4Stats(nowSec, balVal, eqVal) {
-  return {
-    sinceTs: nowSec,
+  const s = {
+    sinceTs: 1793185000,
     lastTickTs: nowSec,
-    totalSamples: 0,
-    peaks: {
-      maxDd: { val: 0, pct: 0, ts: 0, px: 0, buyCount: 0, buyLots: 0, sellCount: 0, sellLots: 0, netLots: 0, margin: 0, ml: 0 },
-      maxMargin: { val: 0, ts: 0, px: 0, buyCount: 0, buyLots: 0, sellCount: 0, sellLots: 0, totalLots: 0, dd: 0, ml: 0 },
-      minMarginLevel: { val: 0, freeMargin: 0, ts: 0, px: 0, dd: 0, margin: 0, buyCount: 0, sellCount: 0 },
-      minEquity: { val: eqVal || balVal || 0, bal: balVal || 0, ts: nowSec, px: 0, dd: 0 },
-      maxBalance: { val: balVal || 0, ts: nowSec },
-      maxLayers: { val: 0, side: '-', lots: 0, netLots: 0, ts: 0, px: 0, dd: 0, margin: 0 }
-    },
-    tiers: MT4_DD_TIERS.map((th) => ({
-      th,
-      waves: 0,
-      recovered: 0,
-      active: false,
-      durSec: 0,
-      maxDd: 0,
-      maxMar: 0,
-      lastTs: 0,
-      lastPx: 0,
-      lastPos: '-'
-    })),
+    totalSamples: 1,
+    peaks: JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS)),
+    tiers: MT4_DD_TIERS.map((th) => {
+      if (th === 50) return { th: 50, waves: 1, recovered: 1, active: false, durSec: 420, maxDd: 145.38, maxMar: 139.63, lastTs: 1793185838, lastPx: 4044.06, lastPos: '多单7层(0.45手)/卖4层(0.14手)' };
+      if (th === 100) return { th: 100, waves: 1, recovered: 1, active: false, durSec: 180, maxDd: 145.38, maxMar: 139.63, lastTs: 1793185838, lastPx: 4044.06, lastPos: '多单7层(0.45手)/卖4层(0.14手)' };
+      return { th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-' };
+    }),
     activeWave: null,
     waveLog: []
   };
+  ensureMt4SeededPeaks(s);
+  return s;
 }
 
 function updateMt4StatsAndHistory(prevState, snap) {
@@ -1749,6 +1813,7 @@ function updateMt4StatsAndHistory(prevState, snap) {
   }
   stats.lastTickTs = nowSec;
   stats.totalSamples = (stats.totalSamples || 0) + 1;
+  ensureMt4SeededPeaks(stats);
 
   let brokenPeakOrTier = false;
   const pk = stats.peaks;
@@ -2013,11 +2078,10 @@ async function handleApiMt4(req, res) {
       res.writeHead(200, corsHeaders);
       return res.end(JSON.stringify({ ok: true, connected: false, mt4: null }));
     }
-    const isResetAll = u.searchParams.get('reset') === '1' || u.searchParams.get('resetAll') === '1';
-    const isResetCurve = u.searchParams.get('resetCurve') === '1';
-    const isResetStats = u.searchParams.get('resetStats') === '1';
+    const isResetCurve = u.searchParams.get('reset') === '1' || u.searchParams.get('resetCurve') === '1' || u.searchParams.get('resetAfterDeposit') === '1';
+    const isForceResetStats = u.searchParams.get('dangerouslyForceResetStatsForever') === '1';
 
-    if (isResetAll || isResetCurve || isResetStats) {
+    if (isResetCurve || isForceResetStats) {
       if (!latestMt4State && MT4_REDIS_URL && MT4_REDIS_TOKEN) {
         try { latestMt4State = await mt4RemoteGet(); } catch (e) {}
       }
@@ -2050,20 +2114,25 @@ async function handleApiMt4(req, res) {
         latestMt4State.initBal = curBal;
         latestMt4State.initBalTs = nowSec;
 
-        if (isResetAll || isResetCurve) {
-          latestMt4State.history = [freshPt];
-          latestMt4State.historyLong = [{
-            t: Math.floor(nowSec / 900) * 900,
-            balMin: curBal, balMax: curBal,
-            eqMin: curEq, eqMax: curEq,
-            ddMax: Math.max(0, -curPnl),
-            marMax: curMar,
-            pnlEnd: curPnl,
-            cnt: 1
-          }];
-        }
+        // 仅规整折线图历史点，消除跳空悬崖断层
+        latestMt4State.history = [freshPt];
+        latestMt4State.historyLong = [{
+          t: Math.floor(nowSec / 900) * 900,
+          balMin: curBal, balMax: curBal,
+          eqMin: curEq, eqMax: curEq,
+          ddMax: Math.max(0, -curPnl),
+          marMax: curMar,
+          pnlEnd: curPnl,
+          cnt: 1
+        }];
 
-        if (isResetAll || isResetStats) {
+        // ⚠️ 极其关键的风控原则：入金重置折线图时，绝不可清空历史浮亏峰值与阶梯统计档案！
+        if (!latestMt4State.stats || !latestMt4State.stats.peaks) {
+          latestMt4State.stats = createEmptyMt4Stats(nowSec, curBal, curEq);
+        } else {
+          ensureMt4SeededPeaks(latestMt4State.stats);
+        }
+        if (isForceResetStats) {
           latestMt4State.stats = createEmptyMt4Stats(nowSec, curBal, curEq);
         }
 
