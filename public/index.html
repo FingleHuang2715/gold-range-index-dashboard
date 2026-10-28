@@ -5181,21 +5181,36 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   const pkMaxMar = (stats && stats.peaks && stats.peaks.maxMargin && stats.peaks.maxMargin.val) || curMar;
   const pkMaxDd = (stats && stats.peaks && stats.peaks.maxDd && stats.peaks.maxDd.val) || 0;
 
-  let vMin = Infinity, vMax = -Infinity;
+  // 1) 上面板 Y 轴：专门针对【账户余额与实时净值】的自适应聚焦坐标轴（绝不从 0 开始，彻底解决 $10000 账户横向平直横线问题）
+  let bMin = Infinity, bMax = -Infinity;
   arr.forEach((p) => {
-    const pMar = p.marMax != null ? p.marMax : (p.mar || 0);
-    const hi = Math.max(p.bal || 0, p.eq || 0, initBal || 0, pMar, pkMaxMar);
-    const lo = Math.min(p.bal || 0, p.eq || 0, initBal || 0, pMar > 0 ? pMar : Infinity);
-    if (hi > vMax) vMax = hi;
-    if (lo < vMin) vMin = lo;
+    const b = Number(p.bal) || 0;
+    const e = Number(p.eq) || b;
+    if (b > 0) {
+      if (b < bMin) bMin = b;
+      if (b > bMax) bMax = b;
+    }
+    if (e > 0) {
+      if (e < bMin) bMin = e;
+      if (e > bMax) bMax = e;
+    }
   });
-  if (!isFinite(vMin) || !isFinite(vMax) || vMax <= vMin) {
-    vMax = (mt4.balance || 100) + 20;
-    vMin = Math.max(0, (mt4.equity || 80) - 20);
+  if (initBal > 0) {
+    if (initBal < bMin) bMin = initBal;
+    if (initBal > bMax) bMax = initBal;
   }
-  const padV = Math.max(5, (vMax - vMin) * 0.14);
-  vMax += padV;
-  vMin = Math.max(0, vMin - padV);
+  if (!isFinite(bMin) || !isFinite(bMax) || bMax <= bMin) {
+    const curB = Number(mt4.balance) || 10000;
+    bMax = curB + 20;
+    bMin = curB - 20;
+  }
+  // 呼吸空间：根据当前资金量动态保留合理的振幅窗口，无论 300 还是 10000 账户，每一笔浮亏和盈利都能生动起伏呈现
+  const rawSpan = bMax - bMin;
+  const minSpan = Math.max(25, bMax * 0.0035); // 10000 账户默认至少展现 35$ 跨度视野，避免极小波动贴边
+  const effSpan = Math.max(rawSpan, minSpan);
+  const padV = Math.max(4, effSpan * 0.18);
+  const vMin = +(bMin - padV).toFixed(1);
+  const vMax = +(bMax + padV).toFixed(1);
 
   let pMin = Math.min(0, -10, -pkMaxDd), pMax = Math.max(0, 10);
   arr.forEach((p) => {
@@ -5220,7 +5235,7 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
       <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#94a3b8" font-size="11">$${val.toFixed(1)}</text>`;
   }).join('');
 
-  // 100% 预付款警戒线 & 历史最高预付款峰值线
+  // 100% 预付款警戒线 & 历史最高预付款峰值线 (若当前预付款在可视区间内才显示)
   let marginLineSvg = '';
   if (curMar > 0 && curMar >= vMin && curMar <= vMax) {
     const ym = yTop(curMar).toFixed(1);
@@ -5237,7 +5252,6 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
 
   const balPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yTop(p.bal).toFixed(1)}`).join(' ');
   const eqPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yTop(p.eq).toFixed(1)}`).join(' ');
-  const marPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yTop(p.marMax != null ? p.marMax : (p.mar || 0)).toFixed(1)}`).join(' ');
   const eqArea = `${xOf(0).toFixed(1)},${topBot} ${eqPts} ${xOf(n - 1).toFixed(1)},${topBot}`;
 
   const last = arr[n - 1];
@@ -5301,12 +5315,11 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
       </linearGradient>
     </defs>
 
-    <!-- 上面板：余额 & 净值 & 已用预付款曲线 -->
-    <text x="${L + 6}" y="${topTop - 7}" fill="#fbbf24" font-size="12.5" font-weight="bold">💰 账户余额(金实线) vs 实时最低净值(青蓝线) vs 已用预付款占用(橙虚线)  [${mode === 'long' ? `长周期15m极值归档 · ${hist.length}个桶` : `高频30s流 · ${hist.length}个快照`}]</text>
+    <!-- 上面板：余额 & 净值 (自适应动态刻度，告别横向直线) -->
+    <text x="${L + 6}" y="${topTop - 7}" fill="#fbbf24" font-size="12.5" font-weight="bold">💰 账户实时余额 (金实线) vs 实时净值走势 (青蓝折线·自适应聚焦) [当前已用预付款: $${curMar.toFixed(2)} · 预付款比例: ${mt4.marginLevel ? mt4.marginLevel.toFixed(1) + '%' : '-'}] [${mode === 'long' ? `长周期归档·${arr.length}点` : `高频实时流·${arr.length}点`}]</text>
     ${topTicks}
     ${marginLineSvg}
     <polygon points="${eqArea}" fill="url(#mt4EqGrad)"/>
-    <polyline fill="none" stroke="#fb923c" stroke-width="1.6" stroke-dasharray="3,2" points="${marPts}" opacity="0.88"/>
     <polyline fill="none" stroke="#fbbf24" stroke-width="2.6" points="${balPts}"/>
     <polyline fill="none" stroke="${eqColor}" stroke-width="2.4" points="${eqPts}"/>
     <circle cx="${lastX}" cy="${lastBalY}" r="5" fill="#fbbf24" stroke="#0f172a" stroke-width="1.5"/>
