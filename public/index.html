@@ -299,7 +299,7 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
     </section>
     <section class="card" id="masterDecisionSec"></section>
     <section class="card" id="mt4CurveSec" style="display:none"></section>
-    <section class="card" id="martingaleScoreKlineSec"></section>
+    <section class="card" id="standaloneMScoreKlineSec" style="display:none"></section>
     <section class="card" id="tolSec">
       <div class="vhead" style="margin-bottom:0">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -5736,6 +5736,9 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
     <!-- 第三排：实时余额/净值/预付款/收益双面板交互曲线图 -->
     ${chartSvg}
 
+    <!-- 紧跟在收益与浮亏极值图正下方：全站唯一总分·马丁可做指数多周期蜡烛图（时间轴与上方双面板像素级绝对对齐，方便上下垂直对比） -->
+    <div id="martingaleScoreKlineSec" style="margin-top:14px;background:#0d1118;border:1px solid var(--bd);border-radius:10px;padding:14px"></div>
+
     <!-- 第三排半：24小时浮亏高危时段热力表 -->
     ${buildMt4HourHeatmap(stats, mt4Dec)}
 
@@ -5901,7 +5904,8 @@ function buildMScoreKlineSvg(candles, tf, curScore) {
   if (!candles || !candles.length) {
     return '<div class="mut sm" style="padding:40px;text-align:center">正在采集并合成 ' + tf + ' 马丁可做指数蜡烛图数据...</div>';
   }
-  const W = 1200, H = 340, L = 55, R = 135, T = 22, B = 35;
+  // 核心：严格对齐上方 MT4 收益/浮亏极值图的绘制坐标轴 (W=1200, L=68, R=156)，确保时间轴上下完全像素级对齐！
+  const W = 1200, H = 290, L = 68, R = 156, T = 22, B = 35;
   const cw = W - L - R, ch = H - T - B;
   const n = candles.length;
   const xOf = (i) => L + (i / Math.max(1, n - 1)) * cw;
@@ -6006,7 +6010,14 @@ function buildMScoreKlineSvg(candles, tf, curScore) {
 }
 
 function recordAndRenderMScoreKline(d, curScore) {
-  const sec = $('martingaleScoreKlineSec');
+  let sec = $('martingaleScoreKlineSec');
+  const standalone = $('standaloneMScoreKlineSec');
+  if (!sec && standalone) {
+    standalone.style.display = 'block';
+    sec = standalone;
+  } else if (standalone) {
+    standalone.style.display = 'none';
+  }
   if (!sec) return;
   const tf = MSCORE_CHART_TF || '1M';
   const candles = getMScoreCandles(d, tf, curScore);
