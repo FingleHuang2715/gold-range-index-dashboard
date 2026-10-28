@@ -1688,6 +1688,69 @@ async function handleApiMt4(req, res) {
       const netLots = +Math.abs(buyLots - sellLots).toFixed(2);
       const accStr = u.searchParams.get('account') || '';
       const isMock = u.searchParams.get('mock') === '1' || accStr === '8861092' || accStr === '1';
+      const buyAvgPrice = +num('buyAvg').toFixed(2);
+      const buyPnl = +num('buyPnl').toFixed(2);
+      const sellAvgPrice = +num('sellAvg').toFixed(2);
+      const sellPnl = +num('sellPnl').toFixed(2);
+      const spreadPts = +num('spread').toFixed(1);
+      let bid = +num('bid').toFixed(2);
+      let ask = +num('ask').toFixed(2);
+      // 若 MT4 脚本死循环未调用 RefreshRates() 导致 Bid 静止，自动用多/空持仓均价与实时浮盈反推精确到 0.01$ 的实时 Bid/Ask
+      if (buyLots > 0 && buyAvgPrice > 0) {
+        const impliedBid = +(buyAvgPrice + buyPnl / (buyLots * 100)).toFixed(2);
+        if (impliedBid > 1000 && Math.abs(impliedBid - bid) > 0.03) {
+          bid = impliedBid;
+          ask = +(bid + (spreadPts > 0 ? spreadPts : 25) / 100).toFixed(2);
+        }
+      } else if (sellLots > 0 && sellAvgPrice > 0) {
+        const impliedAsk = +(sellAvgPrice - sellPnl / (sellLots * 100)).toFixed(2);
+        if (impliedAsk > 1000 && Math.abs(impliedAsk - ask) > 0.03) {
+          ask = impliedAsk;
+          bid = +(ask - (spreadPts > 0 ? spreadPts : 25) / 100).toFixed(2);
+        }
+      }
+
+      if (!latestMt4State && MT4_REDIS_URL && MT4_REDIS_TOKEN) {
+        try { latestMt4State = await mt4RemoteGet(); } catch (e) {}
+      }
+      const prevHist = (latestMt4State && latestMt4State.account === accStr && Array.isArray(latestMt4State.history))
+        ? latestMt4State.history.slice(-180)
+        : [];
+      const nowSec = Math.floor(Date.now() / 1000);
+      const balVal = +num('bal').toFixed(2);
+      const eqVal = +num('eq').toFixed(2);
+      const totalPnlVal = +num('totalPnl').toFixed(2);
+      const mlVal = +num('marginLvl').toFixed(1);
+      const newPt = {
+        t: nowSec,
+        bal: balVal,
+        eq: eqVal,
+        pnl: totalPnlVal,
+        buyLots,
+        sellLots,
+        netLots,
+        ml: mlVal,
+        px: bid
+      };
+      if (!prevHist.length) {
+        prevHist.push({ ...newPt, t: nowSec - 15 });
+        prevHist.push(newPt);
+      } else {
+        const lastPt = prevHist[prevHist.length - 1];
+        const structureChanged = lastPt.bal !== balVal || lastPt.buyLots !== buyLots || lastPt.sellLots !== sellLots;
+        if (structureChanged || (nowSec - lastPt.t >= 15)) {
+          prevHist.push(newPt);
+        } else {
+          prevHist[prevHist.length - 1] = newPt;
+        }
+      }
+      const history = prevHist.slice(-180);
+      const initBal = (latestMt4State && latestMt4State.account === accStr && latestMt4State.initBal > 0)
+        ? latestMt4State.initBal
+        : history[0].bal;
+      const closedProfit = +(balVal - initBal).toFixed(2);
+      const netTotalProfit = +(eqVal - initBal).toFixed(2);
+
       latestMt4State = {
         updatedAt: new Date().toISOString(),
         ts: Date.now(),
@@ -1695,29 +1758,33 @@ async function handleApiMt4(req, res) {
         symbol: u.searchParams.get('sym') || u.searchParams.get('symbol') || 'XAUUSD',
         account: u.searchParams.get('account') || '',
         server: u.searchParams.get('server') || '',
-        balance: +num('bal').toFixed(2),
-        equity: +num('eq').toFixed(2),
+        balance: balVal,
+        equity: eqVal,
+        initBal,
+        closedProfit,
+        netTotalProfit,
         margin: +num('margin').toFixed(2),
         freeMargin: +num('freeMargin').toFixed(2),
-        marginLevel: +num('marginLvl').toFixed(1),
+        marginLevel: mlVal,
         leverage: Math.round(num('lev', 1000)),
         buyCount: Math.round(num('buyCnt')),
         buyLots,
-        buyAvgPrice: +num('buyAvg').toFixed(2),
-        buyPnl: +num('buyPnl').toFixed(2),
+        buyAvgPrice,
+        buyPnl,
         sellCount: Math.round(num('sellCnt')),
         sellLots,
-        sellAvgPrice: +num('sellAvg').toFixed(2),
-        sellPnl: +num('sellPnl').toFixed(2),
-        totalPnl: +num('totalPnl').toFixed(2),
+        sellAvgPrice,
+        sellPnl,
+        totalPnl: totalPnlVal,
         netLots,
         buyStopCount: Math.round(num('buyStopCnt')),
         sellStopCount: Math.round(num('sellStopCnt')),
         buyStopPx: +num('buyStopPx').toFixed(2),
         sellStopPx: +num('sellStopPx').toFixed(2),
-        bid: +num('bid').toFixed(2),
-        ask: +num('ask').toFixed(2),
-        spreadPts: +num('spread').toFixed(1)
+        bid,
+        ask,
+        spreadPts,
+        history
       };
       if (cache) cache.mt4 = latestMt4State;
       fs.promises.writeFile(MT4_STATE_FILE, JSON.stringify(latestMt4State), 'utf8').catch(() => {});

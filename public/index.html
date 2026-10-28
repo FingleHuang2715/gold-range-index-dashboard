@@ -172,6 +172,7 @@
   <aside class="sidenav" id="sidenav">
     <div class="ng">核心决策</div>
     <a href="#masterDecisionSec"><span>🧭 一锤定音总决策</span><span id="nav-master" class="pill RANGE">-</span></a>
+    <a href="#mt4CurveSec"><span>💰 MT4余额/净值/收益图</span><span id="nav-mt4" class="pill NEUT">未连</span></a>
     <a href="#topSessionSec"><span>🕒 时段 & 重磅红灯锁</span><span id="nav-sess" class="pill NEUT">-</span></a>
     <a href="#tolSec"><span>🛡️ 净敞口推演(可开关)</span><span id="nav-ea" class="pill NEUT">关</span></a>
     <a href="#anomalySec"><span>⚡ 实时异动监控</span><span id="nav-anom" class="pill NEUT">0项</span></a>
@@ -287,6 +288,7 @@
       </div>
     </section>
     <section class="card" id="masterDecisionSec"></section>
+    <section class="card" id="mt4CurveSec" style="display:none"></section>
     <section class="card" id="tolSec">
       <div class="vhead" style="margin-bottom:0">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -510,14 +512,18 @@ function levelFor(x, dir) {
   if (x >= 30) return { name: '偏单边' + dTxt, cls: 'TREND', advice: '超出合理震荡区间或趋势走强,暂停新开网格' + dAdv };
   return { name: '强单边' + dTxt, cls: 'TREND', advice: '严重超出合理区间/单边爆发,停止网格/马丁' + dAdv };
 }
-function adjBySpan(rawIdx, span, tol) {
+const TF_SPAN_SCALE = { '1M': 0.45, '5M': 0.75, '15M': 1.0, '1H': 1.85, '4H': 3.2, '1D': 5.5 };
+function adjBySpan(rawIdx, span, tol, tf) {
   if (rawIdx == null) return null;
   if (!span || !tol) return rawIdx;
-  const ratio = span / tol;
-  const spanScore = lerp(ratio, [[0.4, 100], [0.8, 85], [1.0, 68], [1.25, 45], [1.6, 20], [2.2, 0]]);
-  let v = 0.6 * rawIdx + 0.4 * spanScore;
-  if (ratio > 1.25) v -= Math.min(25, (ratio - 1.25) * 22);
-  return r1(clamp(v));
+  const scale = TF_SPAN_SCALE[tf] || 1.0;
+  // 市场客观震荡指数校准基准：单波15M容忍度保底按12$计算并按周期时间跨度缩放，防止小资金账户余额导致全站震荡指数变成0
+  const effTol = Math.max(12.0, Number(tol) || 14.2) * scale;
+  const ratio = span / effTol;
+  const spanScore = lerp(ratio, [[0.4, 100], [0.8, 85], [1.0, 68], [1.3, 48], [1.7, 25], [2.4, 10]]);
+  let v = 0.68 * rawIdx + 0.32 * spanScore;
+  if (ratio > 1.35) v -= Math.min(18, (ratio - 1.35) * 14);
+  return r1(clamp(v, 15, 98));
 }
 
 // ========== M1 双向追踪挂单倍投马丁 EA 账户风控与层数推演模型 ==========
@@ -1473,9 +1479,14 @@ function idxBar(v) {
 // 1) 过滤单根K线闪跌毛刺：对原始分做 3周期抗毛刺滤波得到「快线(entryFast)」，再计算 8周期指数移动平均得到「慢均线(entrySlow / EMA8)」；
 // 2) 防止“有时候入场指数降低，但很快又回去了”造成误离场：当快线短暂下探，但慢均线(EMA8)依然稳守在 ≥55分 以上时，判定为「🛡️ 假跌毛刺·均线护航中(拿住等回调)」，不轻易发离场假警报；
 // 3) 锯齿回调补偿：若近 10 根 K 线内虽有单边波动但已出现 ≥2.5$ 的有效反向回调(马丁可止盈清仓)，自动给入场指数补分。
-function calcEntrySeries(rawArr, tol) {
+function calcEntrySeries(rawArr, tol, tf) {
   if (!rawArr || !rawArr.length) return [];
-  const base = rawArr.map((p) => ({ ...p, adjV: adjBySpan(p.v, p.span, tol) }));
+  let useTf = tf;
+  if (!useTf && rawArr.length >= 2) {
+    const dt = Math.abs((rawArr[1].t || 0) - (rawArr[0].t || 0));
+    useTf = dt <= 90 ? '1M' : dt <= 400 ? '5M' : dt <= 1200 ? '15M' : dt <= 5400 ? '1H' : '4H';
+  }
+  const base = rawArr.map((p) => ({ ...p, adjV: adjBySpan(p.v, p.span, tol, useTf) }));
 
   // 第一步：计算每根 K 线的原始得分与锯齿回调补偿
   const step1 = base.map((p, i) => {
@@ -2155,14 +2166,14 @@ function render() {
     for (const k of ['1M', '5M', '15M', '1H', '4H', '1D']) {
       const t = d.timeframes[k];
       if (!t || t.rangeIndex == null) continue;
-      const adj = adjBySpan(t.rangeIndex, t.span14, TOL);
+      const adj = adjBySpan(t.rangeIndex, t.span14, TOL, k);
       adjMap[k] = adj;
       lvMap[k] = levelFor(adj, t.trendDir);
       if (W[k]) { sw += W[k]; ss += adj * W[k]; }
     }
     const adjCurrent = sw ? r1(ss / sw) : m.current;
-    const adjDelta = (m.run ?? 0) - (m.current ?? 0);
-    const adjRun = r1(clamp(adjCurrent + adjDelta));
+    const rawDelta = clamp((m.run ?? m.current) - (m.current ?? 0), -18, 12);
+    const adjRun = r1(clamp(adjCurrent + rawDelta * 0.65, 16, 98));
     const curLv = levelFor(adjCurrent, m.overallDir);
     const runLv = levelFor(adjRun, m.overallDir);
 
@@ -2170,7 +2181,7 @@ function render() {
     const eMap = {};
     for (const k of ['1M', '5M', '15M', '1H', '4H']) {
       const sp = (m.sparks && m.sparks[k]) || [];
-      const ser = calcEntrySeries(sp, TOL);
+      const ser = calcEntrySeries(sp, TOL, k);
       eMap[k] = { ser, last: ser[ser.length - 1] || { entryTxt: '-', entryCls: 'MIXED', entryScore: '-', entryState: 'WAIT', entryReason: '-', effDrop1: 0, effChg1: 0 } };
     }
     const mainEntry = (eMap['15M'] && eMap['15M'].last) || (eMap['1H'] && eMap['1H'].last);
@@ -2188,7 +2199,7 @@ function render() {
     }
     syncTolSecToggleUi();
 
-    // ========== 渲染置顶「🧭 极简一锤定音总决策台」：解决“指数太多不知道看哪个、被套来不及跑该不该等回调、带3$回调的单边也能做”三大痛点 ==========
+    // ========== 渲染置顶「🧭 极简一锤定音总决策台」与「📈 MT4 实盘余额·净值·收益曲线 & 持仓生死线沙盘」 ==========
     if ($('masterDecisionSec')) {
       const pb = d.pullback || {
         span90m: (d.timeframes['15M'] && d.timeframes['15M'].span14) || 5.0,
@@ -2211,7 +2222,7 @@ function render() {
       const lkNow = evalCustomLockState();
       const hasRedLock = lkNow && lkNow.activeLocks && lkNow.activeLocks.length > 0;
 
-      // 合成全站唯一主指数：【马丁实盘可做总分 (0~100)】= 基础短周期震荡指数 + 锯齿回调修正加分(下跌10$但中途回调3$平仓了就加分！) - 红灯锁惩罚
+      // 合成全站唯一主指数：【马丁实盘可做总分 (0~100)】= 基础短周期震荡指数 + 锯齿回调修正加分(下跌10$但回调3$平仓了就加分！) - 红灯锁惩罚
       const baseShortScore = Math.round(0.35 * (adjMap['1M'] || 60) + 0.40 * (adjMap['5M'] || 60) + 0.25 * (adjMap['15M'] || 60));
       const rawMartingaleScore = baseShortScore + (pb.sawtoothBonus || 0) - (hasRedLock ? 25 : 0);
       const martingaleScore = Math.max(5, Math.min(99, Math.round(rawMartingaleScore)));
@@ -2227,11 +2238,36 @@ function render() {
         $('nav-master').className = 'pill ' + mCls + ' fast-num';
       }
 
-      // 场景 1（空仓/轻仓 1~3层）：现在能不能入场开 EA？
+      // 计算 MT4 实盘专属联动决策模型（精确到回本价、整组止盈价、100%预付款锁死价、50%/20%强平生死线）
+      const isMockAcc = mt4 ? !!(mt4.isMock || mt4.account === '8861092' || mt4.account === '1') : false;
+      const mt4Dec = mt4 ? calcMt4LiveDecision(d, mt4, pb, adjMap, lkNow, martingaleScore) : null;
+
+      if ($('nav-mt4')) {
+        if (mt4 && !isMockAcc) {
+          $('nav-mt4').textContent = mt4Dec ? `${mt4Dec.ddPct > 0 ? '-' + mt4Dec.ddPct + '%' : '盈利中'}` : '在线';
+          $('nav-mt4').className = 'pill ' + (mt4Dec ? mt4Dec.healthCls : 'RANGE');
+        } else {
+          $('nav-mt4').textContent = mt4 ? '演示' : '未连';
+          $('nav-mt4').className = 'pill NEUT';
+        }
+      }
+
+      // 场景 1（空仓/轻仓 或 实盘持仓风控加仓/锁仓指令）
+      let card2Title = '② 如果您现在【空仓 / 1~3层轻仓】：何时入场？';
+      let card2Badge = '入场决策';
       let entryHeadline = '';
       let entryDetail = '';
       let entryBoxCls = 'RANGE';
-      if (hasRedLock) {
+      let card2Footer = '💡 核心法则：只要不是「连续走 &gt;6$ 无 2.7$ 回调」的推土机行情，哪怕单边跌 10$ 只要中途能回调 3$ 平仓，本卡都会亮绿灯让您做！';
+
+      if (mt4Dec && mt4Dec.hasPositions && !isMockAcc) {
+        card2Title = `② 针对您实盘持仓 [买${mt4.buyCount}层/${f2(mt4.buyLots)}手 · 卖${mt4.sellCount}层/${f2(mt4.sellLots)}手]：加仓还是锁仓？`;
+        card2Badge = mt4Dec.posActionBadge;
+        entryHeadline = mt4Dec.posHeadline;
+        entryDetail = mt4Dec.posDetail;
+        entryBoxCls = mt4Dec.posCls;
+        card2Footer = mt4Dec.posFooter;
+      } else if (hasRedLock) {
         const topLk = lkNow.activeLocks[0];
         entryHeadline = `🔴 严禁现在新开 EA（正处于 ${topLk.time} 重磅红灯锁）`;
         entryDetail = `当前处于【${topLk.title}】前${topLk.pre}分~后${topLk.post}分高危窗口，极易瞬间扫损拉出无回调单边，请等红灯锁解除后再入场！`;
@@ -2252,75 +2288,87 @@ function render() {
         entryBoxCls = 'TREND';
       }
 
-      // 如果已连接 MT4 实盘，计算多空回本价与精确解套距离
+      // 场景 3（被套去留 或 实盘浮亏精确解套点位指令）
+      let card3Title = '③ 如果您【已被套浮亏 · 指数骤降来不及跑】：拿还是走？';
+      let card3Badge = `回调解套概率 ${pb.reboundProb}%`;
+      let card3Cls = pb.holdCls;
+      let card3Headline = pb.holdDecision;
+      let card3Detail = pb.holdAction.replace(/\*\*(.*?)\*\*/g, '<b style="color:var(--gold)">$1</b>');
+      let card3FooterHtml = `
+        <span>当前受压: <b>${pb.pressureSideTxt}</b></span>
+        <span>已反抽: <b style="color:#34d399">$${f2(pb.activeCurRetrace)}</b></span>
+        <span>距止盈平仓还差: <b style="color:var(--gold)">$${f2(pb.needMoreForClear)}</b></span>`;
+
+      if (mt4Dec && mt4Dec.hasPositions && !isMockAcc) {
+        card3Title = `③ 您实盘净浮盈亏 [${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)} · 回撤${mt4Dec.ddPct}%]：去留与精确解套价`;
+        card3Badge = `解套概率 ${mt4Dec.liveReboundProb}%`;
+        card3Cls = mt4Dec.escapeCls;
+        card3Headline = mt4Dec.escapeHeadline;
+        card3Detail = mt4Dec.escapeDetail;
+        card3FooterHtml = mt4Dec.escapeFooterHtml;
+      }
+
+      // 如果已连接 MT4 实盘，渲染顶部实时状态横幅
       let mt4StripHtml = '';
-      if (mt4) {
+      if (mt4 && mt4Dec) {
         const ageSec = Math.max(0, Math.round((Date.now() - mt4.ts) / 1000));
-        const netLotsSigned = r2(mt4.buyLots - mt4.sellLots);
-        const curPx = mt4.bid || (d.gold && d.gold.price) || 0;
-        // 计算净敞口回本目标价：当前总浮盈亏 mt4.totalPnl (美元)，每波动1美元净盈亏变化 = netLotsSigned * 100 美元
-        let breakEvenNote = '当前无净敞口或已处于浮盈状态';
-        if (Math.abs(netLotsSigned) >= 0.01 && mt4.totalPnl < 0 && curPx > 0) {
-          const needMove = Math.abs(mt4.totalPnl) / (Math.abs(netLotsSigned) * 100);
-          const targetPx = netLotsSigned > 0 ? (curPx + needMove) : (curPx - needMove);
-          const dirWord = netLotsSigned > 0 ? '上涨反抽' : '下跌回调';
-          breakEvenNote = `重仓侧需<b>${dirWord} $${f2(needMove)}</b> 至 <b style="color:var(--gold)">$${f2(targetPx)}</b> 即可全篮子回本清仓`;
-        } else if (mt4.totalPnl >= 0) {
-          breakEvenNote = `<b style="color:#34d399">当前实盘篮子整体净浮盈 +$${f2(mt4.totalPnl)}，处于安全盈利区</b>`;
-        }
-        const isMockAcc = !!(mt4.isMock || mt4.account === '8861092' || mt4.account === '1');
         const statusTag = isMockAcc
           ? `<span class="pill MIXED" style="cursor:pointer" onclick="clearMt4Data()" title="点击立即清除这条模拟测试数据">🧪 网页模拟演示数据 (假测试账号 #${mt4.account} · 非您的真实MT4 · 点此清除)</span>`
-          : `<span class="pill RANGE" style="background:rgba(56,189,248,0.2);color:#38bdf8;border:1px solid #38bdf8">🟢 您的真实 MT4 实时同步中 (${ageSec}秒前)</span>`;
+          : `<span class="pill RANGE" style="background:rgba(56,189,248,0.2);color:#38bdf8;border:1px solid #38bdf8">🟢 您的真实 MT4 已联动决策 (${ageSec}秒前 · 实时推演价 $${f2(mt4Dec.curPx)})</span>`;
         mt4StripHtml = `
-          <div style="margin-bottom:10px;padding:8px 12px;background:${isMockAcc ? 'rgba(245,158,11,0.12)' : 'rgba(14,116,144,0.18)'};border:1px solid ${isMockAcc ? 'rgba(245,158,11,0.55)' : 'rgba(56,189,248,0.5)'};border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px">
+          <div style="margin-bottom:10px;padding:9px 12px;background:${isMockAcc ? 'rgba(245,158,11,0.12)' : 'linear-gradient(90deg,rgba(14,116,144,0.24),rgba(15,23,42,0.92))'};border:1.5px solid ${isMockAcc ? 'rgba(245,158,11,0.55)' : 'rgba(56,189,248,0.6)'};border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               ${statusTag}
-              <span>账户 <b>#${mt4.account || '-'}</b>${mt4.server ? ` (${mt4.server})` : ''}: 余额 <b style="color:var(--gold)">$${f2(mt4.balance)}</b> / 净值 <b>$${f2(mt4.equity)}</b></span>
-              <span>| 多单(Buy): <b>${mt4.buyCount}层 / ${f2(mt4.buyLots)}手</b> ${mt4.buyAvgPrice ? `(均价$${f2(mt4.buyAvgPrice)} · 浮盈<b style="color:${mt4.buyPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.buyPnl)}</b>)` : ''}</span>
-              <span>| 空单(Sell): <b>${mt4.sellCount}层 / ${f2(mt4.sellLots)}手</b> ${mt4.sellAvgPrice ? `(均价$${f2(mt4.sellAvgPrice)} · 浮盈<b style="color:${mt4.sellPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.sellPnl)}</b>)` : ''}</span>
-              <span>| 净浮盈亏: <b style="font-size:13.5px;color:${mt4.totalPnl >= 0 ? '#34d399' : '#fb7185'}">${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)}</b></span>
+              <span>账户 <b>#${mt4.account || '-'}</b>${mt4.server ? ` (${mt4.server})` : ''}: 余额 <b style="color:var(--gold)">$${f2(mt4.balance)}</b> / 净值 <b style="color:${mt4.equity < mt4.balance ? '#fb7185' : '#34d399'}">$${f2(mt4.equity)}</b> (预付款比 <b style="color:${mt4.marginLevel < 200 ? '#fb7185' : '#38bdf8'}">${f2(mt4.marginLevel)}%</b>)</span>
+              <span>| 多单(Buy): <b>${mt4.buyCount}层/${f2(mt4.buyLots)}手</b> ${mt4.buyAvgPrice ? `(均价$${f2(mt4.buyAvgPrice)} · <b style="color:${mt4.buyPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.buyPnl)}</b>)` : ''}</span>
+              <span>| 空单(Sell): <b>${mt4.sellCount}层/${f2(mt4.sellLots)}手</b> ${mt4.sellAvgPrice ? `(均价$${f2(mt4.sellAvgPrice)} · <b style="color:${mt4.sellPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.sellPnl)}</b>)` : ''}</span>
+              <span>| 净敞口: <b style="color:#fff">${mt4Dec.netSigned > 0 ? '净多+' : mt4Dec.netSigned < 0 ? '净空' : '锁仓'}${f2(mt4Dec.netSigned)}手 ($${f2(mt4Dec.netLossPerUsd)}/美金)</b></span>
             </div>
-            <div style="color:#e2e8f0">🎯 ${breakEvenNote} ${isMockAcc ? `<button class="sm" onclick="clearMt4Data()" style="margin-left:6px;padding:1px 7px;color:#fb7185;border-color:#fb7185">🗑️ 清除演示数据</button>` : ''}</div>
+            <div style="color:#e2e8f0;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span>🎯 ${mt4Dec.breakEvenSummary}</span>
+              <a href="#mt4CurveSec" style="color:#38bdf8;font-weight:800;text-decoration:underline">📈 查看余额/净值/收益曲线图 ↓</a>
+              ${isMockAcc ? `<button class="sm" onclick="clearMt4Data()" style="padding:1px 7px;color:#fb7185;border-color:#fb7185">🗑️ 清除演示数据</button>` : ''}
+            </div>
           </div>`;
       }
 
       $('masterDecisionSec').innerHTML = `
         <div class="vhead" style="margin-bottom:10px">
           <div>
-            <h2 style="margin:0">🧭 马丁实盘「一锤定音」极简决策台 <span class="mut sm" style="font-weight:400">(不用再纠结看哪个指数！全站已合成为这 1 个总分 + 「空仓入场」与「被套去留」2 句直接指令)</span></h2>
+            <h2 style="margin:0">🧭 马丁实盘「一锤定音」极简决策台 <span class="mut sm" style="font-weight:400">(${mt4 && !isMockAcc ? `已深度绑定您 #${mt4.account} 实盘多空持仓与预付款水位，直接给出加仓/锁仓/解套点位指令` : '不用再纠结看哪个指数！全站已合成为这 1 个总分 + 「空仓入场」与「被套去留」2 句直接指令'})</span></h2>
           </div>
           <span class="pill ${pb.patternCls}" style="font-size:12.5px;padding:4px 10px">${pb.patternBadge}</span>
         </div>
         ${mt4StripHtml}
 
         <div class="grid3" style="gap:12px">
-          <!-- 卡片 1：唯一总指数（含单边10$但回调3$平仓赚钱的锯齿修正） -->
+          <!-- 卡片 1：唯一总指数（含单边10$但回调3$平仓赚钱的锯齿修正 + 实盘账户健康度） -->
           <div style="background:linear-gradient(135deg,rgba(234,179,8,0.12),rgba(15,20,30,0.95));border:1.5px solid ${mCls === 'RANGE' ? 'rgba(16,185,129,0.55)' : mCls === 'MIXED' ? 'rgba(245,158,11,0.55)' : 'rgba(244,63,94,0.65)'};border-radius:10px;padding:12px 14px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
               <b style="color:var(--gold);font-size:13px">① 全站唯一总分：马丁可做指数</b>
               <span class="pill ${mCls}">${mStatusTxt.slice(0, 8)}</span>
             </div>
-            <div style="display:flex;align-items:baseline;gap:8px;margin:4px 0 8px">
+            <div style="display:flex;align-items:baseline;gap:8px;margin:4px 0 8px;flex-wrap:wrap">
               <span class="num-chip fast-num" style="font-size:38px;font-weight:900;line-height:1;color:${mCls === 'RANGE' ? '#34d399' : mCls === 'MIXED' ? '#fbbf24' : '#fb7185'}">${martingaleScore}</span>
               <span class="mut sm">/ 100</span>
-              <span class="pill NEUT" style="font-size:11px">基础震荡 ${baseShortScore}分 ${pb.sawtoothBonus >= 0 ? `+ 锯齿回调加分 ${pb.sawtoothBonus}分` : `− 无回调扣分 ${Math.abs(pb.sawtoothBonus)}分`}</span>
+              <span class="pill NEUT" style="font-size:11px">基础震荡 ${baseShortScore}分 ${pb.sawtoothBonus >= 0 ? `+ 锯齿回调 +${pb.sawtoothBonus}` : `− 无回调 ${pb.sawtoothBonus}`}</span>
+              ${mt4Dec && !isMockAcc ? `<span class="pill ${mt4Dec.healthCls}" style="font-size:11px">🛡️ 实盘账户安全分: ${mt4Dec.accountHealthScore}分</span>` : ''}
             </div>
             ${idxBar(martingaleScore)}
             <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--bd);font-size:12px;line-height:1.55;color:#cbd5e1">
               • 近90分钟总波幅: <b>$${f2(pb.span90m)}</b> | 满$2.7止盈回调: <b style="color:#34d399">${pb.totalClears90m} 次</b> (最大回调 <b>$${f2(pb.maxPb90m)}</b>)<br>
-              • <b>当前连续未解套跨度</b>: <b style="color:${pb.activeUnretraced <= 5.5 ? '#34d399' : '#fb7185'}">$${f2(pb.activeUnretraced)}</b> <span class="xs mut">(≥60分即可正常做马丁)</span>
+              • <b>当前连续未解套跨度</b>: <b style="color:${pb.activeUnretraced <= 5.5 ? '#34d399' : '#fb7185'}">$${f2(pb.activeUnretraced)}</b> ${mt4Dec && !isMockAcc ? `| <b>实盘100%锁死线</b>: <b style="color:#fb7185">$${f2(mt4Dec.margin100Px)}</b> (余$${f2(mt4Dec.distToMargin100)})` : `<span class="xs mut">(≥60分即可正常做马丁)</span>`}
             </div>
           </div>
 
-          <!-- 卡片 2：空仓 / 轻仓时（1~3层）—— 现在能不能入场？ -->
+          <!-- 卡片 2：实盘持仓加仓/锁仓指令 或 空仓入场指令 -->
           <div style="background:rgba(15,20,30,0.92);border:1.5px solid ${entryBoxCls === 'RANGE' ? 'rgba(16,185,129,0.5)' : entryBoxCls === 'MIXED' ? 'rgba(245,158,11,0.5)' : 'rgba(244,63,94,0.6)'};border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between">
             <div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                <b style="color:#fff;font-size:13px">② 如果您现在【空仓 / 1~3层轻仓】：何时入场？</b>
-                <span class="pill ${entryBoxCls}">入场决策</span>
+                <b style="color:#fff;font-size:13px">${card2Title}</b>
+                <span class="pill ${entryBoxCls}">${card2Badge}</span>
               </div>
-              <div style="font-size:15.5px;font-weight:900;color:${entryBoxCls === 'RANGE' ? '#34d399' : entryBoxCls === 'MIXED' ? '#fbbf24' : '#fb7185'};margin:6px 0">
+              <div style="font-size:15px;font-weight:900;color:${entryBoxCls === 'RANGE' ? '#34d399' : entryBoxCls === 'MIXED' ? '#fbbf24' : '#fb7185'};margin:6px 0">
                 ${entryHeadline}
               </div>
               <div style="font-size:12px;line-height:1.55;color:#cbd5e1">
@@ -2328,31 +2376,32 @@ function render() {
               </div>
             </div>
             <div class="xs mut" style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--bd)">
-              💡 核心法则：只要不是「连续走 &gt;6$ 无 2.7$ 回调」的推土机行情，哪怕单边跌 10$ 只要中途能回调 3$ 平仓，本卡都会亮绿灯让您做！
+              ${card2Footer}
             </div>
           </div>
 
-          <!-- 卡片 3：已被套 / 浮亏中（刚遇震荡指数骤降来不及离场）—— 该继续拿着等回调，还是砍仓/锁仓？ -->
-          <div style="background:rgba(15,20,30,0.92);border:1.5px solid ${pb.holdCls === 'RANGE' ? 'rgba(16,185,129,0.55)' : pb.holdCls === 'MIXED' ? 'rgba(245,158,11,0.55)' : 'rgba(244,63,94,0.65)'};border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between">
+          <!-- 卡片 3：实盘浮亏精确解套点位 或 已被套去留决策 -->
+          <div style="background:rgba(15,20,30,0.92);border:1.5px solid ${card3Cls === 'RANGE' ? 'rgba(16,185,129,0.55)' : card3Cls === 'MIXED' ? 'rgba(245,158,11,0.55)' : 'rgba(244,63,94,0.65)'};border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between">
             <div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                <b style="color:#fff;font-size:13px">③ 如果您【已被套浮亏 · 指数骤降来不及跑】：拿还是走？</b>
-                <span class="pill ${pb.holdCls}">回调解套概率 ${pb.reboundProb}%</span>
+                <b style="color:#fff;font-size:13px">${card3Title}</b>
+                <span class="pill ${card3Cls}">${card3Badge}</span>
               </div>
-              <div style="font-size:14.5px;font-weight:900;color:${pb.holdCls === 'RANGE' ? '#34d399' : pb.holdCls === 'MIXED' ? '#fbbf24' : '#fb7185'};margin:6px 0">
-                ${pb.holdDecision}
+              <div style="font-size:14.5px;font-weight:900;color:${card3Cls === 'RANGE' ? '#34d399' : card3Cls === 'MIXED' ? '#fbbf24' : '#fb7185'};margin:6px 0">
+                ${card3Headline}
               </div>
               <div style="font-size:12px;line-height:1.55;color:#cbd5e1">
-                ${pb.holdAction.replace(/\*\*(.*?)\*\*/g, '<b style="color:var(--gold)">$1</b>')}
+                ${card3Detail}
               </div>
             </div>
             <div style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--bd);font-size:11.5px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px">
-              <span>当前受压: <b>${pb.pressureSideTxt}</b></span>
-              <span>已反抽: <b style="color:#34d399">$${f2(pb.activeCurRetrace)}</b></span>
-              <span>距止盈平仓还差: <b style="color:var(--gold)">$${f2(pb.needMoreForClear)}</b></span>
+              ${card3FooterHtml}
             </div>
           </div>
         </div>`;
+
+      // 渲染「📈 MT4 实盘账户：余额 · 净值 · 实时收益曲线图 & 持仓生死线沙盘」
+      renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc);
     }
 
     // 渲染 #eaActionBox：实时手动操作指令台 + 账户风控推演卡片
@@ -4166,6 +4215,7 @@ function buildMql4Source(kind) {
     '}',
     '',
     'void PushAccountDataToWeb() {',
+    '   RefreshRates();',
     '   int    buyCount = 0, sellCount = 0, buyStopCount = 0, sellStopCount = 0;',
     '   double buyLots = 0.0, sellLots = 0.0;',
     '   double buyWeightedPx = 0.0, sellWeightedPx = 0.0;',
@@ -4358,6 +4408,625 @@ window.clearMt4Data = async function() {
     toast('清除失败: ' + e.message);
   }
 };
+
+// ========== MT4 实盘账户深度联动决策引擎 + 余额/净值/收益曲线图 & 生死价格尺 ==========
+const MT4_CHART_STATE = { pts: null };
+
+function getMergedMt4History(mt4) {
+  if (!mt4) return [];
+  const accKey = `gold_mt4_hist_v1_${mt4.account || 'default'}`;
+  const baseKey = `gold_mt4_base_v1_${mt4.account || 'default'}`;
+  let localArr = [];
+  try {
+    const raw = localStorage.getItem(accKey);
+    if (raw) localArr = JSON.parse(raw) || [];
+  } catch (e) {}
+
+  const srvArr = Array.isArray(mt4.history) ? mt4.history : [];
+  const map = new Map();
+  for (const pt of localArr) {
+    if (pt && pt.t) map.set(Math.floor(pt.t / 5000), pt);
+  }
+  for (const pt of srvArr) {
+    if (pt && pt.t) map.set(Math.floor(pt.t / 5000), pt);
+  }
+  // 把当前最新点加入
+  const curPx = (mt4.buyLots > 0 && mt4.buyAvgPrice > 0)
+    ? r2(mt4.buyAvgPrice + (mt4.buyPnl || 0) / (mt4.buyLots * 100))
+    : (mt4.sellLots > 0 && mt4.sellAvgPrice > 0)
+    ? r2(mt4.sellAvgPrice - (mt4.sellPnl || 0) / (mt4.sellLots * 100))
+    : r2(mt4.bid || 0);
+  const nowPt = {
+    t: mt4.ts || Date.now(),
+    bal: r2(mt4.balance || 0),
+    eq: r2(mt4.equity || 0),
+    pnl: r2(mt4.totalPnl || 0),
+    buyLots: r2(mt4.buyLots || 0),
+    sellLots: r2(mt4.sellLots || 0),
+    netLots: r2((mt4.buyLots || 0) - (mt4.sellLots || 0)),
+    ml: r1(mt4.marginLevel || 0),
+    px: curPx
+  };
+  map.set(Math.floor(nowPt.t / 5000), nowPt);
+
+  const merged = Array.from(map.values()).sort((a, b) => a.t - b.t).slice(-200);
+  try { localStorage.setItem(accKey, JSON.stringify(merged)); } catch (e) {}
+
+  let initBal = Number(mt4.initBal) || 0;
+  try {
+    const savedBase = Number(localStorage.getItem(baseKey));
+    if (savedBase > 0) initBal = savedBase;
+    else if (merged.length > 0 && merged[0].bal > 0) {
+      initBal = merged[0].bal;
+      localStorage.setItem(baseKey, String(initBal));
+    }
+  } catch (e) {}
+  if (!initBal && mt4.balance > 0) initBal = mt4.balance;
+
+  return { history: merged, initBal };
+}
+
+window.resetMt4CurveBase = function() {
+  if (!D || !D.mt4) return;
+  const acc = D.mt4.account || 'default';
+  const curPx = (D.mt4.buyLots > 0 && D.mt4.buyAvgPrice > 0)
+    ? r2(D.mt4.buyAvgPrice + (D.mt4.buyPnl || 0) / (D.mt4.buyLots * 100))
+    : r2(D.mt4.bid || 0);
+  const nowPt = {
+    t: Date.now(),
+    bal: r2(D.mt4.balance || 0),
+    eq: r2(D.mt4.equity || 0),
+    pnl: r2(D.mt4.totalPnl || 0),
+    buyLots: r2(D.mt4.buyLots || 0),
+    sellLots: r2(D.mt4.sellLots || 0),
+    netLots: r2((D.mt4.buyLots || 0) - (D.mt4.sellLots || 0)),
+    ml: r1(D.mt4.marginLevel || 0),
+    px: curPx
+  };
+  try {
+    localStorage.setItem(`gold_mt4_base_v1_${acc}`, String(r2(D.mt4.balance || 0)));
+    localStorage.setItem(`gold_mt4_hist_v1_${acc}`, JSON.stringify([nowPt]));
+  } catch (e) {}
+  if (D.mt4.history) D.mt4.history = [nowPt];
+  render();
+  toast('✅ 已将当前余额设为收益曲线新起点！');
+};
+
+function calcMt4LiveDecision(d, mt4, pb, adjMap, lkNow, martingaleScore) {
+  if (!mt4) return null;
+  const t1 = (d.timeframes && d.timeframes['1M']) || {};
+  const t5 = (d.timeframes && d.timeframes['5M']) || {};
+  const t15 = (d.timeframes && d.timeframes['15M']) || {};
+
+  // 1) 从实盘持仓浮盈亏精确反推 MT4 品种当前实时价格（彻底解决脚本循环未刷 Bid 或经纪商点差差异）
+  let curPx = mt4.bid || (d.gold && d.gold.price) || t1.price || 0;
+  if (mt4.buyLots > 0 && mt4.buyAvgPrice > 0) {
+    const imp = mt4.buyAvgPrice + (mt4.buyPnl || 0) / (mt4.buyLots * 100);
+    if (imp > 1000 && imp < 10000) curPx = r2(imp);
+  } else if (mt4.sellLots > 0 && mt4.sellAvgPrice > 0) {
+    const imp = mt4.sellAvgPrice - (mt4.sellPnl || 0) / (mt4.sellLots * 100);
+    if (imp > 1000 && imp < 10000) curPx = r2(imp);
+  }
+
+  const bal = Math.max(0, Number(mt4.balance) || 0);
+  const eq = Math.max(0, Number(mt4.equity) || bal);
+  const mar = Math.max(0, Number(mt4.margin) || 0);
+  const freeM = Number(mt4.freeMargin != null ? mt4.freeMargin : (eq - mar));
+  const ml = mar > 0 ? r1((eq / mar) * 100) : (Number(mt4.marginLevel) || 9999);
+
+  const buyCount = Number(mt4.buyCount) || 0;
+  const sellCount = Number(mt4.sellCount) || 0;
+  const buyLots = r2(Number(mt4.buyLots) || 0);
+  const sellLots = r2(Number(mt4.sellLots) || 0);
+  const hasPositions = (buyCount + sellCount) > 0 && (buyLots + sellLots) > 0;
+
+  const netSigned = r2(buyLots - sellLots); // >0 净多头, <0 净空头
+  const absNetLots = r2(Math.abs(netSigned));
+  const netLossPerUsd = r2(absNetLots * 100); // 金价每波动 $1，净值波动多少美金
+  const heavySide = netSigned > 0.005 ? 'BUY' : netSigned < -0.005 ? 'SELL' : 'HEDGED';
+  const heavyLayers = heavySide === 'BUY' ? buyCount : heavySide === 'SELL' ? sellCount : Math.max(buyCount, sellCount);
+  const lightLayers = heavySide === 'BUY' ? sellCount : heavySide === 'SELL' ? buyCount : Math.min(buyCount, sellCount);
+
+  const ddUsd = r2(Math.max(0, -Number(mt4.totalPnl || 0)));
+  const ddPct = bal > 0 ? r1((ddUsd / bal) * 100) : 0;
+
+  // 2) 计算 5 大核心生死价格锚点
+  // ① 重仓侧独立回本均价 (heavyBreakEvenPx) & 重仓侧整组止盈目标价 (heavyTpPx)
+  let heavyBreakEvenPx = curPx;
+  let heavyTpPx = curPx;
+  let needHeavyBeMove = 0;
+  let needHeavyTpMove = 0;
+  if (heavySide === 'BUY' && mt4.buyAvgPrice > 0 && buyLots > 0) {
+    heavyBreakEvenPx = r2(mt4.buyAvgPrice);
+    const tpProfitUsd = Math.max(4.0, buyCount * (EA_CFG.tpPerOrder || 3.5));
+    heavyTpPx = r2(heavyBreakEvenPx + tpProfitUsd / (buyLots * 100));
+    needHeavyBeMove = r2(Math.max(0, heavyBreakEvenPx - curPx));
+    needHeavyTpMove = r2(Math.max(0, heavyTpPx - curPx));
+  } else if (heavySide === 'SELL' && mt4.sellAvgPrice > 0 && sellLots > 0) {
+    heavyBreakEvenPx = r2(mt4.sellAvgPrice);
+    const tpProfitUsd = Math.max(4.0, sellCount * (EA_CFG.tpPerOrder || 3.5));
+    heavyTpPx = r2(heavyBreakEvenPx - tpProfitUsd / (sellLots * 100));
+    needHeavyBeMove = r2(Math.max(0, curPx - heavyBreakEvenPx));
+    needHeavyTpMove = r2(Math.max(0, curPx - heavyTpPx));
+  }
+
+  // ② 全账户多空对冲净值回本价 (netBreakEvenPx: 使 totalPnl == 0 即 净值回到余额)
+  let netBreakEvenPx = curPx;
+  let needNetBeMove = 0;
+  if (absNetLots >= 0.01 && mt4.totalPnl < 0 && curPx > 0) {
+    needNetBeMove = r2(Math.abs(mt4.totalPnl) / netLossPerUsd);
+    netBreakEvenPx = netSigned > 0 ? r2(curPx + needNetBeMove) : r2(curPx - needNetBeMove);
+  }
+
+  // ③ 100% 预付款比例锁死价 (margin100Px: 当 Equity == Margin 即 可用预付款 FreeMargin == 0，此时 MT4 将禁止再开任何新单甚至无法手动锁仓！)
+  const freeBufferUsd = Math.max(0, eq - mar);
+  const distToMargin100 = netLossPerUsd > 0 ? r2(freeBufferUsd / netLossPerUsd) : 999;
+  const margin100Px = netSigned > 0 ? r2(curPx - distToMargin100) : netSigned < 0 ? r2(curPx + distToMargin100) : 0;
+
+  // ④ 50% 强平警戒价 (stopOut50Px) 与 20% 极限爆仓价 (stopOut20Px)
+  const remTo50Usd = Math.max(0, eq - mar * 0.50);
+  const distTo50 = netLossPerUsd > 0 ? r2(remTo50Usd / netLossPerUsd) : 999;
+  const stopOut50Px = netSigned > 0 ? r2(curPx - distTo50) : netSigned < 0 ? r2(curPx + distTo50) : 0;
+
+  const remTo20Usd = Math.max(0, eq - mar * 0.20);
+  const distTo20 = netLossPerUsd > 0 ? r2(remTo20Usd / netLossPerUsd) : 999;
+  const stopOut20Px = netSigned > 0 ? r2(curPx - distTo20) : netSigned < 0 ? r2(curPx + distTo20) : 0;
+
+  // ⑤ 紧急手动对冲锁仓触发价 (hedgeTriggerPx): 在到达 100% 预付款锁死线之前预留 1.3$ (或剩余空间的 35%)，确保还有可用预付款开出反向锁仓单！
+  const safeBufferBefore100 = Math.min(distToMargin100 * 0.65, Math.max(0.8, distToMargin100 - 1.3));
+  const hedgeTriggerPx = netSigned > 0 ? r2(curPx - safeBufferBefore100) : netSigned < 0 ? r2(curPx + safeBufferBefore100) : 0;
+
+  // 3) 实盘账户安全健康度评分 (accountHealthScore: 0 ~ 100)
+  let health = 95;
+  if (ddPct > 5) health -= Math.min(42, (ddPct - 5) * 0.95);
+  if (ml < 300) health -= Math.min(35, (300 - ml) * 0.18);
+  if (heavyLayers >= 5) health -= (heavyLayers - 4) * 5;
+  if (distToMargin100 < 5.0) health -= Math.round((5.0 - distToMargin100) * 5);
+  const accountHealthScore = Math.max(5, Math.min(99, Math.round(health)));
+  const healthCls = accountHealthScore >= 65 ? 'RANGE' : accountHealthScore >= 42 ? 'MIXED' : 'TREND';
+
+  // 4) 结合盘面指标 (1M/5M RSI, 震荡指数, 锯齿回调概率) 计算实盘专属解套概率
+  const rsi1 = Number(t1.rsi) || 50;
+  const rsi5 = Number(t5.rsi) || 50;
+  let liveReboundProb = pb.reboundProb || 60;
+  if (heavySide === 'BUY') {
+    // 买单被套盼涨：若 1M/5M RSI 超卖 (<35) 则短线反弹概率上调；若 5M 仍在放量暴跌则下调
+    if (rsi1 < 34 || rsi5 < 36) liveReboundProb += 10;
+    if (needHeavyBeMove > 4.5) liveReboundProb -= Math.min(22, Math.round((needHeavyBeMove - 3.5) * 5));
+  } else if (heavySide === 'SELL') {
+    if (rsi1 > 66 || rsi5 > 64) liveReboundProb += 10;
+    if (needHeavyBeMove > 4.5) liveReboundProb -= Math.min(22, Math.round((needHeavyBeMove - 3.5) * 5));
+  }
+  liveReboundProb = Math.max(12, Math.min(92, Math.round(liveReboundProb)));
+
+  // 5) 生成顶部横幅回本摘要
+  let breakEvenSummary = '当前无净敞口或处于净浮盈安全状态';
+  if (absNetLots >= 0.01 && mt4.totalPnl < 0) {
+    const dirW = netSigned > 0 ? '反弹上涨' : '回落下跌';
+    breakEvenSummary = `金价需<b>${dirW} $${f2(needHeavyBeMove)}</b> 至 <b style="color:var(--gold)">$${f2(heavyBreakEvenPx)}</b> 重仓回本 (涨至 <b style="color:#34d399">$${f2(heavyTpPx)}</b> 整组止盈清仓)`;
+  } else if (mt4.totalPnl >= 0 && hasPositions) {
+    breakEvenSummary = `<b style="color:#34d399">当前实盘篮子整体净浮盈 +$${f2(mt4.totalPnl)}，处于安全收割区</b>`;
+  }
+
+  // 6) 生成卡片 2（针对当前实盘持仓：加仓还是锁仓？）与卡片 3（针对当前实盘浮亏：去留与精确解套价）
+  let posActionBadge = '持仓决策';
+  let posCls = 'RANGE';
+  let posHeadline = '';
+  let posDetail = '';
+  let posFooter = '';
+
+  let escapeCls = 'RANGE';
+  let escapeHeadline = '';
+  let escapeDetail = '';
+  let escapeFooterHtml = '';
+
+  if (heavySide === 'BUY') {
+    const isUrgent = ml < 220 || ddPct >= 28 || heavyLayers >= 6 || distToMargin100 <= 4.0;
+    const isWarn = !isUrgent && (ml < 400 || ddPct >= 15 || heavyLayers >= 4 || martingaleScore < 52);
+    if (isUrgent) {
+      posActionBadge = `🚨 禁加第${buyCount + 1}层多单·备锁仓`;
+      posCls = 'TREND';
+      posHeadline = `🛑 严禁再加多单(已${buyCount}层/${f2(buyLots)}手)！保留空单对冲，跌破 $${f2(hedgeTriggerPx)} 立即锁仓`;
+      posDetail = `• <b>为什么不能再加多单</b>：您当前预付款比例已降至 <b style="color:#fb7185">${f2(ml)}%</b>（可用预付款仅剩 <b>$${f2(freeM)}</b>），净多头敞口 <b>+${f2(absNetLots)}手</b>（金价每跌$1净值亏<b>$${f2(netLossPerUsd)}</b>）。若金价再跌 <b>$${f2(distToMargin100)}</b> 至 <b style="color:#fb7185">$${f2(margin100Px)}</b>，预付款比例将跌破 100%，届时 MT4 将<b>禁止开出任何新单（连对冲锁仓都无法操作）</b>！<br>• <b>立即执行动作</b>：① 保持当前 <b>${sellCount}层空单(${f2(sellLots)}手 · 浮盈+$${f2(mt4.sellPnl)})</b> 顺势对冲回血，切勿过早手动平掉空单；② 若有上方未成交 <code>Buy Stop</code> 挂单立即删除；③ 若金价未能反弹反而向下跌破 <b style="color:var(--gold)">$${f2(hedgeTriggerPx)}</b>，趁还有可用预付款立即手动补开 <b>${f2(absNetLots)}手 空单(Sell)</b> 锁死净敞口！`;
+      posFooter = `⚠️ 铁律：预付款比例低于 200% 时，保住可用预付款（防止跌破 $${f2(margin100Px)} 丧失锁仓权）永远是第一优先级！`;
+    } else if (isWarn) {
+      posActionBadge = `🟡 控层观察·勿追多`;
+      posCls = 'MIXED';
+      posHeadline = `🟡 多单已达 ${buyCount}层(${f2(buyLots)}手)：暂停新开追多挂单，依靠双向网格自然回调清仓`;
+      posDetail = `• 您当前净多头 <b>+${f2(absNetLots)}手</b>（每波动$1盈亏$${f2(netLossPerUsd)}），预付款比例 <b>${f2(ml)}%</b>。建议删除上方未成交的追踪 <code>Buy Stop</code> 挂单，仅让现有 ${buyCount} 层多单等待反弹至 <b>$${f2(heavyTpPx)}</b> 自动止盈。`;
+      posFooter = `💡 下方 100% 预付款警戒线位于 $${f2(margin100Px)}（可再抗 $${f2(distToMargin100)}），50% 强平线位于 $${f2(stopOut50Px)}。`;
+    } else {
+      posActionBadge = `🟢 持仓安全·正常运行`;
+      posCls = 'RANGE';
+      posHeadline = `🟢 当前多单 ${buyCount}层(${f2(buyLots)}手) 仓位极轻，预付款充裕(${f2(ml)}%)，保持 EA 自动运行`;
+      posDetail = `• 净敞口仅 <b>+${f2(absNetLots)}手</b>，金价只需微幅波动至 <b style="color:var(--gold)">$${f2(heavyTpPx)}</b> 即可整组止盈重置，无需人工干预。`;
+      posFooter = `💡 下方安全缓冲空间高达 $${f2(distToMargin100)}（100%预付款线 $${f2(margin100Px)}）。`;
+    }
+
+    // 卡片 3：多单浮亏解套策略
+    if (mt4.totalPnl < 0) {
+      escapeCls = isUrgent ? (liveReboundProb >= 55 ? 'MIXED' : 'TREND') : 'RANGE';
+      escapeHeadline = needHeavyBeMove <= 3.5
+        ? `🎯 距多单回本仅差 $${f2(needHeavyBeMove)}：拿住等反抽至 $${f2(heavyBreakEvenPx)}~$${f2(heavyTpPx)} 减仓/清仓！`
+        : `⚠️ 距多单回本需涨 $${f2(needHeavyBeMove)} (至$${f2(heavyBreakEvenPx)})：逢反抽先减尾层大单降低敞口！`;
+      escapeDetail = `• <b>路线 A（反抽解套/减仓点位）</b>：您 6 层多单加权均价在 <b style="color:var(--gold)">$${f2(heavyBreakEvenPx)}</b>（当前推演价 <b>$${f2(curPx)}</b>，仅需反弹 <b>+$${f2(needHeavyBeMove)}</b> 即可回本；反弹至 <b style="color:#34d399">$${f2(heavyTpPx)}</b> 即可触发 EA 整组止盈清仓）。若金价反抽至 <b>$${f2(curPx + Math.max(1.2, needHeavyBeMove * 0.65))} ~ $${f2(heavyBreakEvenPx)}</b> 附近出现滞涨，建议先手动平掉最重的那 1~2 笔多单，把预付款比例拉回 300% 以上！<br>• <b>路线 B（向下破位保命底线）</b>：下方 <b>100%预付款禁开新单线在 <span style="color:#fb7185">$${f2(margin100Px)}</span></b>（再跌 $${f2(distToMargin100)}）、<b>50%强平线在 <span style="color:#fb7185">$${f2(stopOut50Px)}</span></b>（再跌 $${f2(distTo50)}）。一旦金价向下跌破 <b style="color:var(--gold)">$${f2(hedgeTriggerPx)}</b>，切勿死扛，立即对冲锁仓或砍掉顶层浮亏单！`;
+      escapeFooterHtml = `
+        <span>多单回本价: <b style="color:var(--gold)">$${f2(heavyBreakEvenPx)}</b> (需+$${f2(needHeavyBeMove)})</span>
+        <span>整组止盈价: <b style="color:#34d399">$${f2(heavyTpPx)}</b></span>
+        <span>100%锁死/50%强平: <b style="color:#fb7185">$${f2(margin100Px)} / $${f2(stopOut50Px)}</b></span>`;
+    } else {
+      escapeCls = 'RANGE';
+      escapeHeadline = `🟢 当前实盘整体净浮盈 +$${f2(mt4.totalPnl)}，可随时落袋或等 EA 自动止盈`;
+      escapeDetail = `• 您的多空持仓目前处于净盈利状态（净值 $${f2(eq)} > 余额 $${f2(bal)}），多单止盈目标价 <b>$${f2(heavyTpPx)}</b>。`;
+      escapeFooterHtml = `<span>实时净值: <b style="color:#34d399">$${f2(eq)}</b></span><span>预付款比: <b>${f2(ml)}%</b></span>`;
+    }
+  } else if (heavySide === 'SELL') {
+    const isUrgent = ml < 220 || ddPct >= 28 || heavyLayers >= 6 || distToMargin100 <= 4.0;
+    const isWarn = !isUrgent && (ml < 400 || ddPct >= 15 || heavyLayers >= 4 || martingaleScore < 52);
+    if (isUrgent) {
+      posActionBadge = `🚨 禁加第${sellCount + 1}层空单·备锁仓`;
+      posCls = 'TREND';
+      posHeadline = `🛑 严禁再加空单(已${sellCount}层/${f2(sellLots)}手)！保留多单对冲，突破 $${f2(hedgeTriggerPx)} 立即锁仓`;
+      posDetail = `• <b>为什么不能再加空单</b>：当前预付款比例仅 <b style="color:#fb7185">${f2(ml)}%</b>（可用预付款 <b>$${f2(freeM)}</b>），净空头敞口 <b>${f2(netSigned)}手</b>（金价每涨$1净值亏<b>$${f2(netLossPerUsd)}</b>）。若金价再涨 <b>$${f2(distToMargin100)}</b> 至 <b style="color:#fb7185">$${f2(margin100Px)}</b>，预付款比例将跌破 100% 导致无法开新单！<br>• <b>立即执行动作</b>：① 保留多单(${f2(buyLots)}手)顺势对冲；② 删除下方未成交 <code>Sell Stop</code> 挂单；③ 若金价向上突破 <b style="color:var(--gold)">$${f2(hedgeTriggerPx)}</b>，立即手动补开 <b>${f2(absNetLots)}手 多单(Buy)</b> 锁死净敞口！`;
+      posFooter = `⚠️ 铁律：预付款比例低于 200% 时，严防突破 $${f2(margin100Px)} 丧失对冲锁仓权！`;
+    } else if (isWarn) {
+      posActionBadge = `🟡 控层观察·勿追空`;
+      posCls = 'MIXED';
+      posHeadline = `🟡 空单已达 ${sellCount}层(${f2(sellLots)}手)：暂停新开追空挂单，等回落至 $${f2(heavyTpPx)} 止盈`;
+      posDetail = `• 当前净空头 <b>${f2(netSigned)}手</b>，建议删除下方未成交 <code>Sell Stop</code> 挂单，等金价回落至 <b>$${f2(heavyTpPx)}</b> 触发整组止盈。`;
+      posFooter = `💡 上方 100% 预付款警戒线位于 $${f2(margin100Px)}（可再抗 $${f2(distToMargin100)}），50% 强平线位于 $${f2(stopOut50Px)}。`;
+    } else {
+      posActionBadge = `🟢 持仓安全·正常运行`;
+      posCls = 'RANGE';
+      posHeadline = `🟢 当前空单 ${sellCount}层(${f2(sellLots)}手) 仓位极轻，预付款充裕(${f2(ml)}%)，保持 EA 自动运行`;
+      posDetail = `• 净敞口仅 <b>${f2(netSigned)}手</b>，金价回落至 <b style="color:var(--gold)">$${f2(heavyTpPx)}</b> 即可整组止盈重置。`;
+      posFooter = `💡 上方安全缓冲空间高达 $${f2(distToMargin100)}（100%预付款线 $${f2(margin100Px)}）。`;
+    }
+
+    if (mt4.totalPnl < 0) {
+      escapeCls = isUrgent ? (liveReboundProb >= 55 ? 'MIXED' : 'TREND') : 'RANGE';
+      escapeHeadline = needHeavyBeMove <= 3.5
+        ? `🎯 距空单回本仅差 $${f2(needHeavyBeMove)}：拿住等回落至 $${f2(heavyBreakEvenPx)}~$${f2(heavyTpPx)} 清仓！`
+        : `⚠️ 距空单回本需跌 $${f2(needHeavyBeMove)} (至$${f2(heavyBreakEvenPx)})：逢回调先减尾层大单降低敞口！`;
+      escapeDetail = `• <b>路线 A（回调解套/减仓点位）</b>：空单加权均价在 <b style="color:var(--gold)">$${f2(heavyBreakEvenPx)}</b>（当前推演价 <b>$${f2(curPx)}</b>，仅需回落 <b>-$${f2(needHeavyBeMove)}</b> 即可回本；跌至 <b style="color:#34d399">$${f2(heavyTpPx)}</b> 整组止盈）。<br>• <b>路线 B（向上破位保命底线）</b>：上方 <b>100%预付款禁开新单线在 <span style="color:#fb7185">$${f2(margin100Px)}</span></b>、<b>50%强平线在 <span style="color:#fb7185">$${f2(stopOut50Px)}</span></b>。一旦向上突破 <b style="color:var(--gold)">$${f2(hedgeTriggerPx)}</b> 立即锁仓！`;
+      escapeFooterHtml = `
+        <span>空单回本价: <b style="color:var(--gold)">$${f2(heavyBreakEvenPx)}</b> (需-$${f2(needHeavyBeMove)})</span>
+        <span>整组止盈价: <b style="color:#34d399">$${f2(heavyTpPx)}</b></span>
+        <span>100%锁死/50%强平: <b style="color:#fb7185">$${f2(margin100Px)} / $${f2(stopOut50Px)}</b></span>`;
+    } else {
+      escapeCls = 'RANGE';
+      escapeHeadline = `🟢 当前实盘整体净浮盈 +$${f2(mt4.totalPnl)}，处于安全盈利区`;
+      escapeDetail = `• 空单整组止盈目标价 <b>$${f2(heavyTpPx)}</b>。`;
+      escapeFooterHtml = `<span>实时净值: <b style="color:#34d399">$${f2(eq)}</b></span><span>预付款比: <b>${f2(ml)}%</b></span>`;
+    }
+  } else {
+    posActionBadge = hasPositions ? '⚖️ 完全锁仓中' : '🟢 空仓待命';
+    posCls = 'RANGE';
+    posHeadline = hasPositions ? `⚖️ 当前多空手数完全相等 (${f2(buyLots)}手 = ${f2(sellLots)}手)，净值已锁死` : `🟢 当前实盘空仓无持仓，可按盘面指数择机开启 EA`;
+    posDetail = hasPositions ? `• 多空完全对冲，金价无论涨跌净值几乎不变，请等待震荡指数回到 ≥60 分且出现明确拐点后再分批解锁。` : `• 账户余额 $${f2(bal)} 100% 安全待命。`;
+    posFooter = `💡 保持关注 1M/5M 震荡指数与重磅数据红灯锁。`;
+    escapeCls = 'RANGE';
+    escapeHeadline = hasPositions ? `⚖️ 锁仓状态下无单边爆仓风险` : `🟢 当前无被套持仓`;
+    escapeDetail = `• 请在波幅收窄、震荡指数 ≥60 分时先平顺势盈利侧并结合回调解套。`;
+    escapeFooterHtml = `<span>余额: <b>$${f2(bal)}</b></span><span>净值: <b>$${f2(eq)}</b></span>`;
+  }
+
+  return {
+    curPx,
+    bal,
+    eq,
+    mar,
+    freeM,
+    ml,
+    hasPositions,
+    netSigned,
+    absNetLots,
+    netLossPerUsd,
+    heavySide,
+    heavyLayers,
+    lightLayers,
+    ddUsd,
+    ddPct,
+    heavyBreakEvenPx,
+    heavyTpPx,
+    needHeavyBeMove,
+    needHeavyTpMove,
+    netBreakEvenPx,
+    needNetBeMove,
+    margin100Px,
+    distToMargin100,
+    stopOut50Px,
+    distTo50,
+    stopOut20Px,
+    distTo20,
+    hedgeTriggerPx,
+    accountHealthScore,
+    healthCls,
+    liveReboundProb,
+    breakEvenSummary,
+    posActionBadge,
+    posCls,
+    posHeadline,
+    posDetail,
+    posFooter,
+    escapeCls,
+    escapeHeadline,
+    escapeDetail,
+    escapeFooterHtml
+  };
+}
+
+function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
+  if (!hist || !hist.length) return '<div class="mut">正在采集 MT4 实盘余额与净值时序数据...</div>';
+  // 如果只有 1 个点，自动复制一个微秒级前驱点以便绘出完整水平基准线与面积图
+  const arr = hist.length === 1
+    ? [{ ...hist[0], t: hist[0].t - 5000 }, hist[0]]
+    : hist;
+
+  const W = 1200, H = 430, L = 68, R = 148, T = 26, B = 38;
+  const cw = W - L - R, n = arr.length;
+  const xOf = (i) => L + (i / Math.max(1, n - 1)) * cw;
+
+  // 上面板 (topTop ~ topBot): 账户余额 (Balance) + 实时净值 (Equity) + 已用预付款100%警戒线 (Margin)
+  // 下面板 (botTop ~ botBot): 累计总收益曲线 (Equity - initBal) + 实时浮动盈亏柱状图 (totalPnl)
+  const topTop = T, topH = 210, topBot = topTop + topH;
+  const botTop = topBot + 36, botH = H - B - botTop, botBot = botTop + botH;
+
+  const curMar = Number(mt4.margin) || 0;
+  let vMin = Infinity, vMax = -Infinity;
+  arr.forEach((p) => {
+    const hi = Math.max(p.bal || 0, p.eq || 0, initBal || 0);
+    const lo = Math.min(p.bal || 0, p.eq || 0, initBal || 0, curMar > 0 ? curMar : Infinity);
+    if (hi > vMax) vMax = hi;
+    if (lo < vMin) vMin = lo;
+  });
+  if (!isFinite(vMin) || !isFinite(vMax) || vMax <= vMin) {
+    vMax = (mt4.balance || 100) + 20;
+    vMin = Math.max(0, (mt4.equity || 80) - 20);
+  }
+  const padV = Math.max(5, (vMax - vMin) * 0.14);
+  vMax += padV;
+  vMin = Math.max(0, vMin - padV);
+
+  let pMin = Math.min(0, -10), pMax = Math.max(0, 10);
+  arr.forEach((p) => {
+    const netRet = r2((p.eq || 0) - initBal);
+    const fl = r2(p.pnl || 0);
+    pMax = Math.max(pMax, netRet, fl);
+    pMin = Math.min(pMin, netRet, fl);
+  });
+  const padP = Math.max(5, (pMax - pMin) * 0.15);
+  pMax += padP;
+  pMin -= padP;
+
+  const yTop = (v) => topTop + (1 - (v - vMin) / Math.max(1e-6, vMax - vMin)) * topH;
+  const yBot = (v) => botTop + (1 - (v - pMin) / Math.max(1e-6, pMax - pMin)) * botH;
+
+  MT4_CHART_STATE.pts = { arr, W, H, L, R, T, B, cw, topTop, topH, topBot, botTop, botH, botBot, vMin, vMax, pMin, pMax, initBal };
+
+  // 上面板网格与刻度
+  const topTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const val = vMin + (1 - f) * (vMax - vMin);
+    const y = (topTop + f * topH).toFixed(1);
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="#262d3b" stroke-width="1" stroke-dasharray="3,3"/>
+      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#94a3b8" font-size="11">$${val.toFixed(1)}</text>`;
+  }).join('');
+
+  // 100% 预付款警戒线 (当 Equity 跌到此线时 FreeMargin=0)
+  let marginLineSvg = '';
+  if (curMar > 0 && curMar >= vMin && curMar <= vMax) {
+    const ym = yTop(curMar).toFixed(1);
+    marginLineSvg = `
+      <line x1="${L}" y1="${ym}" x2="${W - R}" y2="${ym}" stroke="#f43f5e" stroke-width="1.4" stroke-dasharray="5,4"/>
+      <text x="${W - R + 6}" y="${+ym + 4}" fill="#fb7185" font-size="11" font-weight="700">🚨 100%预付款线 $${curMar.toFixed(2)}</text>`;
+  }
+
+  const balPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yTop(p.bal).toFixed(1)}`).join(' ');
+  const eqPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yTop(p.eq).toFixed(1)}`).join(' ');
+  const eqArea = `${xOf(0).toFixed(1)},${topBot} ${eqPts} ${xOf(n - 1).toFixed(1)},${topBot}`;
+
+  const last = arr[n - 1];
+  const lastX = xOf(n - 1).toFixed(1);
+  const lastBalY = yTop(last.bal).toFixed(1);
+  const lastEqY = yTop(last.eq).toFixed(1);
+  const eqColor = last.eq >= last.bal ? '#34d399' : '#38bdf8';
+
+  // 下面板：0轴 + 浮动盈亏柱状图 + 综合净收益折线 (Equity - initBal)
+  const yZero = yBot(0).toFixed(1);
+  const botTicks = [0, 0.5, 1].map((f) => {
+    const val = pMin + (1 - f) * (pMax - pMin);
+    const y = (botTop + f * botH).toFixed(1);
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="#262d3b" stroke-width="1" stroke-dasharray="3,3"/>
+      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#94a3b8" font-size="11">${val >= 0 ? '+' : ''}$${val.toFixed(1)}</text>`;
+  }).join('');
+
+  const bw = Math.max(2.5, Math.min(9, cw / Math.max(8, n) * 0.62));
+  const pnlBars = arr.map((p, i) => {
+    const x = xOf(i);
+    const fl = p.pnl || 0;
+    const yVal = yBot(fl);
+    const y0 = yBot(0);
+    const yt = Math.min(yVal, y0).toFixed(1);
+    const bh = Math.max(1.5, Math.abs(yVal - y0)).toFixed(1);
+    const col = fl >= 0 ? '#34d399' : '#fb7185';
+    return `<rect x="${(x - bw / 2).toFixed(1)}" y="${yt}" width="${bw.toFixed(1)}" height="${bh}" fill="${col}" opacity="0.38" rx="1"/>`;
+  }).join('');
+
+  const retPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yBot((p.eq || 0) - initBal).toFixed(1)}`).join(' ');
+  const closedPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yBot((p.bal || 0) - initBal).toFixed(1)}`).join(' ');
+  const lastRet = r2((last.eq || 0) - initBal);
+  const lastClosed = r2((last.bal || 0) - initBal);
+
+  // X轴时间刻度
+  const xStep = Math.max(1, Math.floor((n - 1) / 6));
+  let xTicks = '';
+  for (let i = 0; i < n; i += xStep) {
+    const x = xOf(i).toFixed(1);
+    const tm = new Date(arr[i].t).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+    xTicks += `<line x1="${x}" y1="${topTop}" x2="${x}" y2="${botBot}" stroke="#262d3b" stroke-width="1" opacity="0.45"/>
+      <text x="${x}" y="${H - 12}" text-anchor="middle" fill="#94a3b8" font-size="11">${tm}</text>`;
+  }
+
+  return `<svg class="big-svg" id="svg-mt4-curve" style="height:400px;min-height:360px;max-height:450px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onMt4ChartMove(event)" onmouseleave="onMt4ChartLeave()">
+    <defs>
+      <linearGradient id="mt4EqGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${eqColor}" stop-opacity="0.28"/>
+        <stop offset="100%" stop-color="${eqColor}" stop-opacity="0.02"/>
+      </linearGradient>
+    </defs>
+
+    <!-- 上面板：余额 & 净值 & 100%预付款线 -->
+    <text x="${L + 6}" y="${topTop - 7}" fill="#fbbf24" font-size="12.5" font-weight="bold">💰 账户余额(Balance 金色实线) vs 实时净值(Equity 青蓝实线) vs 100%预付款锁死线(红色虚线)  [已采集 ${hist.length} 个实盘快照点]</text>
+    ${topTicks}
+    ${marginLineSvg}
+    <polygon points="${eqArea}" fill="url(#mt4EqGrad)"/>
+    <polyline fill="none" stroke="#fbbf24" stroke-width="2.6" points="${balPts}"/>
+    <polyline fill="none" stroke="${eqColor}" stroke-width="2.4" points="${eqPts}"/>
+    <circle cx="${lastX}" cy="${lastBalY}" r="5" fill="#fbbf24" stroke="#0f172a" stroke-width="1.5"/>
+    <circle cx="${lastX}" cy="${lastEqY}" r="5.5" fill="${eqColor}" stroke="#0f172a" stroke-width="1.5"/>
+    <text x="${W - R + 6}" y="${+lastBalY + 4}" fill="#fbbf24" font-size="11.5" font-weight="800">余额 $${last.bal.toFixed(2)}</text>
+    <text x="${W - R + 6}" y="${Math.abs(lastEqY - lastBalY) < 14 ? (+lastBalY + 18) : (+lastEqY + 4)}" fill="${eqColor}" font-size="11.5" font-weight="800">净值 $${last.eq.toFixed(2)}</text>
+
+    <!-- 下面板：实时收益曲线 & 浮亏柱状图 -->
+    <line x1="${L}" y1="${topBot + 14}" x2="${W - R}" y2="${topBot + 14}" stroke="#262d3b" stroke-width="1.5"/>
+    <text x="${L + 6}" y="${botTop - 7}" fill="#38bdf8" font-size="12.5" font-weight="bold">📈 实时收益曲线：已平仓落袋收益(金虚线 ${lastClosed >= 0 ? '+' : ''}$${lastClosed.toFixed(2)}) · 综合净值总收益(亮青线 ${lastRet >= 0 ? '+' : ''}$${lastRet.toFixed(2)}) · 实时浮动盈亏(红绿柱 ${last.pnl >= 0 ? '+' : ''}$${last.pnl.toFixed(2)})</text>
+    ${botTicks}
+    <line x1="${L}" y1="${yZero}" x2="${W - R}" y2="${yZero}" stroke="#64748b" stroke-width="1.2" stroke-dasharray="4,2"/>
+    ${pnlBars}
+    <polyline fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="4,3" points="${closedPts}"/>
+    <polyline fill="none" stroke="#a78bfa" stroke-width="2.2" points="${retPts}"/>
+    <text x="${W - R + 6}" y="${yBot(lastClosed) + 4}" fill="#fbbf24" font-size="11" font-weight="700">已落袋 ${lastClosed >= 0 ? '+' : ''}$${lastClosed.toFixed(2)}</text>
+    <text x="${W - R + 6}" y="${Math.abs(yBot(lastRet) - yBot(lastClosed)) < 14 ? (yBot(lastClosed) + 17) : (yBot(lastRet) + 4)}" fill="#a78bfa" font-size="11" font-weight="700">净收益 ${lastRet >= 0 ? '+' : ''}$${lastRet.toFixed(2)}</text>
+    ${xTicks}
+
+    <!-- 十字准星浮窗 -->
+    <g id="xh-mt4" style="display:none;pointer-events:none">
+      <line id="xh-mt4-v" x1="0" y1="${topTop}" x2="0" y2="${botBot}" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,4" opacity="0.85"/>
+      <circle id="xh-mt4-bal" cx="0" cy="0" r="5.5" fill="#fbbf24" stroke="#fff" stroke-width="1.8"/>
+      <circle id="xh-mt4-eq" cx="0" cy="0" r="5.5" fill="#38bdf8" stroke="#fff" stroke-width="1.8"/>
+      <rect id="xh-mt4-box" x="0" y="0" width="465" height="68" rx="6" fill="rgba(15,18,24,0.95)" stroke="#38bdf8" stroke-width="1.2"/>
+      <text id="xh-mt4-t1" x="0" y="0" fill="#fbbf24" font-size="12.5" font-weight="bold"></text>
+      <text id="xh-mt4-t2" x="0" y="0" fill="#38bdf8" font-size="12.5" font-weight="bold"></text>
+      <text id="xh-mt4-t3" x="0" y="0" fill="#cbd5e1" font-size="12"></text>
+    </g>
+  </svg>`;
+}
+
+window.onMt4ChartMove = function(ev) {
+  const cfg = MT4_CHART_STATE.pts;
+  const svg = $('svg-mt4-curve'), g = $('xh-mt4');
+  if (!cfg || !svg || !g) return;
+  const rect = svg.getBoundingClientRect();
+  const mx = (ev.clientX - rect.left) / rect.width * cfg.W;
+  const n = cfg.arr.length;
+  const idx = Math.max(0, Math.min(n - 1, Math.round((mx - cfg.L) / cfg.cw * Math.max(1, n - 1))));
+  const p = cfg.arr[idx];
+  const x = cfg.L + (idx / Math.max(1, n - 1)) * cfg.cw;
+  const yBal = cfg.topTop + (1 - (p.bal - cfg.vMin) / Math.max(1e-6, cfg.vMax - cfg.vMin)) * cfg.topH;
+  const yEq = cfg.topTop + (1 - (p.eq - cfg.vMin) / Math.max(1e-6, cfg.vMax - cfg.vMin)) * cfg.topH;
+
+  g.style.display = 'block';
+  $('xh-mt4-v').setAttribute('x1', x);
+  $('xh-mt4-v').setAttribute('x2', x);
+  $('xh-mt4-bal').setAttribute('cx', x);
+  $('xh-mt4-bal').setAttribute('cy', yBal);
+  $('xh-mt4-eq').setAttribute('cx', x);
+  $('xh-mt4-eq').setAttribute('cy', yEq);
+
+  const boxW = 475, boxH = 68;
+  const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
+  const by = cfg.topTop + 8;
+  const box = $('xh-mt4-box'), t1 = $('xh-mt4-t1'), t2 = $('xh-mt4-t2'), t3 = $('xh-mt4-t3');
+  box.setAttribute('x', bx); box.setAttribute('y', by);
+  t1.setAttribute('x', bx + 10); t1.setAttribute('y', by + 20);
+  t2.setAttribute('x', bx + 10); t2.setAttribute('y', by + 41);
+  t3.setAttribute('x', bx + 10); t3.setAttribute('y', by + 60);
+
+  const tm = new Date(p.t).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  const closedPnl = r2((p.bal || 0) - cfg.initBal);
+  const netRet = r2((p.eq || 0) - cfg.initBal);
+  t1.textContent = `🕒 ${tm}  |  余额: $${f2(p.bal)}  |  净值: $${f2(p.eq)}  |  金价: $${f2(p.px)}`;
+  t2.textContent = `💰 已平仓落袋收益: ${closedPnl >= 0 ? '+' : ''}$${f2(closedPnl)}  |  实时浮动盈亏: ${p.pnl >= 0 ? '+' : ''}$${f2(p.pnl)}  |  综合净收益: ${netRet >= 0 ? '+' : ''}$${f2(netRet)}`;
+  t3.textContent = `📊 持仓敞口: 买${f2(p.buyLots)}手 / 卖${f2(p.sellLots)}手 (净敞口 ${p.netLots >= 0 ? '+' : ''}${f2(p.netLots)}手)  |  预付款比例: ${f2(p.ml)}%`;
+};
+
+window.onMt4ChartLeave = function() {
+  const g = $('xh-mt4');
+  if (g) g.style.display = 'none';
+};
+
+function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
+  const sec = $('mt4CurveSec');
+  if (!sec) return;
+  if (!mt4 || !mt4Dec) {
+    sec.style.display = 'none';
+    return;
+  }
+  sec.style.display = 'block';
+  const { history, initBal } = getMergedMt4History(mt4);
+  const closedProfit = r2((mt4.balance || 0) - initBal);
+  const netTotalProfit = r2((mt4.equity || 0) - initBal);
+  const closedPct = initBal > 0 ? r1((closedProfit / initBal) * 100) : 0;
+  const netRetPct = initBal > 0 ? r1((netTotalProfit / initBal) * 100) : 0;
+
+  const chartSvg = buildMt4AccountChartSvg(history, mt4, mt4Dec, initBal);
+
+  sec.innerHTML = `
+    <div class="vhead" style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">💰 MT4 实盘账户：余额 · 净值 · 实时收益曲线图 &amp; 持仓生死线沙盘</h2>
+        <span class="pill ${mt4Dec.healthCls}">账户 #${mt4.account} (${mt4.server || 'MT4'}) · 安全分 ${mt4Dec.accountHealthScore}/100</span>
+      </div>
+      <div class="btns">
+        <button class="sm" onclick="resetMt4CurveBase()" title="以当前余额 $${f2(mt4.balance)} 作为新的零点基准重算累计收益曲线">🎯 重置收益曲线起点 (当前基准 $${f2(initBal)})</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:12px">
+      <!-- KPI 1: 账户余额 & 已落袋平仓收益 -->
+      <div style="background:rgba(15,23,42,0.9);border:1px solid rgba(251,191,36,0.45);border-radius:9px;padding:10px 12px">
+        <div class="xs mut" style="display:flex;justify-content:space-between"><span>💰 账户实时余额 (Balance)</span><span>基准 $${f2(initBal)}</span></div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
+          <b style="font-size:24px;color:var(--gold)">$${f2(mt4.balance)}</b>
+          <span class="pill ${closedProfit >= 0 ? 'RANGE' : 'TREND'}">已落袋 ${closedProfit >= 0 ? '+' : ''}$${f2(closedProfit)} (${closedPct >= 0 ? '+' : ''}${closedPct}%)</span>
+        </div>
+        <div class="xs mut">每次马丁整组止盈平仓后，金色余额曲线将呈阶梯向上跳升</div>
+      </div>
+
+      <!-- KPI 2: 实时净值 & 浮动盈亏/综合净收益 -->
+      <div style="background:rgba(15,23,42,0.9);border:1px solid ${mt4.totalPnl >= 0 ? 'rgba(16,185,129,0.5)' : 'rgba(244,63,94,0.55)'};border-radius:9px;padding:10px 12px">
+        <div class="xs mut" style="display:flex;justify-content:space-between"><span>📉 账户实时净值 (Equity)</span><span>浮亏回撤率 ${mt4Dec.ddPct}%</span></div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
+          <b style="font-size:24px;color:${mt4.totalPnl >= 0 ? '#34d399' : '#38bdf8'}">$${f2(mt4.equity)}</b>
+          <span class="pill ${mt4.totalPnl >= 0 ? 'RANGE' : 'TREND'}">浮盈亏 ${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)}</span>
+        </div>
+        <div class="xs" style="color:#cbd5e1">综合净收益(含浮亏): <b style="color:${netTotalProfit >= 0 ? '#34d399' : '#fb7185'}">${netTotalProfit >= 0 ? '+' : ''}$${f2(netTotalProfit)} (${netRetPct >= 0 ? '+' : ''}${netRetPct}%)</b></div>
+      </div>
+
+      <!-- KPI 3: 实盘多空均价 & 精确回本/止盈点位 -->
+      <div style="background:rgba(15,23,42,0.9);border:1px solid rgba(56,189,248,0.45);border-radius:9px;padding:10px 12px">
+        <div class="xs mut" style="display:flex;justify-content:space-between"><span>🎯 实盘多空回本与整组止盈目标</span><span>实时推演价 $${f2(mt4Dec.curPx)}</span></div>
+        <div style="margin:5px 0;font-size:12.5px;line-height:1.5">
+          • 重仓回本均价: <b style="color:var(--gold);font-size:14px">$${f2(mt4Dec.heavyBreakEvenPx)}</b> <span class="xs mut">(还差 $${f2(mt4Dec.needHeavyBeMove)})</span><br>
+          • <b>马丁整组止盈清仓价</b>: <b style="color:#34d399;font-size:14px">$${f2(mt4Dec.heavyTpPx)}</b> <span class="xs mut">(还差 $${f2(mt4Dec.needHeavyTpMove)})</span>
+        </div>
+        <div class="xs mut">多单 ${mt4.buyCount}层/${f2(mt4.buyLots)}手($${f2(mt4.buyAvgPrice)}) | 空单 ${mt4.sellCount}层/${f2(mt4.sellLots)}手($${f2(mt4.sellAvgPrice)})</div>
+      </div>
+
+      <!-- KPI 4: 预付款比例 & 100%锁死/50%强平生死线 -->
+      <div style="background:rgba(15,23,42,0.9);border:1px solid ${mt4Dec.ml < 220 ? 'rgba(244,63,94,0.65)' : 'rgba(148,163,184,0.35)'};border-radius:9px;padding:10px 12px">
+        <div class="xs mut" style="display:flex;justify-content:space-between"><span>🛡️ 预付款比例 &amp; 生死价格底线</span><span>可用预付款 $${f2(mt4Dec.freeM)}</span></div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
+          <b style="font-size:22px;color:${mt4Dec.ml < 200 ? '#fb7185' : mt4Dec.ml < 350 ? '#fbbf24' : '#34d399'}">${f2(mt4Dec.ml)}%</b>
+          <span class="xs" style="color:#fb7185;font-weight:700">🚨 100%锁死价: $${f2(mt4Dec.margin100Px)} (余$${f2(mt4Dec.distToMargin100)})</span>
+        </div>
+        <div class="xs" style="color:#cbd5e1">⚡ 建议对冲防线: <b style="color:var(--gold)">$${f2(mt4Dec.hedgeTriggerPx)}</b> | 50%强平: <b style="color:#fb7185">$${f2(mt4Dec.stopOut50Px)}</b> | 20%强平: <b>$${f2(mt4Dec.stopOut20Px)}</b></div>
+      </div>
+    </div>
+
+    ${chartSvg}
+  `;
+}
 
 // 每 5 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (页面在后台时暂停)
 setInterval(async () => {

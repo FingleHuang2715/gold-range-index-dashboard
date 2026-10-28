@@ -33,6 +33,7 @@ bool IsGoldSymbol(string sym) {
 }
 
 void PushAccountDataToWeb() {
+   RefreshRates();
    int    buyCount = 0, sellCount = 0, buyStopCount = 0, sellStopCount = 0;
    double buyLots = 0.0, sellLots = 0.0;
    double buyWeightedPx = 0.0, sellWeightedPx = 0.0;
