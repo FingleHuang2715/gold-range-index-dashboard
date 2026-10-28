@@ -172,6 +172,7 @@
     <a href="#ind-4H"><span>🎛️ 4H 指标进度条</span></a>
     <a href="#ind-1D"><span>🎛️ 1D 日线指标</span></a>
     <div class="ng">宏观与日历</div>
+    <a href="#attentionSec"><span>🔥 黄金受关注度</span><span id="nav-attn" class="pill NEUT">-</span></a>
     <a href="#trumpSec"><span>🦅 特朗普言论监控</span><span id="nav-trump" class="pill NEUT">-</span></a>
     <a href="#macroSec"><span>🌐 跨市场长周期备查</span><span id="nav-macro" class="pill NEUT">-</span></a>
     <a href="#sessionSec"><span>🕒 时段说明 & GVZ</span></a>
@@ -255,6 +256,7 @@
     <section class="card" id="forecastSec"></section>
     <div id="bigCharts"></div>
     <section class="card" id="tfSec"><h2>🎛️ 分周期 10 项技术指标明细 <span class="mut sm" style="font-weight:400">(正常指标自动静默为深灰，仅触发趋势/极值预警的指标高亮提示)</span></h2><div id="tf"></div></section>
+    <section class="card" id="attentionSec"></section>
     <section class="card" id="trumpSec"></section>
     <section class="card" id="macroSec"></section>
     <section class="grid3" id="sessionSec">
@@ -835,6 +837,7 @@ function mergeDashboardData(prev, incoming) {
   const out = { ...prev, ...incoming };
   out.timeframes = { ...(prev.timeframes || {}), ...(incoming.timeframes || {}) };
   if (!incoming.gvz && prev.gvz) out.gvz = prev.gvz;
+  if (!incoming.attention && prev.attention) out.attention = prev.attention;
   if ((!incoming.calendar || !incoming.calendar.items || !incoming.calendar.items.length) && prev.calendar && prev.calendar.items && prev.calendar.items.length) {
     out.calendar = prev.calendar;
   }
@@ -1626,6 +1629,19 @@ function render() {
       });
     } else quietCount++;
 
+    if (d.attention && (d.attention.score >= 65 || (d.attention.comex && d.attention.comex.volRatio >= 1.45) || (d.attention.shfe && d.attention.shfe.volRatio >= 1.40) || (d.attention.news && d.attention.news.count1h >= 5))) {
+      const at = d.attention;
+      const cmx = at.comex || {}, sh = at.shfe || {}, nw = at.news || {};
+      anoms.push({
+        sev: at.score >= 76 || (cmx.volRatio >= 1.8) || (nw.count1h >= 8) ? 'high' : 'med',
+        tag: '🔥 黄金受关注度异动',
+        title: `全球黄金受关注度飙升 (${at.score}/100 · ${at.level})`,
+        val: `COMEX量比 ${cmx.volRatio ?? '-'}x · 沪金量比 ${sh.volRatio ?? '-'}x · 1h快讯 ${nw.count1h ?? 0}条`,
+        desc: at.eaTip || '全球交投或财经與情热度显著放大，警惕大资金顺势突破，严控马丁单边敞口',
+        href: '#attentionSec'
+      });
+    } else quietCount++;
+
     // B. 检查各周期 K 线单次跳水、波幅超标、单侧悬空异动
     for (const k of ['1M', '5M', '15M', '1H', '4H']) {
       const t = d.timeframes[k];
@@ -1943,6 +1959,99 @@ function render() {
           <div class="fcevs"><div style="margin-bottom:2px;color:var(--tx)">主要风险事件:</div>${evHtml}</div>
         </div>`;
       }).join('')}</div>${knnNote}`;
+  }
+
+  // 渲染「🔥 黄金受关注度综合指数」：汇总 COMEX期货量比 + 国内沪金主连量比/成交额 + 7x24快讯黄金密度 + SPDR GLD机构量比 + 全球百科搜索 & 链上黄金热度
+  const attn = d.attention;
+  if ($('attentionSec')) {
+    if (attn && attn.score != null) {
+      const aCls = attn.score >= 72 ? 'TREND' : attn.score >= 52 ? 'MIXED' : 'RANGE';
+      if ($('nav-attn')) {
+        $('nav-attn').textContent = `${attn.score}分`;
+        $('nav-attn').className = 'pill ' + aCls;
+      }
+      const cmx = attn.comex || {};
+      const sh = attn.shfe || {};
+      const nw = attn.news || {};
+      const gld = attn.gld || {};
+      const cr = attn.globalHeat || attn.crowd || {};
+      const hotNewsHtml = (nw.hotItems && nw.hotItems.length)
+        ? `<div class="thin-scroll" style="margin-top:8px;max-height:115px;overflow-y:auto;padding-right:4px;border-top:1px dashed var(--bd);padding-top:6px;font-size:11.5px;display:flex;flex-direction:column;gap:4px">
+            ${nw.hotItems.map((it) => `<div style="display:flex;gap:6px;align-items:baseline;line-height:1.4">
+              <span class="mut xs" style="flex-shrink:0">${fmtBJ(it.time)}</span>
+              ${(it.score || it.imp || 1) >= 2 ? '<span class="pill TREND" style="padding:0 5px;font-size:10px">重磅</span>' : ''}
+              <a href="${it.uri || '#'}" target="_blank" rel="noopener" style="color:${(it.score || it.imp || 1) >= 2 ? '#fda4af' : 'var(--tx)'};text-decoration:none">${it.title ? '<b>' + it.title + '</b> ' : ''}${(it.text || '').slice(0, 110)}${(it.text || '').length > 110 ? '...' : ''}</a>
+            </div>`).join('')}
+          </div>`
+        : '';
+
+      $('attentionSec').innerHTML = `
+        <div class="vhead" style="margin-bottom:10px">
+          <div>
+            <h2 style="margin:0">🔥 全球黄金受关注度综合指数 (Gold Attention & Crowd Heat Index) <span class="mut sm" style="font-weight:400">(5大维度实时汇总：COMEX主力期货量比 25% + 国内沪金散户量比 25% + 7×24全球快讯提及密度 25% + SPDR GLD机构ETF 15% + 全球搜索与链上黄金 10%)</span></h2>
+          </div>
+          <div class="btns">
+            <a href="${sh.webUrl || sh.url || 'https://quote.eastmoney.com/qihuo/aum.html'}" target="_blank" rel="noopener"><button class="sm">🔗 验证沪金主力 (SHFE AU)</button></a>
+            <a href="${cmx.webUrl || cmx.url || 'https://finance.yahoo.com/quote/GC=F'}" target="_blank" rel="noopener"><button class="sm">🔗 验证 COMEX 黄金期货</button></a>
+            <a href="${gld.webUrl || gld.url || 'https://finance.yahoo.com/quote/GLD'}" target="_blank" rel="noopener"><button class="sm">🔗 验证 SPDR GLD ETF</button></a>
+            <a href="${cr.wikiUrl || '#'}" target="_blank" rel="noopener"><button class="sm">🔗 验证 Wiki 搜索量</button></a>
+          </div>
+        </div>
+        <div style="background:linear-gradient(90deg,rgba(245,158,11,.13),rgba(15,23,42,.9));border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:12px 14px;margin-bottom:12px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <div>
+              <div class="xs mut">黄金实时受关注度总分</div>
+              <div style="display:flex;align-items:baseline;gap:8px">
+                <span style="font-size:32px;font-weight:900;color:var(--gold);line-height:1.1">${attn.score}</span>
+                <span class="mut sm">/ 100</span>
+                <span class="pill ${aCls}" style="font-size:12.5px;padding:3px 10px">${attn.level}</span>
+              </div>
+            </div>
+            <div style="min-width:180px;max-width:260px;flex:1">
+              ${idxBar(100 - attn.score)}
+              <div class="xs mut" style="margin-top:4px">注：关注度越高(右端红区)代表资金与舆情越拥挤，越易爆发单边行情；关注度温和(左端绿区)更利好双向马丁刷单</div>
+            </div>
+          </div>
+          <div style="flex:1;min-width:280px;background:rgba(15,20,30,.85);border-left:3px solid var(--gold);padding:8px 12px;border-radius:6px;font-size:12.5px;line-height:1.55">
+            <div style="font-weight:700;color:var(--gold);margin-bottom:2px">🧭 关注度对 M1 双向马丁 EA 的实盘启示：</div>
+            <div>${attn.eaTip}</div>
+          </div>
+        </div>
+        <div class="tfidx-grid">
+          <div class="tfcard" style="cursor:default">
+            <div class="vhead"><span><b>🏛️ COMEX 黄金期货主力 (GC=F)</b></span><span class="pill ${(cmx.volRatio || 1) >= 1.45 ? 'TREND' : (cmx.volRatio || 1) >= 1.1 ? 'MIXED' : 'RANGE'}">权重 25% · 得分 ${cmx.score ?? '-'}/100</span></div>
+            <div style="margin:4px 0"><span class="fcscore">${cmx.volRatio != null ? cmx.volRatio + 'x' : '-'}</span> <span class="mut sm">实时小时量比 (5日分位 <b>${cmx.volPct ?? '-'}%</b>)</span></div>
+            <div class="sm" style="margin-top:4px">近4h平均成交: <b>${cmx.last4hAvg != null ? cmx.last4hAvg.toLocaleString() : '-'} 手/h</b> | 5日小时均量: <b>${cmx.avg5d != null ? cmx.avg5d.toLocaleString() : '-'} 手/h</b></div>
+            <div class="sm mut" style="margin-top:3px">衡量华尔街主力期货交投拥挤度（量比 &ge;1.45x 往往伴随单边破位）</div>
+          </div>
+          <div class="tfcard" style="cursor:default">
+            <div class="vhead"><span><b>🇨🇳 国内沪金主连 (SHFE AU)</b></span><span class="pill ${(sh.volRatio || 1) >= 1.4 ? 'TREND' : (sh.volRatio || 1) >= 1.05 ? 'MIXED' : 'RANGE'}">权重 25% · 得分 ${sh.score ?? '-'}/100</span></div>
+            <div style="margin:4px 0"><span class="fcscore">${sh.volRatio != null ? sh.volRatio + 'x' : '-'}</span> <span class="mut sm">实时量比 · 日成交额 <b>${sh.turnoverBillion ?? '-'} 亿元</b></span></div>
+            <div class="sm" style="margin-top:4px">日成交量: <b>${sh.vol != null ? sh.vol.toLocaleString() : '-'} 手</b> | 持仓量: <b>${sh.openInterest != null ? sh.openInterest.toLocaleString() : '-'} 手</b></div>
+            <div class="sm mut" style="margin-top:3px">外盘主动买盘占比: <b style="color:${(sh.activeBuyPct || 50) >= 53 ? '#34d399' : (sh.activeBuyPct || 50) <= 47 ? '#fb7185' : 'var(--tx)'}">${sh.activeBuyPct ?? '-'}%</b> · 衡量国内散户与内盘资金追捧热度</div>
+          </div>
+          <div class="tfcard" style="cursor:default">
+            <div class="vhead"><span><b>📰 7×24 全球财经快讯「黄金」密度</b></span><span class="pill ${(nw.count1h || 0) >= 5 ? 'TREND' : (nw.count1h || 0) >= 2 ? 'MIXED' : 'RANGE'}">权重 25% · 得分 ${nw.score ?? '-'}/100</span></div>
+            <div style="margin:4px 0"><span class="fcscore">${nw.count1h ?? 0} 条/1h</span> <span class="mut sm">近4h <b>${nw.count4h ?? 0}条</b> · 近24h <b>${nw.count24h ?? 0}条</b></span></div>
+            <div class="sm" style="margin-top:4px">24h加红重磅涉金快讯: <b style="color:#fb7185">${nw.imp24h ?? 0} 条</b></div>
+            ${hotNewsHtml || '<div class="sm mut" style="margin-top:4px">实时扫描华尔街见闻/金十全球快讯中提及「黄金/金价/XAU/央行购金」的突发频率</div>'}
+          </div>
+          <div class="tfcard" style="cursor:default">
+            <div class="vhead"><span><b>🏦 全球最大黄金ETF (SPDR GLD)</b></span><span class="pill ${(gld.volRatio || 1) >= 1.35 ? 'TREND' : (gld.volRatio || 1) >= 1.0 ? 'MIXED' : 'RANGE'}">权重 15% · 得分 ${gld.score ?? '-'}/100</span></div>
+            <div style="margin:4px 0"><span class="fcscore">${gld.volRatio != null ? gld.volRatio + 'x' : '-'}</span> <span class="mut sm">机构日量比 (3个月分位 <b>${gld.volPct ?? '-'}%</b>)</span></div>
+            <div class="sm" style="margin-top:4px">最新成交: <b>${gld.lastVol != null ? (gld.lastVol / 1e6).toFixed(2) + 'M 股' : '-'}</b> | 20日均量: <b>${gld.avg20d != null ? (gld.avg20d / 1e6).toFixed(2) + 'M 股' : '-'}</b></div>
+            <div class="sm mut" style="margin-top:3px">衡量欧美机构与长线配置资金对黄金的交投关注度</div>
+          </div>
+          <div class="tfcard" style="cursor:default">
+            <div class="vhead"><span><b>🌍 全球搜索 & 链上黄金 (PAXG+XAUT)</b></span><span class="pill ${(cr.score || 50) >= 70 ? 'TREND' : (cr.score || 50) >= 48 ? 'MIXED' : 'RANGE'}">权重 10% · 得分 ${cr.score ?? '-'}/100</span></div>
+            <div style="margin:4px 0"><span class="fcscore">$${cr.onchainVolM ?? '-'}M</span> <span class="mut sm">链上黄金 24h 真实成交额</span></div>
+            <div class="sm" style="margin-top:4px">Wikipedia「Gold」全球日浏览: <b>${cr.wikiViews != null ? cr.wikiViews.toLocaleString() : '-'} 次</b> (量比 <b>${cr.wikiRatio ?? '-'}x</b> · 30日分位 <b>${cr.wikiPct ?? '-'}%</b>)</div>
+            <div class="sm mut" style="margin-top:3px">7×24不休市的加密黄金代币(PAXG+XAUT)成交额 + 全球公众百科搜索分位</div>
+          </div>
+        </div>`;
+    } else {
+      $('attentionSec').innerHTML = `<h2>🔥 全球黄金受关注度综合指数</h2><span class="mut">正在汇总 COMEX / 沪金主连 / 7×24快讯 / SPDR GLD / 链上黄金关注度数据...</span>`;
+    }
   }
 
   // 渲染「🌐 跨市场长周期先行指数备查区」：仅直接展示当前有显著异动的跨市场指标，平稳指标默认折叠收纳
@@ -2413,6 +2522,13 @@ function buildText() {
     L.push(`  - 美债收益率: 10年期 ${f2(us10.last)}% (${us10.chgPct >= 0 ? '+' : ''}${f2(us10.chgPct)}%) | 2年期 ${f2(us2.last)}% | 10Y-2Y利差 ${f2(mc.yieldSpread)}bp`);
     L.push(`  - 现货白银(XAGUSD): ${f2(xag.last)}$ (${xag.chgPct >= 0 ? '+' : ''}${f2(xag.chgPct)}%) | 实时金银比 ${f2(mc.gsr)} | 白银-黄金日内强弱差 ${f2(mc.agLead)}%`);
     L.push(`  - VIX恐慌指数: ${f2(vix.last)} (${vix.chgPct >= 0 ? '+' : ''}${f2(vix.chgPct)}%) | 上海黄金TD(AUTD): ${f2(autd.last)}元/克 (${autd.chgPct >= 0 ? '+' : ''}${f2(autd.chgPct)}%)`);
+  }
+  if (d.attention && d.attention.score != null) {
+    const at = d.attention, cmx = at.comex || {}, sh = at.shfe || {}, nw = at.news || {}, gld = at.gld || {}, cr = at.globalHeat || at.crowd || {};
+    L.push(`\n■ 黄金受关注度综合指数 (Gold Attention Index): ${at.score}/100 [${at.level}]`);
+    L.push(`  - COMEX黄金期货主力(GC=F)量比: ${cmx.volRatio ?? '-'}x (5日分位 ${cmx.volPct ?? '-'}%) | 国内沪金主连(SHFE AU)量比: ${sh.volRatio ?? '-'}x (日成交 ${sh.turnoverBillion ?? '-'}亿元, 外盘主动买盘占比 ${sh.activeBuyPct ?? '-'}%)`);
+    L.push(`  - 7×24财经快讯黄金提及密度: 近1h ${nw.count1h ?? 0}条 / 近4h ${nw.count4h ?? 0}条 / 近24h ${nw.count24h ?? 0}条 | SPDR GLD日量比: ${gld.volRatio ?? '-'}x | 链上黄金(PAXG+XAUT)24h成交: $${cr.onchainVolM ?? '-'}M | Wiki搜索30日分位: ${cr.wikiPct ?? '-'}%`);
+    L.push(`  - 关注度实盘启示: ${at.eaTip}`);
   }
   if (d.trump && d.trump.items) {
     const tGold = d.trump.items.filter((x) => x.isGoldRelevant || x.impact !== 'LOW').slice(0, 6);

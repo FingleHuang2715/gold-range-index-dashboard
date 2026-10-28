@@ -576,6 +576,192 @@ async function wscnTrump(calEvents) {
     items
   };
 }
+
+// ---------- 黄金受关注度综合指数 (5维全球统计：7x24涉金快讯密度 / COMEX期货实时量比 / GLD机构ETF量比 / 沪金主连量比与资金 / 全球搜索与链上热度) ----------
+let cachedAttnSlow = null, lastAttnSlowTs = 0;
+
+function lerpVal(x, pts) {
+  if (x <= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (x <= pts[i][0]) {
+      const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+      return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+async function fetchGoldAttention(fastMode = false) {
+  const prevAttn = (cache && cache.attention) || {};
+  const liveStreamUrl = 'https://api-one-wscn.awtmt.com/apiv1/content/lives?channel=global-channel&limit=100';
+  const searchGoldUrl = 'https://api-one-wscn.awtmt.com/apiv1/search/live?query=%E9%BB%84%E9%87%91&limit=40';
+  const shfeUrl = 'https://push2.eastmoney.com/api/qt/stock/get?secid=113.aum&fields=f43,f47,f48,f49,f50,f58,f133,f170';
+  const gcfUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/GC%3DF?interval=1h&range=5d';
+  const gldUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/GLD?interval=1d&range=3mo';
+
+  // Wikipedia 30天日期范围
+  const dEnd = new Date(), dStart = new Date(Date.now() - 32 * 86400e3);
+  const fmtYMD = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
+  const wikiUrl = `https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia/all-access/user/Gold/daily/${fmtYMD(dStart)}/${fmtYMD(dEnd)}`;
+  const cgUrl = 'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold,tether-gold&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true';
+
+  const needSlow = !cachedAttnSlow || !fastMode || (Date.now() - lastAttnSlowTs > 15 * 60 * 1000);
+  const [rLive, rSearch, rShfe, rGcf, rGld, rWiki, rCg] = await Promise.allSettled([
+    getJSON(liveStreamUrl, {}, 6000, 1),
+    getJSON(searchGoldUrl, {}, 6000, 1),
+    getJSON(shfeUrl, {}, 6000, 1),
+    needSlow ? getJSON(gcfUrl, {}, 8000, 1) : Promise.resolve(cachedAttnSlow.gcfRaw),
+    needSlow ? getJSON(gldUrl, {}, 8000, 1) : Promise.resolve(cachedAttnSlow.gldRaw),
+    needSlow ? getJSON(wikiUrl, {}, 8000, 1) : Promise.resolve(cachedAttnSlow.wikiRaw),
+    needSlow ? getJSON(cgUrl, {}, 8000, 1) : Promise.resolve(cachedAttnSlow.cgRaw),
+  ]);
+
+  if (needSlow) {
+    cachedAttnSlow = {
+      gcfRaw: rGcf.status === 'fulfilled' ? rGcf.value : (cachedAttnSlow && cachedAttnSlow.gcfRaw),
+      gldRaw: rGld.status === 'fulfilled' ? rGld.value : (cachedAttnSlow && cachedAttnSlow.gldRaw),
+      wikiRaw: rWiki.status === 'fulfilled' ? rWiki.value : (cachedAttnSlow && cachedAttnSlow.wikiRaw),
+      cgRaw: rCg.status === 'fulfilled' ? rCg.value : (cachedAttnSlow && cachedAttnSlow.cgRaw),
+    };
+    lastAttnSlowTs = Date.now();
+  }
+
+  // 1) 7x24 快讯黄金提及密度与舆论关注度
+  const nowSec = Math.floor(Date.now() / 1000);
+  const liveItems = (rLive.status === 'fulfilled' && rLive.value && rLive.value.data && rLive.value.data.items) || [];
+  const searchItems = (rSearch.status === 'fulfilled' && rSearch.value && rSearch.value.data && rSearch.value.data.items) || [];
+  const seenIds = new Set();
+  const goldNews = [];
+  for (const x of [...liveItems, ...searchItems]) {
+    if (!x || !x.id || seenIds.has(x.id)) continue;
+    const txt = `${x.title || ''} ${x.content_text || ''}`.replace(/\s+/g, ' ').trim();
+    if (/黄金|金价|金银|XAU|贵金属|沪金|伦敦金|COMEX金/.test(txt)) {
+      seenIds.add(x.id);
+      const ageMin = Math.max(0, Math.round((nowSec - (x.display_time || nowSec)) / 60));
+      goldNews.push({
+        id: x.id,
+        time: x.display_time,
+        ageMin,
+        title: (x.title || '').trim(),
+        text: (x.content_text || '').replace(/\s+/g, ' ').trim(),
+        score: x.score || 1,
+        uri: x.uri || `https://wallstreetcn.com/livenews/${x.id}`
+      });
+    }
+  }
+  goldNews.sort((a, b) => (b.time || 0) - (a.time || 0));
+  const news1h = goldNews.filter((x) => x.ageMin <= 60).length;
+  const news4h = goldNews.filter((x) => x.ageMin <= 240).length;
+  const news24h = goldNews.filter((x) => x.ageMin <= 1440).length;
+  const imp24h = goldNews.filter((x) => x.ageMin <= 1440 && x.score >= 2).length;
+  const newsHeatRaw = news1h * 5 + news4h * 2 + news24h * 0.8 + imp24h * 2.5;
+  const newsScore = Math.round(lerpVal(newsHeatRaw, [[2, 22], [8, 42], [16, 62], [28, 82], [45, 96]]));
+
+  // 2) 国内沪金主连 (SHFE AU) 散户与内盘资金关注度 (东方财富实时接口)
+  let shfe = prevAttn.shfe || { name: '沪金主连', volRatio: 0.85, turnoverBillion: 1200, openInterest: 185000, activeBuyPct: 50.5, score: 45, url: shfeUrl };
+  if (rShfe.status === 'fulfilled' && rShfe.value && rShfe.value.data) {
+    const d = rShfe.value.data;
+    const vol = Number(d.f47) || 0;
+    const outerBuy = Number(d.f49) || 0;
+    const volRatio = d.f50 != null ? +(Number(d.f50) / 100).toFixed(2) : 0.85;
+    const turnoverBillion = d.f48 != null ? +(Number(d.f48) / 1e8).toFixed(1) : 0;
+    const openInterest = Number(d.f133) || 0;
+    const activeBuyPct = vol > 0 ? +((outerBuy / vol) * 100).toFixed(1) : 50.0;
+    const shfeScore = Math.round(lerpVal(volRatio, [[0.45, 20], [0.80, 44], [1.05, 58], [1.40, 78], [1.90, 95]]));
+    shfe = { name: d.f58 || '沪金主连', vol, volRatio, turnoverBillion, openInterest, activeBuyPct, score: shfeScore, url: shfeUrl, webUrl: 'https://quote.eastmoney.com/qihuo/aum.html' };
+  }
+
+  // 3) COMEX 黄金期货主力 (GC=F) 实时小时级量比
+  let comex = prevAttn.comex || { volRatio: 0.85, volPct: 45, last4hAvg: 0, avg5d: 0, score: 45, url: gcfUrl };
+  const gcfData = cachedAttnSlow && cachedAttnSlow.gcfRaw;
+  if (gcfData && gcfData.chart && gcfData.chart.result && gcfData.chart.result[0]) {
+    const vols = (gcfData.chart.result[0].indicators.quote[0].volume || []).filter((v) => v != null && v > 0);
+    if (vols.length >= 10) {
+      const last4hAvg = Math.round(vols.slice(-4).reduce((a, b) => a + b, 0) / Math.min(4, vols.length));
+      const avg5d = Math.round(vols.reduce((a, b) => a + b, 0) / vols.length);
+      const volRatio = avg5d > 0 ? +(last4hAvg / avg5d).toFixed(2) : 1.0;
+      const volPct = +pctRank(vols, last4hAvg).toFixed(1);
+      const comexScore = Math.round(0.6 * lerpVal(volRatio, [[0.4, 18], [0.8, 42], [1.0, 55], [1.4, 78], [2.0, 95]]) + 0.4 * volPct);
+      comex = { volRatio, volPct, last4hAvg, avg5d, score: comexScore, url: gcfUrl, webUrl: 'https://finance.yahoo.com/quote/GC%3DF/' };
+    }
+  }
+
+  // 4) 全球最大黄金 ETF (SPDR GLD) 机构资金交投热度
+  let gld = prevAttn.gld || { volRatio: 0.85, volPct: 45, lastVol: 0, avg20d: 0, score: 45, url: gldUrl };
+  const gldData = cachedAttnSlow && cachedAttnSlow.gldRaw;
+  if (gldData && gldData.chart && gldData.chart.result && gldData.chart.result[0]) {
+    const vols = (gldData.chart.result[0].indicators.quote[0].volume || []).filter((v) => v != null && v > 0);
+    if (vols.length >= 15) {
+      const lastVol = vols[vols.length - 1];
+      const w20 = vols.slice(-20);
+      const avg20d = Math.round(w20.reduce((a, b) => a + b, 0) / w20.length);
+      const volRatio = avg20d > 0 ? +(lastVol / avg20d).toFixed(2) : 1.0;
+      const volPct = +pctRank(vols, lastVol).toFixed(1);
+      const gldScore = Math.round(0.55 * lerpVal(volRatio, [[0.5, 20], [0.9, 46], [1.2, 65], [1.6, 84], [2.2, 96]]) + 0.45 * volPct);
+      gld = { volRatio, volPct, lastVol, avg20d, score: gldScore, url: gldUrl, webUrl: 'https://finance.yahoo.com/quote/GLD/' };
+    }
+  }
+
+  // 5) 全球百科搜索热度 (Wikipedia Gold) & 链上黄金 (PAXG+XAUT) 24h 交易量
+  let globalHeat = prevAttn.globalHeat || { wikiViews: 2200, wikiRatio: 1.0, wikiPct: 50, onchainVolM: 280, score: 50, wikiUrl, cgUrl };
+  const wikiData = cachedAttnSlow && cachedAttnSlow.wikiRaw;
+  const cgData = cachedAttnSlow && cachedAttnSlow.cgRaw;
+  {
+    let wikiViews = globalHeat.wikiViews, wikiRatio = globalHeat.wikiRatio, wikiPct = globalHeat.wikiPct;
+    if (wikiData && Array.isArray(wikiData.items) && wikiData.items.length >= 7) {
+      const vs = wikiData.items.map((x) => x.views).filter((v) => v > 0);
+      wikiViews = vs[vs.length - 1];
+      const avg = vs.reduce((a, b) => a + b, 0) / vs.length;
+      wikiRatio = avg > 0 ? +(wikiViews / avg).toFixed(2) : 1.0;
+      wikiPct = +pctRank(vs, wikiViews).toFixed(1);
+    }
+    let onchainVolM = globalHeat.onchainVolM;
+    if (cgData && (cgData['pax-gold'] || cgData['tether-gold'])) {
+      const v1 = (cgData['pax-gold'] && cgData['pax-gold'].usd_24h_vol) || 0;
+      const v2 = (cgData['tether-gold'] && cgData['tether-gold'].usd_24h_vol) || 0;
+      onchainVolM = +((v1 + v2) / 1e6).toFixed(1);
+    }
+    const gScore = Math.round(0.5 * wikiPct + 0.5 * lerpVal(onchainVolM, [[80, 25], [200, 48], [320, 66], [500, 86], [750, 96]]));
+    globalHeat = { wikiViews, wikiRatio, wikiPct, onchainVolM, score: gScore, wikiUrl, cgUrl };
+  }
+
+  // 综合黄金受关注度指数 (0-100)
+  const score = Math.round(
+    0.26 * comex.score +
+    0.22 * shfe.score +
+    0.20 * newsScore +
+    0.18 * gld.score +
+    0.14 * globalHeat.score
+  );
+
+  let level = '常规关注 · 交投适中', cls = 'FLAT', eaTip = '当前全球黄金受关注度与交投量比处于常态区间，无极端散户/机构踩踏，可按 1M/5M 震荡指数正常运行双向马丁。';
+  if (score >= 78) {
+    level = '🔥 全网沸腾 · 极度拥挤(高危单边预警)';
+    cls = 'TREND';
+    eaTip = '🚨 警告：当前黄金舆论热度与期现成交量极度放大（全网资金聚焦），极易爆发无回调单边行情！请立即检查 1M/5M 指数并手动锁住逆势方向！';
+  } else if (score >= 62) {
+    level = '⚡ 关注度升温 · 资金活跃(警惕突破)';
+    cls = 'MIXED';
+    eaTip = '⚠️ 当前黄金快讯密度或主力合约量比明显升温，市场关注度较高，波幅易扩大，建议盯紧多空净敞口 N 控制在 0.5~1.0 手以内。';
+  } else if (score < 40) {
+    level = '🟢 关注度偏低 · 市场平静(利好震荡收割)';
+    cls = 'RANGE';
+    eaTip = '✅ 当前黄金并非全网焦点，COMEX/沪金/ETF 量比温和（小于均量），缺乏大单边驱动资金，金价极易维持箱体均值回归，非常适合双向马丁收割！';
+  }
+
+  return {
+    updatedAt: new Date().toISOString(),
+    score,
+    level,
+    cls,
+    eaTip,
+    news: { count1h: news1h, count4h: news4h, count24h: news24h, imp24h, score: newsScore, hotItems: goldNews.slice(0, 4), url: searchGoldUrl, liveUrl: liveStreamUrl },
+    comex,
+    gld,
+    shfe,
+    globalHeat
+  };
+}
 // ---------- 汇总 ----------
 let cache = null, inflight = null, fastInflight = null;
 let cachedEvents = [], cachedKnn = null;
@@ -638,9 +824,9 @@ async function build() {
   const result = { updatedAt: new Date().toISOString(), fastUpdatedAt: new Date().toISOString(), errors: [] };
   result.session = sessionInfo();
 
-  // 全量并行请求 (含高频 K 线 + 跨市场 + 特朗普 + 低频 GVZ/周历/日线)，减少串行等待
+  // 全量并行请求 (含高频 K 线 + 跨市场 + 特朗普 + 黄金受关注度 + 低频 GVZ/周历/日线)，减少串行等待
   const p15 = wscnGold(900, 600, '15m', '1mo');
-  const [g4h, g1h, g15, g5, g1, gvz, cal, gd, mac, trp] = await Promise.allSettled([
+  const [g4h, g1h, g15, g5, g1, gvz, cal, gd, mac, trp, attn] = await Promise.allSettled([
     wscnGold(14400, 600, '1h', '3mo'),
     wscnGold(3600, 600, '1h', '3mo'),
     p15,
@@ -651,6 +837,7 @@ async function build() {
     wscnGold(86400, 2600, '1d', '10y'),
     wscnMacro(p15),
     wscnTrump(cachedEvents),
+    fetchGoldAttention(false),
   ]);
 
   result.symbol = '伦敦金现货黄金 XAUUSD (0延迟秒级实时接口 api-ddc-wscn.awtmt.com)';
@@ -724,18 +911,25 @@ async function build() {
   } else {
     result.errors.push('特朗普言论监控: ' + trp.reason.message);
   }
+  if (attn.status === 'fulfilled') {
+    result.attention = attn.value;
+  } else if (prev.attention) {
+    result.attention = prev.attention;
+  } else {
+    result.errors.push('黄金受关注度: ' + attn.reason.message);
+  }
   result.model = { sparks: sp };
   buildComposite(result);
   delete result.calendar.all;
   return result;
 }
 
-// 极速实时刷新 (仅抓取高频变化的 1M/5M/15M/1H/4H + 跨市场实时报价 + 特朗普快讯，全部单轮并行 ~0.4秒完成，低频日线/周历/GVZ 直接走缓存)
+// 极速实时刷新 (仅抓取高频变化的 1M/5M/15M/1H/4H + 跨市场实时报价 + 特朗普快讯 + 黄金受关注度，全部单轮并行 ~0.4秒完成，低频日线/周历/GVZ 直接走缓存)
 async function refreshFast() {
   if (fastInflight) return fastInflight;
   fastInflight = (async () => {
     const p15 = wscnGold(900, 600, '15m', '1mo');
-    const [g1, g5, g15, g1h, g4h, mac, trp] = await Promise.allSettled([
+    const [g1, g5, g15, g1h, g4h, mac, trp, attn] = await Promise.allSettled([
       wscnGold(60, 600, '1m', '5d'),
       wscnGold(300, 600, '5m', '5d'),
       p15,
@@ -743,6 +937,7 @@ async function refreshFast() {
       wscnGold(14400, 600, '1h', '3mo'),
       wscnMacro(p15),
       wscnTrump(cachedEvents),
+      fetchGoldAttention(true),
     ]);
 
     if (!cache) {
@@ -779,6 +974,7 @@ async function refreshFast() {
     }
     if (mac.status === 'fulfilled') cache.macro = mac.value;
     if (trp.status === 'fulfilled') cache.trump = trp.value;
+    if (attn.status === 'fulfilled') cache.attention = attn.value;
     buildComposite(cache);
     lastFastTs = Date.now();
     saveDiskCache();
