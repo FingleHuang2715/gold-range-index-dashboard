@@ -1598,9 +1598,12 @@ function handleApiMt4(req, res) {
   try {
     const u = new URL(req.url || '/api/mt4', 'http://localhost');
     // 若包含 bal 参数，说明是 MT4 EA WebRequest 推送过来的实时实盘状态
-    if (u.searchParams.has('bal')) {
+    if (u.searchParams.has('bal') || u.searchParams.has('balance')) {
+      const ALIAS = { bal: 'balance', eq: 'equity', marginLvl: 'marginLevel', lev: 'leverage', buyCnt: 'buyCount', sellCnt: 'sellCount', buyAvg: 'buyAvgPrice', sellAvg: 'sellAvgPrice', buyStopCnt: 'buyStopCount', sellStopCnt: 'sellStopCount' };
       const num = (k, def = 0) => {
-        const v = parseFloat(u.searchParams.get(k));
+        let raw = u.searchParams.get(k);
+        if (raw == null && ALIAS[k]) raw = u.searchParams.get(ALIAS[k]);
+        const v = parseFloat(raw);
         return Number.isFinite(v) ? v : def;
       };
       const buyLots = +num('buyLots').toFixed(2);
@@ -1609,7 +1612,9 @@ function handleApiMt4(req, res) {
       latestMt4State = {
         updatedAt: new Date().toISOString(),
         ts: Date.now(),
-        symbol: u.searchParams.get('sym') || 'XAUUSD',
+        symbol: u.searchParams.get('sym') || u.searchParams.get('symbol') || 'XAUUSD',
+        account: u.searchParams.get('account') || '',
+        server: u.searchParams.get('server') || '',
         balance: +num('bal').toFixed(2),
         equity: +num('eq').toFixed(2),
         margin: +num('margin').toFixed(2),
@@ -1638,7 +1643,7 @@ function handleApiMt4(req, res) {
       fs.promises.writeFile(MT4_STATE_FILE, JSON.stringify(latestMt4State), 'utf8').catch(() => {});
     }
     res.writeHead(200, corsHeaders);
-    return res.end(JSON.stringify({ ok: true, mt4: latestMt4State }));
+    return res.end(JSON.stringify({ ok: true, connected: !!latestMt4State, mt4: latestMt4State }));
   } catch (e) {
     res.writeHead(500, corsHeaders);
     return res.end(JSON.stringify({ ok: false, error: e.message }));
