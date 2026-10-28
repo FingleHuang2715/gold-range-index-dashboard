@@ -9,13 +9,16 @@
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
   body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
-  header{position:sticky;top:0;z-index:50;background:rgba(11,14,20,0.92);backdrop-filter:blur(10px);display:flex;flex-wrap:nowrap;gap:12px;align-items:center;justify-content:space-between;padding:10px 24px;border-bottom:1px solid var(--bd)}
+  header{position:sticky;top:0;z-index:50;background:rgba(11,14,20,0.94);backdrop-filter:blur(12px);display:flex;flex-wrap:nowrap;gap:12px;align-items:center;justify-content:space-between;padding:8px 20px;border-bottom:1px solid var(--bd)}
   header>div:first-child{min-width:0;flex:1}
-  h1{margin:0;font-size:18px;color:#f8fafc;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  h1{margin:0;font-size:17.5px;color:#f8fafc;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   h1 b{color:var(--gold)}
-  .sub{color:var(--mut);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  header .btns{flex-wrap:nowrap;flex-shrink:0}
+  .sub{color:var(--mut);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  header .btns{flex-wrap:nowrap;flex-shrink:0;gap:6px}
+  header button{padding:5px 10px;font-size:12px;height:30px;box-sizing:border-box;display:inline-flex;align-items:center}
+  details.header-dropdown summary{list-style:none}
+  details.header-dropdown summary::-webkit-details-marker{display:none}
   button{background:var(--card2);color:var(--tx);border:1px solid var(--bd);padding:7px 13px;border-radius:7px;cursor:pointer;font-size:12.5px;transition:all .15s;white-space:nowrap}
   button:hover{border-color:var(--gold);color:#fff}
   button.pri{background:var(--gold);color:#141004;border-color:var(--gold);font-weight:600}
@@ -47,6 +50,7 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
 [id^="mt4"]{scroll-margin-top:70px}
   aside.sidenav a:hover,aside.sidenav a.active{background:var(--card2);border-color:#2c364b;color:#fff}
   main{padding:18px 22px;display:grid;gap:16px;min-width:0}
+  @media(max-width:1160px){header{flex-wrap:wrap;gap:8px}header .btns{flex-wrap:wrap}}
   @media(max-width:960px){.layout{grid-template-columns:1fr}aside.sidenav{position:static;height:auto;flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--bd)}.sidenav .ng{width:100%}header{flex-wrap:wrap}}
   section[id],div[id^="ind-"]{scroll-margin-top:72px}
   .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;overflow:hidden;min-width:0}
@@ -148,29 +152,50 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
     <div class="sub" id="meta">加载中…</div>
   </div>
   <div class="btns" style="align-items:center">
-    <div style="display:flex;align-items:center;gap:6px;background:#111722;border:1px solid var(--bd);padding:4px 9px;border-radius:8px;font-size:12px">
-      <button id="btnVoiceToggle" class="sm" onclick="toggleVoiceAlert()" style="padding:3px 8px;font-weight:700">🔊 语音报警: 开</button>
-      <span class="mut xs">敏感度:</span>
-      <select id="voiceSensSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:var(--gold);border:1px solid var(--bd);border-radius:5px;padding:2px 5px;font-size:11.5px;font-weight:700" title="自行设定语音报警触发敏感度，避免频繁打扰">
-        <option value="1">Lv1 仅极高危保命 (推荐)</option>
-        <option value="2">Lv2 中高危均衡报警</option>
-        <option value="3">Lv3 高灵敏盯盘模式</option>
-        <option value="0">Lv0 仅手动重磅倒计时锁</option>
-      </select>
-      <span class="mut xs">冷却:</span>
-      <select id="voiceCoolSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:#cbd5e1;border:1px solid var(--bd);border-radius:5px;padding:2px 5px;font-size:11.5px" title="同一类型预警在冷却时间内不重复播报">
-        <option value="15">15分钟</option>
-        <option value="5">5分钟</option>
-        <option value="30">30分钟</option>
-        <option value="60">60分钟</option>
-      </select>
-      <button class="sm" onclick="testVoiceAlert()" style="padding:2px 7px" title="测试浏览器中文语音播报是否正常">🔈 试听</button>
-    </div>
-    <button id="btnMt4Guide" onclick="toggleMt4Guide()" style="border-color:rgba(56,189,248,0.55);color:#38bdf8;font-weight:800" title="点击打开 MT4 实盘数据实时同步接入指南与下载脚本">🔌 MT4实盘同步(点击接入)</button>
-    <button id="btnEaParamGuide" onclick="toggleEaParamGuide(true);document.getElementById('eaParamGuideSec').scrollIntoView({behavior:'smooth'})" style="border-color:rgba(52,211,153,0.7);color:#34d399;font-weight:800" title="查看 XAUUSD M1 马丁策略震荡加剧调参指南与优化配置">⚙️ EA加剧调参方案</button>
-    <button id="btnFast">⚡ 立即刷新实时数据</button>
-    <button class="pri" id="btnFetch">🔄 全量刷新</button>
-    <button class="pri" id="btnCopy">📋 一键复制(发给AI)</button>
+    <!-- 智能语音播报弹层 (收拢繁杂设置，大幅释放页眉横向空间) -->
+    <details class="header-dropdown" id="voiceDropdownDetails" style="position:relative">
+      <summary style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:4px 9px;border:1px solid var(--bd);border-radius:7px;background:var(--card2);font-size:12px;font-weight:700;height:30px;box-sizing:border-box;user-select:none" title="点击展开智能语音风控播报设置">
+        <span id="btnVoiceToggle">🔊 语音: 开</span>
+        <span id="voiceHeaderBadge" class="pill RANGE" style="font-size:10px;padding:1px 5px">Lv1</span>
+        <span style="font-size:9px;opacity:.6">▾</span>
+      </summary>
+      <div style="position:absolute;top:calc(100% + 6px);right:0;background:rgba(15,20,30,0.98);border:1.5px solid var(--bd);border-radius:10px;padding:12px 14px;box-shadow:0 12px 30px rgba(0,0,0,0.7);z-index:100;min-width:260px;backdrop-filter:blur(14px)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--bd)">
+          <b style="color:#fff;font-size:12.5px">🔊 智能语音风控播报</b>
+          <button class="sm" onclick="toggleVoiceAlert()" style="padding:2px 8px;font-size:11px">切换开/关</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span class="mut xs">报警敏感度:</span>
+            <select id="voiceSensSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:var(--gold);border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px;font-weight:700">
+              <option value="1">Lv1 仅极高危保命 (推荐)</option>
+              <option value="2">Lv2 中高危均衡报警</option>
+              <option value="3">Lv3 高灵敏盯盘模式</option>
+              <option value="0">Lv0 仅手动重磅锁</option>
+            </select>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span class="mut xs">防打扰冷却:</span>
+            <select id="voiceCoolSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:#cbd5e1;border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px">
+              <option value="15">15分钟</option>
+              <option value="5">5分钟</option>
+              <option value="30">30分钟</option>
+              <option value="60">60分钟</option>
+            </select>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.06)">
+            <span class="xs mut">检测设备扬声器</span>
+            <button class="sm" onclick="testVoiceAlert()" style="padding:2px 8px;font-size:11px">🔈 试听声音</button>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <button id="btnMt4Guide" onclick="toggleMt4Guide()" style="border-color:rgba(56,189,248,0.5);color:#38bdf8;font-weight:700" title="点击打开 MT4 实盘数据同步中心">🔌 MT4同步</button>
+    <button id="btnEaParamGuide" onclick="if(window.toggleEaParamGuide)toggleEaParamGuide(true);document.getElementById('eaParamGuideSec').scrollIntoView({behavior:'smooth'})" style="border-color:rgba(52,211,153,0.6);color:#34d399;font-weight:700" title="查看 XAUUSD M1 马丁策略震荡加剧调参指南与优化配置">⚙️ 调参指南</button>
+    <button id="btnFast" title="立即极速刷新 1M~4H 实时行情与震荡指数">⚡ 刷新</button>
+    <button class="pri" id="btnFetch" title="全量刷新所有数据（含日线kNN/金十周历）">🔄 全量</button>
+    <button class="pri" id="btnCopy" title="一键复制全站决策分析发给AI">📋 复制给AI</button>
   </div>
 </header>
 <div class="layout">
@@ -1441,16 +1466,27 @@ const VOICE_HISTORY = {}; // key -> lastSpokenTimestampMs
 
 function syncVoiceUi() {
   const btn = $('btnVoiceToggle');
+  const badge = $('voiceHeaderBadge');
   const sEl = $('voiceSensSelect');
   const cEl = $('voiceCoolSelect');
   if (btn) {
-    btn.textContent = VOICE_CFG.enabled ? '🔊 语音报警: 开' : '🔇 语音报警: 关';
-    btn.style.borderColor = VOICE_CFG.enabled ? 'rgba(16,185,129,0.6)' : 'var(--bd)';
+    btn.textContent = VOICE_CFG.enabled ? '🔊 语音: 开' : '🔇 语音: 关';
     btn.style.color = VOICE_CFG.enabled ? '#34d399' : '#94a3b8';
+  }
+  if (badge) {
+    badge.textContent = VOICE_CFG.enabled ? `Lv${VOICE_CFG.sens}` : '关';
+    badge.className = 'pill ' + (VOICE_CFG.enabled ? 'RANGE' : 'NEUT');
   }
   if (sEl) sEl.value = String(VOICE_CFG.sens);
   if (cEl) cEl.value = String(VOICE_CFG.cooldownMin);
 }
+
+document.addEventListener('click', (e) => {
+  const vd = $('voiceDropdownDetails');
+  if (vd && vd.open && !vd.contains(e.target)) {
+    vd.removeAttribute('open');
+  }
+});
 
 window.toggleVoiceAlert = () => {
   VOICE_CFG.enabled = !VOICE_CFG.enabled;
@@ -1675,7 +1711,7 @@ async function load(force, fastOnly = false, silentBg = false) {
   } catch (e) {
     if (!D && $('meta')) $('meta').innerHTML = '<span class="err">获取失败: ' + e.message + '</span>';
   }
-  if (!fastOnly && !silentBg && b) { b.disabled = false; b.textContent = '🔄 全量刷新所有数据'; }
+  if (!fastOnly && !silentBg && b) { b.disabled = false; b.textContent = '🔄 全量'; }
 }
 
 const G_ = '#2ecc8f', Y_ = '#f0b429', R_ = '#ef5b5b';
