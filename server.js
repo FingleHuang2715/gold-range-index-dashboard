@@ -1612,11 +1612,16 @@ async function mt4Redis(cmd) {
 // Upstash 免费档每月仅 50 万条命令：写入节流(持仓结构变化立即写，仅浮盈变动则 ≥15 秒才写一次) + 读取 4 秒内存缓存，大幅省额度
 let _mt4LastWriteTs = 0, _mt4LastSig = '', _mt4ReadTs = 0, _mt4ReadVal = null;
 async function mt4RemoteSet(state) {
-  const sig = [state.buyCount, state.sellCount, state.buyLots, state.sellLots, state.buyStopCount, state.sellStopCount].join('|');
+  const sig = [state.account, state.isMock ? 1 : 0, state.balance, state.buyCount, state.sellCount, state.buyLots, state.sellLots, state.buyStopCount, state.sellStopCount].join('|');
   const now = Date.now();
   if (sig === _mt4LastSig && now - _mt4LastWriteTs < 15000) return;
   _mt4LastSig = sig; _mt4LastWriteTs = now;
+  _mt4ReadVal = state; _mt4ReadTs = now;
   await mt4Redis(['SET', 'gold_mt4_live_v1', JSON.stringify(state), 'EX', 3600]);
+}
+async function mt4RemoteClear() {
+  _mt4LastSig = ''; _mt4LastWriteTs = 0; _mt4ReadVal = null; _mt4ReadTs = Date.now();
+  await mt4Redis(['DEL', 'gold_mt4_live_v1']);
 }
 async function mt4RemoteGet() {
   if (!MT4_REDIS_URL || !MT4_REDIS_TOKEN) return null;
@@ -1642,12 +1647,20 @@ async function handleApiMt4(req, res) {
   }
   try {
     const u = new URL(req.url || '/api/mt4', 'http://localhost');
+    if (u.searchParams.get('clear') === '1') {
+      latestMt4State = null;
+      if (cache) delete cache.mt4;
+      fs.promises.unlink(MT4_STATE_FILE).catch(() => {});
+      await mt4RemoteClear();
+      res.writeHead(200, corsHeaders);
+      return res.end(JSON.stringify({ ok: true, connected: false, mt4: null }));
+    }
     if (u.searchParams.has('bal') || u.searchParams.has('balance')) {
       if (MT4_PUSH_TOKEN && u.searchParams.get('token') !== MT4_PUSH_TOKEN) {
         res.writeHead(403, corsHeaders);
         return res.end(JSON.stringify({ ok: false, error: 'bad token' }));
       }
-      console.log(`[MT4] ${new Date().toLocaleTimeString()} 收到推送 from ${req.socket && req.socket.remoteAddress} · ${u.searchParams.get('bal') || u.searchParams.get('balance')} / buy ${u.searchParams.get('buyCnt') || u.searchParams.get('buyCount')}`);
+      console.log(`[MT4] ${new Date().toLocaleTimeString()} 收到推送 from ${req.socket && req.socket.remoteAddress} · account=${u.searchParams.get('account') || '-'} · bal=${u.searchParams.get('bal') || u.searchParams.get('balance')} / buy=${u.searchParams.get('buyCnt') || u.searchParams.get('buyCount')}`);
     }
     // 若包含 bal 参数，说明是 MT4 EA WebRequest 推送过来的实时实盘状态
     if (u.searchParams.has('bal') || u.searchParams.has('balance')) {
@@ -1661,9 +1674,12 @@ async function handleApiMt4(req, res) {
       const buyLots = +num('buyLots').toFixed(2);
       const sellLots = +num('sellLots').toFixed(2);
       const netLots = +Math.abs(buyLots - sellLots).toFixed(2);
+      const accStr = u.searchParams.get('account') || '';
+      const isMock = u.searchParams.get('mock') === '1' || accStr === '8861092' || accStr === '1';
       latestMt4State = {
         updatedAt: new Date().toISOString(),
         ts: Date.now(),
+        isMock,
         symbol: u.searchParams.get('sym') || u.searchParams.get('symbol') || 'XAUUSD',
         account: u.searchParams.get('account') || '',
         server: u.searchParams.get('server') || '',

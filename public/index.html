@@ -242,7 +242,8 @@
           <button class="sm" onclick="copyMt4ScriptCode('script')" style="border-color:#38bdf8;color:#38bdf8;font-weight:700">📋 复制脚本版源码</button>
           <button class="pri sm" onclick="downloadMt4Script('ea')" style="background:#7c3aed;border-color:#a78bfa;color:#fff;font-weight:800" title="放入 MQL4\Experts，需单独一张图表">📥 下载【EA版】GoldDashboardSync.mq4 → Experts</button>
           <button class="sm" onclick="copyMt4ScriptCode('ea')" style="border-color:#a78bfa;color:#a78bfa;font-weight:700">📋 复制EA版源码</button>
-          <button class="sm" onclick="simulateMt4Push()" title="模拟推送一笔 MT4 实盘持仓数据，测试网站实时联动效果">🧪 模拟MT4推送测试</button>
+          <button class="sm" onclick="simulateMt4Push()" title="模拟推送一笔假测试账号数据(#8861092)，仅用于预览界面效果">🧪 模拟演示数据</button>
+          <button class="sm" onclick="clearMt4Data()" style="color:#fb7185;border-color:rgba(244,63,94,0.45)" title="清除模拟测试数据，等待您的真实MT4账号推送">🗑️ 清除测试数据</button>
           <button class="sm" onclick="toggleMt4Guide()">✖ 收起面板</button>
         </div>
       </div>
@@ -2267,16 +2268,20 @@ function render() {
         } else if (mt4.totalPnl >= 0) {
           breakEvenNote = `<b style="color:#34d399">当前实盘篮子整体净浮盈 +$${f2(mt4.totalPnl)}，处于安全盈利区</b>`;
         }
+        const isMockAcc = !!(mt4.isMock || mt4.account === '8861092' || mt4.account === '1');
+        const statusTag = isMockAcc
+          ? `<span class="pill MIXED" style="cursor:pointer" onclick="clearMt4Data()" title="点击立即清除这条模拟测试数据">🧪 网页模拟演示数据 (假测试账号 #${mt4.account} · 非您的真实MT4 · 点此清除)</span>`
+          : `<span class="pill RANGE" style="background:rgba(56,189,248,0.2);color:#38bdf8;border:1px solid #38bdf8">🟢 您的真实 MT4 实时同步中 (${ageSec}秒前)</span>`;
         mt4StripHtml = `
-          <div style="margin-bottom:10px;padding:8px 12px;background:rgba(14,116,144,0.18);border:1px solid rgba(56,189,248,0.5);border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px">
+          <div style="margin-bottom:10px;padding:8px 12px;background:${isMockAcc ? 'rgba(245,158,11,0.12)' : 'rgba(14,116,144,0.18)'};border:1px solid ${isMockAcc ? 'rgba(245,158,11,0.55)' : 'rgba(56,189,248,0.5)'};border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span class="pill RANGE" style="background:rgba(56,189,248,0.2);color:#38bdf8;border:1px solid #38bdf8">🟢 MT4 实盘实时同步中 (${ageSec}秒前)</span>
-              <span>账户 <b>#${mt4.account || '-'}</b>: 余额 <b style="color:var(--gold)">$${f2(mt4.balance)}</b> / 净值 <b>$${f2(mt4.equity)}</b></span>
+              ${statusTag}
+              <span>账户 <b>#${mt4.account || '-'}</b>${mt4.server ? ` (${mt4.server})` : ''}: 余额 <b style="color:var(--gold)">$${f2(mt4.balance)}</b> / 净值 <b>$${f2(mt4.equity)}</b></span>
               <span>| 多单(Buy): <b>${mt4.buyCount}层 / ${f2(mt4.buyLots)}手</b> ${mt4.buyAvgPrice ? `(均价$${f2(mt4.buyAvgPrice)} · 浮盈<b style="color:${mt4.buyPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.buyPnl)}</b>)` : ''}</span>
               <span>| 空单(Sell): <b>${mt4.sellCount}层 / ${f2(mt4.sellLots)}手</b> ${mt4.sellAvgPrice ? `(均价$${f2(mt4.sellAvgPrice)} · 浮盈<b style="color:${mt4.sellPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.sellPnl)}</b>)` : ''}</span>
               <span>| 净浮盈亏: <b style="font-size:13.5px;color:${mt4.totalPnl >= 0 ? '#34d399' : '#fb7185'}">${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)}</b></span>
             </div>
-            <div style="color:#e2e8f0">🎯 ${breakEvenNote}</div>
+            <div style="color:#e2e8f0">🎯 ${breakEvenNote} ${isMockAcc ? `<button class="sm" onclick="clearMt4Data()" style="margin-left:6px;padding:1px 7px;color:#fb7185;border-color:#fb7185">🗑️ 清除演示数据</button>` : ''}</div>
           </div>`;
       }
 
@@ -4053,19 +4058,27 @@ function updateMt4UiStatus(mt4, ea) {
   const pill = $('mt4StatusPill');
   const bar = $('mt4LiveDetailBar');
   if (mt4) {
+    const isMockAcc = !!(mt4.isMock || mt4.account === '8861092' || mt4.account === '1');
     const ageSec = Math.max(0, Math.round((Date.now() - mt4.ts) / 1000));
     const pnlStr = `${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)}`;
     if (btn) {
-      btn.innerHTML = `🟢 MT4已同步 (买${mt4.buyCount}层/${f2(mt4.buyLots)}手 · 卖${mt4.sellCount}层/${f2(mt4.sellLots)}手 · ${pnlStr})`;
-      btn.style.borderColor = '#10b981';
-      btn.style.color = '#34d399';
+      btn.innerHTML = isMockAcc
+        ? `🧪 MT4演示数据(#${mt4.account} · 非真实账号)`
+        : `🟢 MT4已同步 (#${mt4.account} · 买${mt4.buyCount}层/${f2(mt4.buyLots)}手 · 卖${mt4.sellCount}层/${f2(mt4.sellLots)}手 · ${pnlStr})`;
+      btn.style.borderColor = isMockAcc ? '#f59e0b' : '#10b981';
+      btn.style.color = isMockAcc ? '#fbbf24' : '#34d399';
     }
     if (pill) {
-      pill.textContent = `🟢 实时在线 (${ageSec}秒前更新 · #${mt4.account || '-'})`;
-      pill.className = 'pill RANGE';
+      pill.textContent = isMockAcc
+        ? `🧪 当前为网页模拟演示数据 (假账号 #${mt4.account}) · 等待您真实的 MT4 推送覆盖`
+        : `🟢 真实MT4在线 (${ageSec}秒前更新 · 您的账号 #${mt4.account || '-'})`;
+      pill.className = isMockAcc ? 'pill MIXED' : 'pill RANGE';
     }
     if (bar) {
-      bar.innerHTML = `🟢 <b>MT4 实盘已连接</b> (账户 <b>#${mt4.account || '-'}</b> · ${mt4.server || 'Live'} · 品种 <b>${mt4.symbol || 'XAUUSD'}</b> 现价 <b>$${f2(mt4.bid)}</b> · 点差 <b>${mt4.spread || '-'}</b>) — ` +
+      const headBadge = isMockAcc
+        ? `🧪 <b style="color:#fbbf24">当前显示的是【网页模拟测试按钮】生成的假演示账号 (#${mt4.account})，不是您的真实 MT4！</b> <button class="sm" onclick="clearMt4Data()" style="padding:1px 7px;color:#fb7185;border-color:#fb7185">🗑️ 立即清除假数据</button><br>`
+        : `🟢 <b>您的真实 MT4 实盘已连接</b> `;
+      bar.innerHTML = headBadge + `(账户 <b>#${mt4.account || '-'}</b> · ${mt4.server || 'Live'} · 品种 <b>${mt4.symbol || 'XAUUSD'}</b> 现价 <b>$${f2(mt4.bid)}</b> · 点差 <b>${mt4.spreadPts || mt4.spread || '-'}</b>) — ` +
         `余额: <b style="color:var(--gold)">$${f2(mt4.balance)}</b> | 净值: <b>$${f2(mt4.equity)}</b> | 已用预付款: <b>$${f2(mt4.margin)}</b> (${f2(mt4.marginLevel)}%) | ` +
         `多单 Buy: <b>${mt4.buyCount}层 / ${f2(mt4.buyLots)}手</b> (均价 $${f2(mt4.buyAvgPrice)} · 浮盈 <b style="color:${mt4.buyPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.buyPnl)}</b>) | ` +
         `空单 Sell: <b>${mt4.sellCount}层 / ${f2(mt4.sellLots)}手</b> (均价 $${f2(mt4.sellAvgPrice)} · 浮盈 <b style="color:${mt4.sellPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.sellPnl)}</b>) | ` +
@@ -4078,18 +4091,26 @@ function updateMt4UiStatus(mt4, ea) {
       btn.style.color = '#38bdf8';
     }
     if (pill) {
-      pill.textContent = '等待 MT4 脚本推送数据...';
+      pill.textContent = '等待您的真实 MT4 脚本推送数据...';
       pill.className = 'pill NEUT';
+    }
+    if (bar) {
+      bar.innerHTML = `⚪ 当前尚未收到您的真实 MT4 终端推送。请确认：① MT4 <b>工具 → 选项 → EA交易</b> 已勾选「允许 WebRequest」并填入 <code style="color:#38bdf8">${window.location.origin}</code>；② 将最新下载的脚本拖到图表上并勾选「允许实时自动交易」。`;
     }
   }
 }
 
 function buildMql4Source(kind) {
   const isScript = kind === 'script';
-  const apiUrl = window.location.origin + '/api/mt4';
+  const curApiUrl = window.location.origin + '/api/mt4';
+  const vercelApiUrl = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')
+    ? 'https://gold-range-index-dashboard.vercel.app/api/mt4'
+    : curApiUrl;
+  const localApiUrl = 'http://localhost:3000/api/mt4';
   const entryLines = isScript ? [
     '// 脚本只运行一次，这里用循环常驻，直到手动移除脚本/关闭图表/关闭MT4',
     'void OnStart() {',
+    '   Print("🚀 [GoldDashboardSync] 脚本已启动，正在向网站同步您的真实 MT4 账户 #", AccountNumber());',
     '   while(!IsStopped()) {',
     '      PushAccountDataToWeb();',
     '      Sleep(MathMax(1, SyncIntervalSec) * 1000);',
@@ -4098,6 +4119,7 @@ function buildMql4Source(kind) {
     '}'
   ] : [
     'int OnInit() {',
+    '   Print("🚀 [GoldDashboardSync] EA已启动，正在向网站同步您的真实 MT4 账户 #", AccountNumber());',
     '   EventSetTimer(MathMax(1, SyncIntervalSec));',
     '   PushAccountDataToWeb();',
     '   return(INIT_SUCCEEDED);',
@@ -4105,6 +4127,7 @@ function buildMql4Source(kind) {
     '',
     'void OnDeinit(const int reason) {',
     '   EventKillTimer();',
+    '   Comment("");',
     '}',
     '',
     'void OnTick() {',
@@ -4122,22 +4145,23 @@ function buildMql4Source(kind) {
     '//|   100%只读安全保证：绝不调用任何下单/改单/平仓函数，零交易干预！  |',
     '//+------------------------------------------------------------------+',
     '#property copyright "Gold Range Index Dashboard"',
-    '#property version   "1.00"',
+    '#property version   "1.10"',
     '#property strict',
     isScript ? '#property show_inputs' : '',
     '',
-    'input string DashboardUrl   = "' + apiUrl + '"; // 网站接收接口地址(若本地运行则为 http://localhost:3000/api/mt4)',
-    'input int    SyncIntervalSec = 5;               // 同步间隔秒数 (建议 3~10 秒；线上Vercel建议≥5以省额度)',
-    'input string GoldSymbolKey  = "XAU";            // 黄金品种匹配关键字 (自动兼容 XAUUSD / GOLD)',
-    'input int    MagicFilter    = 0;                // EA魔术号过滤 (0 = 统计账户内所有黄金订单)',
-    'input string SyncToken      = "";               // 推送口令 (与 Vercel 环境变量 MT4_TOKEN 一致；未设置则留空)',
+    'input string DashboardUrl    = "' + vercelApiUrl + '"; // 线上Vercel接收地址(需在MT4白名单添加域名)',
+    'input string LocalBackupUrl  = "' + localApiUrl + '";  // 本地备用接收地址(如开启本地服务也会同步)',
+    'input int    SyncIntervalSec = 5;               // 同步间隔秒数 (建议 3~10 秒)',
+    'input string GoldSymbolKey   = "XAU";           // 黄金品种匹配关键字 (自动兼容 XAUUSD / GOLD)',
+    'input int    MagicFilter     = 0;               // EA魔术号过滤 (0 = 统计账户内所有黄金订单)',
+    'input string SyncToken       = "";              // 推送口令 (与 Vercel 环境变量 MT4_TOKEN 一致；未设置则留空)',
     '',
     ...entryLines,
     '',
     'bool IsGoldSymbol(string sym) {',
     '   if(sym == Symbol()) return true;',
     '   if(StringFind(sym, GoldSymbolKey) >= 0) return true;',
-    '   if(StringFind(sym, "GOLD") >= 0 || StringFind(sym, "Gold") >= 0) return true;',
+    '   if(StringFind(sym, "GOLD") >= 0 || StringFind(sym, "Gold") >= 0 || StringFind(sym, "gold") >= 0) return true;',
     '   return false;',
     '}',
     '',
@@ -4184,31 +4208,33 @@ function buildMql4Source(kind) {
     '   double mar    = AccountMargin();',
     '   double freeM  = AccountFreeMargin();',
     '   double mLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);',
-    '   long   accNum = AccountInfoInteger(ACCOUNT_LOGIN);',
+    '   int    accNum = AccountNumber();',
+    '   string srv    = AccountServer();',
     '   int    sprd   = (int)MarketInfo(Symbol(), MODE_SPREAD);',
     '',
     '   string qs = StringConcatenate(',
-    '      "?account=", accNum,',
+    '      "?account=", IntegerToString(accNum),',
+    '      "&server=", srv,',
     '      "&symbol=", Symbol(),',
     '      "&bid=", DoubleToString(Bid, 2),',
     '      "&ask=", DoubleToString(Ask, 2),',
-    '      "&spread=", sprd,',
+    '      "&spread=", IntegerToString(sprd),',
     '      "&balance=", DoubleToString(bal, 2),',
     '      "&equity=", DoubleToString(eq, 2),',
     '      "&margin=", DoubleToString(mar, 2),',
     '      "&freeMargin=", DoubleToString(freeM, 2),',
     '      "&marginLevel=", DoubleToString(mLevel, 2),',
-    '      "&buyCount=", buyCount,',
+    '      "&buyCount=", IntegerToString(buyCount),',
     '      "&buyLots=", DoubleToString(buyLots, 2),',
     '      "&buyAvgPrice=", DoubleToString(buyAvg, 2),',
     '      "&buyPnl=", DoubleToString(buyPnl, 2),',
-    '      "&sellCount=", sellCount,',
+    '      "&sellCount=", IntegerToString(sellCount),',
     '      "&sellLots=", DoubleToString(sellLots, 2),',
     '      "&sellAvgPrice=", DoubleToString(sellAvg, 2),',
     '      "&sellPnl=", DoubleToString(sellPnl, 2),',
     '      "&totalPnl=", DoubleToString(totalPnl, 2),',
-    '      "&buyStopCount=", buyStopCount,',
-    '      "&sellStopCount=", sellStopCount,',
+    '      "&buyStopCount=", IntegerToString(buyStopCount),',
+    '      "&sellStopCount=", IntegerToString(sellStopCount),',
     '      "&token=", SyncToken',
     '   );',
     '',
@@ -4216,12 +4242,31 @@ function buildMql4Source(kind) {
     '   char resultData[];',
     '   string resultHeaders;',
     '   ResetLastError();',
-    '   int res = WebRequest("GET", DashboardUrl + qs, NULL, NULL, 2000, postData, 0, resultData, resultHeaders);',
-    '   if(res == -1) {',
-    '      int err = GetLastError();',
-    '      if(err == 4060) {',
-    '         Comment("⚠️ 请在 MT4 [工具 -> 选项 -> EA交易] 勾选 [允许WebRequest] 并添加: ", DashboardUrl);',
-    '      }',
+    '   int res = WebRequest("GET", DashboardUrl + qs, "", NULL, 3000, postData, 0, resultData, resultHeaders);',
+    '   int err = GetLastError();',
+    '   int resLocal = -1;',
+    '   if(StringLen(LocalBackupUrl) > 0 && LocalBackupUrl != DashboardUrl) {',
+    '      char resData2[]; string resHdr2;',
+    '      resLocal = WebRequest("GET", LocalBackupUrl + qs, "", NULL, 1500, postData, 0, resData2, resHdr2);',
+    '   }',
+    '   if(res == 200 || resLocal == 200) {',
+    '      Comment(',
+    '         "=== 🟢 黄金震荡指数网站 · 您的真实 MT4 实时同步已连接 ===\\n",',
+    '         "真实账号: #", accNum, " (", srv, ") | 余额: $", DoubleToString(bal, 2), " | 净值: $", DoubleToString(eq, 2), "\\n",',
+    '         "买单(Buy): ", buyCount, "层 / ", DoubleToString(buyLots, 2), "手 (均价 $", DoubleToString(buyAvg, 2), " | 浮盈 $", DoubleToString(buyPnl, 2), ")\\n",',
+    '         "卖单(Sell): ", sellCount, "层 / ", DoubleToString(sellLots, 2), "手 (均价 $", DoubleToString(sellAvg, 2), " | 浮盈 $", DoubleToString(sellPnl, 2), ")\\n",',
+    '         "同步状态: 线上Vercel=", (res == 200 ? "🟢成功" : "⚪未通"), " | 本地localhost=", (resLocal == 200 ? "🟢成功" : "⚪未开")',
+    '      );',
+    '   } else {',
+    '      Comment(',
+    '         "=== ⚠️ MT4 同步等待授权 (错误码: ", err, " / HTTP: ", res, ") ===\\n",',
+    '         "您的真实账号: #", accNum, " | 余额: $", DoubleToString(bal, 2), "\\n",',
+    '         "请在 MT4 顶部菜单点击：【工具(T) -> 选项(O) -> EA交易】\\n",',
+    '         "勾选 ☑【允许 WebRequest 用于所列 URL】，并在下方列表添加：\\n",',
+    '         "👉 https://gold-range-index-dashboard.vercel.app\\n",',
+    '         "👉 http://localhost:3000"',
+    '      );',
+    '      Print("⚠️ [GoldDashboardSync] WebRequest 失败! 错误码=", err, " HTTP=", res, " 请将 https://gold-range-index-dashboard.vercel.app 添加到 MT4 工具->选项->EA交易->允许WebRequest白名单!");',
     '   }',
     '}'
   ].join('\r\n');
@@ -4258,8 +4303,9 @@ window.copyMt4WhitelistUrl = async function() {
 window.simulateMt4Push = async function() {
   const curPx = (D && D.gold && D.gold.price) ? D.gold.price : 3320.50;
   const qs = new URLSearchParams({
+    mock: '1',
     account: '8861092',
-    server: 'MT4-Live',
+    server: 'Demo-MockTest',
     symbol: 'XAUUSD',
     bid: f2(curPx),
     ask: f2(curPx + 0.22),
@@ -4287,10 +4333,23 @@ window.simulateMt4Push = async function() {
     if (j && j.mt4 && D) {
       D.mt4 = j.mt4;
       render();
-      toast('🟢 已模拟 MT4 实盘推送并实时联动全站指标与决策台！');
+      toast('🧪 已生成模拟演示数据 (#8861092，非您的真实MT4账号，可随时点「清除测试数据」)');
     }
   } catch (e) {
     toast('模拟推送失败: ' + e.message);
+  }
+};
+
+window.clearMt4Data = async function() {
+  try {
+    await fetch('/api/mt4?clear=1');
+    if (D) {
+      delete D.mt4;
+      render();
+    }
+    toast('🗑️ 已清除模拟测试数据！正在等待您的真实 MT4 账户推送...');
+  } catch (e) {
+    toast('清除失败: ' + e.message);
   }
 };
 
@@ -4307,6 +4366,9 @@ setInterval(async () => {
         D.mt4 = j.mt4;
         render();
       }
+    } else if (j && !j.connected && D.mt4) {
+      delete D.mt4;
+      render();
     }
   } catch (e) {}
 }, 5000);
