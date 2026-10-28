@@ -826,18 +826,53 @@ function triggerFlash() {
   });
 }
 
-async function load(force, fastOnly = false) {
+const LOCAL_DATA_CACHE_KEY = 'gold_dashboard_cache_v2';
+
+// 合并快刷返回的数据与本地已缓存的低频数据(1D日线/kNN/GVZ/金十周历)，确保快刷时低频模块永不丢失
+function mergeDashboardData(prev, incoming) {
+  if (!prev) return incoming;
+  if (!incoming || !incoming.timeframes) return prev;
+  const out = { ...prev, ...incoming };
+  out.timeframes = { ...(prev.timeframes || {}), ...(incoming.timeframes || {}) };
+  if (!incoming.gvz && prev.gvz) out.gvz = prev.gvz;
+  if ((!incoming.calendar || !incoming.calendar.items || !incoming.calendar.items.length) && prev.calendar && prev.calendar.items && prev.calendar.items.length) {
+    out.calendar = prev.calendar;
+  }
+  if (prev.model && incoming.model) {
+    out.model = {
+      ...prev.model,
+      ...incoming.model,
+      knn: incoming.model.knn || prev.model.knn,
+      sparks: { ...(prev.model.sparks || {}), ...(incoming.model.sparks || {}) }
+    };
+  }
+  return out;
+}
+
+async function load(force, fastOnly = false, silentBg = false) {
   const b = fastOnly ? $('btnFast') : $('btnFetch');
-  if (!fastOnly) { b.disabled = true; b.textContent = '获取中…'; }
+  if (!fastOnly && !silentBg && b) { b.disabled = true; b.textContent = '获取中…'; }
   try {
     const q = force ? '?force=1' : (fastOnly ? '?fast=1' : '');
     const r = await fetch('/api/data' + q);
-    D = await r.json();
-    render();
-    triggerFlash();
-    if (force) toast('已全量刷新最新数据');
-  } catch (e) { $('meta').innerHTML = '<span class="err">获取失败: ' + e.message + '</span>'; }
-  if (!fastOnly) { b.disabled = false; b.textContent = '🔄 全量刷新所有数据'; }
+    const incoming = await r.json();
+    if (incoming && incoming.timeframes) {
+      D = mergeDashboardData(D, incoming);
+      try { localStorage.setItem(LOCAL_DATA_CACHE_KEY, JSON.stringify(D)); } catch (e) {}
+      render();
+      triggerFlash();
+      if (force) toast('已强制全量刷新最新数据');
+      // 如果当前缓存中还没有低频数据(1D日线或金十周历)，在后台静默补全一次低频数据，不阻塞界面
+      const missingSlow = !D.timeframes['1D'] || !D.calendar || !D.calendar.items || !D.calendar.items.length;
+      if (fastOnly && missingSlow && !window._bgSlowFetching) {
+        window._bgSlowFetching = true;
+        load(false, false, true).finally(() => { window._bgSlowFetching = false; });
+      }
+    }
+  } catch (e) {
+    if (!D && $('meta')) $('meta').innerHTML = '<span class="err">获取失败: ' + e.message + '</span>';
+  }
+  if (!fastOnly && !silentBg && b) { b.disabled = false; b.textContent = '🔄 全量刷新所有数据'; }
 }
 
 const G_ = '#2ecc8f', Y_ = '#f0b429', R_ = '#ef5b5b';
@@ -2591,9 +2626,22 @@ $('btnCopy').onclick = async () => {
   catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
   toast('已复制全部实时信息');
 };
-load(false, false);
-setInterval(() => load(false, true), 15 * 1000);      // 1M/5M/15M/1H/4H + 跨市场指数 每 15 秒实时自动刷新(仅 1M/5M 指数和价格数字背景闪烁)
-setInterval(() => load(false, false), 3 * 60 * 1000); // 日线/金十周报日历等全量数据每 3 分钟自动刷新
+// 1) 打开网页瞬间(0ms)：立即从浏览器 localStorage 恢复上次缓存秒开渲染，杜绝白屏等待
+try {
+  const cachedStr = localStorage.getItem(LOCAL_DATA_CACHE_KEY);
+  if (cachedStr) {
+    const parsed = JSON.parse(cachedStr);
+    if (parsed && parsed.timeframes) {
+      D = parsed;
+      render();
+    }
+  }
+} catch (e) {}
+
+// 2) 紧接着立即请求 fast=1 极速实时接口(~0.4s)，秒级更新 1M/5M/15M/1H/4H 黄金价格与震荡指数、跨市场报价与特朗普快讯
+load(false, true);
+setInterval(() => load(false, true), 15 * 1000);       // 经常更新的数据(1M~4H/跨市场/特朗普)每 15 秒实时获取
+setInterval(() => load(false, false, true), 15 * 60 * 1000); // 低频数据(日线kNN/GVZ/金十周历)每 15 分钟后台静默同步
 </script>
 </body>
 </html>

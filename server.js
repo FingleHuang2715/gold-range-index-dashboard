@@ -2,11 +2,13 @@
 // 运行: node server.js  ->  http://localhost:3000
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const { knnModel, composite, indexSeries } = require('./model');
 const PORT = process.env.PORT || 3000;
-const REFRESH_MS = 3 * 60 * 1000; // 日历与日线每 3 分钟自动同步
+const REFRESH_MS = 20 * 60 * 1000; // 低频数据(10年日线kNN/GVZ/金十周历)缓存 20 分钟，后台静默更新不阻塞打开速度
+const DISK_CACHE_FILE = path.join(os.tmpdir(), 'gold_dashboard_cache_v2.json');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36';
 
 // ---------- 抓取工具 ----------
@@ -421,11 +423,18 @@ function pearsonCorr(a, b) {
   return (da > 0 && db > 0) ? +(num / Math.sqrt(da * db)).toFixed(2) : 0;
 }
 
-async function wscnMacro(xau15mBars) {
+async function wscnMacro(xau15mBarsOrPromise) {
   const codes = 'XAUUSD.OTC,XAGUSD.OTC,DXY.OTC,US10YR.OTC,US2YR.OTC,VIX.OTC,AUTD.SGE';
   const realUrl = `https://api-ddc-wscn.awtmt.com/market/real?prod_code=${codes}&fields=prod_name,last_px,px_change,px_change_rate,high_px,low_px,open_px,preclose_px,update_time`;
   const dxyKlineUrl = 'https://api-ddc-wscn.awtmt.com/market/kline?prod_code=DXY.OTC&tick_count=150&period_type=900&fields=tick_at,open_px,close_px,high_px,low_px';
-  const [rSnap, rDxy] = await Promise.allSettled([getJSON(realUrl, {}, 10000, 1), getJSON(dxyKlineUrl, {}, 10000, 1)]);
+  const [rSnap, rDxy, rXau15] = await Promise.allSettled([
+    getJSON(realUrl, {}, 10000, 1),
+    getJSON(dxyKlineUrl, {}, 10000, 1),
+    Promise.resolve(xau15mBarsOrPromise),
+  ]);
+  const xau15mBars = rXau15.status === 'fulfilled' && rXau15.value
+    ? (Array.isArray(rXau15.value) ? rXau15.value : rXau15.value.bars)
+    : null;
   if (rSnap.status !== 'fulfilled') throw new Error(rSnap.reason.message);
   const snap = (rSnap.value.data && rSnap.value.data.snapshot) || {};
   const fields = (rSnap.value.data && rSnap.value.data.fields) || [];
@@ -570,7 +579,31 @@ async function wscnTrump(calEvents) {
 // ---------- 汇总 ----------
 let cache = null, inflight = null, fastInflight = null;
 let cachedEvents = [], cachedKnn = null;
+let lastFullTs = 0, lastFastTs = 0;
 const FAST_MS = 15 * 1000; // 1M / 5M 实时高频更新间隔 (15秒)
+
+// 启动时尝试从本地/Serverless 临时目录恢复缓存，避免冷启动空白等待
+try {
+  if (fs.existsSync(DISK_CACHE_FILE)) {
+    const saved = JSON.parse(fs.readFileSync(DISK_CACHE_FILE, 'utf8'));
+    if (saved && saved.cache && saved.cache.timeframes) {
+      cache = saved.cache;
+      cachedEvents = saved.cachedEvents || [];
+      cachedKnn = saved.cachedKnn || null;
+      lastFullTs = saved.lastFullTs || 0;
+      lastFastTs = saved.lastFastTs || 0;
+    }
+  }
+} catch (e) {}
+
+function saveDiskCache() {
+  if (!cache) return;
+  fs.promises.writeFile(
+    DISK_CACHE_FILE,
+    JSON.stringify({ cache, cachedEvents, cachedKnn, lastFullTs, lastFastTs }),
+    'utf8'
+  ).catch(() => {});
+}
 
 function attachDropStats(tfObj, series) {
   if (!tfObj || !series || !series.length) return;
@@ -601,22 +634,27 @@ function buildComposite(result) {
 }
 
 async function build() {
+  const prev = cache || {};
   const result = { updatedAt: new Date().toISOString(), fastUpdatedAt: new Date().toISOString(), errors: [] };
   result.session = sessionInfo();
 
-  const [g4h, g1h, g15, g5, g1, gvz, cal, gd] = await Promise.allSettled([
+  // 全量并行请求 (含高频 K 线 + 跨市场 + 特朗普 + 低频 GVZ/周历/日线)，减少串行等待
+  const p15 = wscnGold(900, 600, '15m', '1mo');
+  const [g4h, g1h, g15, g5, g1, gvz, cal, gd, mac, trp] = await Promise.allSettled([
     wscnGold(14400, 600, '1h', '3mo'),
     wscnGold(3600, 600, '1h', '3mo'),
-    wscnGold(900, 600, '15m', '1mo'),
+    p15,
     wscnGold(300, 600, '5m', '5d'),
     wscnGold(60, 600, '1m', '5d'),
     yahoo('^GVZ', '1d', '1y'),
     jin10Calendar(),
     wscnGold(86400, 2600, '1d', '10y'),
+    wscnMacro(p15),
+    wscnTrump(cachedEvents),
   ]);
 
   result.symbol = '伦敦金现货黄金 XAUUSD (0延迟秒级实时接口 api-ddc-wscn.awtmt.com)';
-  result.timeframes = {};
+  result.timeframes = { ...(prev.timeframes || {}) };
   if (g1.status === 'fulfilled') result.timeframes['1M'] = analyze(g1.value.bars);
   else result.errors.push('1M K线: ' + g1.reason.message);
   if (g5.status === 'fulfilled') result.timeframes['5M'] = analyze(g5.value.bars);
@@ -642,20 +680,26 @@ async function build() {
       date: gvz.value.bars[gvz.value.bars.length - 1].t,
       note: pct <= 10 ? '处于历史低位,过于平静,未来波动加大风险累积' : pct >= 80 ? '处于高位,市场恐慌/波动剧烈,不利网格' : (cl.length > 5 && v - prev5 > 2 ? '快速拉升,警惕趋势行情启动' : '处于中性区间'),
     };
-  } else result.errors.push('GVZ: ' + gvz.reason.message);
+  } else if (prev.gvz) {
+    result.gvz = prev.gvz;
+  } else {
+    result.errors.push('GVZ: ' + gvz.reason.message);
+  }
 
-  result.calendar = cal.status === 'fulfilled' ? cal.value : { items: [], error: cal.reason.message };
+  result.calendar = cal.status === 'fulfilled' ? cal.value : (prev.calendar || { items: [], error: cal.reason.message });
   if (result.calendar.error) result.errors.push('金十日历: ' + result.calendar.error);
-  cachedEvents = result.calendar.all || [];
+  if (result.calendar.all) cachedEvents = result.calendar.all;
 
   // 量化模型: 当前震荡指数 / 当前运行指数 / 未来5日震荡指数
   if (gd.status === 'fulfilled') {
     try { cachedKnn = knnModel(gd.value.bars, gd.value.meta.gmtoffset); } catch (e) { result.errors.push('kNN模型: ' + e.message); }
     result.timeframes['1D'] = analyze(gd.value.bars);
     try { attachDropStats(result.timeframes['1D'], indexSeries(gd.value.bars, 30, 250)); } catch (e) {}
-  } else result.errors.push('日线K线: ' + gd.reason.message);
+  } else if (!result.timeframes['1D']) {
+    result.errors.push('日线K线: ' + gd.reason.message);
+  }
 
-  const sp = {};
+  const sp = { ...(prev.model && prev.model.sparks ? prev.model.sparks : {}) };
   const b4h = g4h.status === 'fulfilled' && (g4h.value.meta.source === 'WSCN_XAUUSD' ? g4h.value.bars : resample(g4h.value.bars, 4));
   const rawMap = { '1M': g1.status === 'fulfilled' && g1.value.bars, '5M': g5.status === 'fulfilled' && g5.value.bars, '15M': g15.status === 'fulfilled' && g15.value.bars, '1H': g1h.status === 'fulfilled' && g1h.value.bars, '4H': b4h };
   for (const [k, b] of Object.entries(rawMap)) {
@@ -666,15 +710,19 @@ async function build() {
       } catch (e) { /* ignore */ }
     }
   }
-  try {
-    result.macro = await wscnMacro(g15.status === 'fulfilled' ? g15.value.bars : null);
-  } catch (e) {
-    result.errors.push('跨市场实时指数: ' + e.message);
+  if (mac.status === 'fulfilled') {
+    result.macro = mac.value;
+  } else if (prev.macro) {
+    result.macro = prev.macro;
+  } else {
+    result.errors.push('跨市场实时指数: ' + mac.reason.message);
   }
-  try {
-    result.trump = await wscnTrump(cachedEvents);
-  } catch (e) {
-    result.errors.push('特朗普言论监控: ' + e.message);
+  if (trp.status === 'fulfilled') {
+    result.trump = trp.value;
+  } else if (prev.trump) {
+    result.trump = prev.trump;
+  } else {
+    result.errors.push('特朗普言论监控: ' + trp.reason.message);
   }
   result.model = { sparks: sp };
   buildComposite(result);
@@ -682,24 +730,34 @@ async function build() {
   return result;
 }
 
+// 极速实时刷新 (仅抓取高频变化的 1M/5M/15M/1H/4H + 跨市场实时报价 + 特朗普快讯，全部单轮并行 ~0.4秒完成，低频日线/周历/GVZ 直接走缓存)
 async function refreshFast() {
-  if (!cache) return refresh();
   if (fastInflight) return fastInflight;
   fastInflight = (async () => {
-    const [g1, g5, g15, g1h, g4h, trp] = await Promise.allSettled([
+    const p15 = wscnGold(900, 600, '15m', '1mo');
+    const [g1, g5, g15, g1h, g4h, mac, trp] = await Promise.allSettled([
       wscnGold(60, 600, '1m', '5d'),
       wscnGold(300, 600, '5m', '5d'),
-      wscnGold(900, 600, '15m', '1mo'),
+      p15,
       wscnGold(3600, 600, '1h', '3mo'),
       wscnGold(14400, 600, '1h', '3mo'),
+      wscnMacro(p15),
       wscnTrump(cachedEvents),
     ]);
-    let newMacro = null;
-    try {
-      newMacro = await wscnMacro(g15.status === 'fulfilled' ? g15.value.bars : null);
-    } catch (e) {}
 
-    // 所有异步网络请求完成后，原子性同步更新 cache 并立即执行 buildComposite，杜绝中间态 rangeIndex 为空
+    if (!cache) {
+      cache = {
+        updatedAt: new Date().toISOString(),
+        fastUpdatedAt: new Date().toISOString(),
+        errors: [],
+        session: sessionInfo(),
+        symbol: '伦敦金现货黄金 XAUUSD (0延迟秒级实时接口 api-ddc-wscn.awtmt.com)',
+        timeframes: {},
+        calendar: { items: [], weeklyGrid: [] },
+        model: { sparks: {} }
+      };
+    }
+
     cache.fastUpdatedAt = new Date().toISOString();
     cache.session = sessionInfo();
     const map = [
@@ -719,30 +777,64 @@ async function refreshFast() {
         } catch (e) {}
       }
     }
-    if (newMacro) cache.macro = newMacro;
+    if (mac.status === 'fulfilled') cache.macro = mac.value;
     if (trp.status === 'fulfilled') cache.trump = trp.value;
     buildComposite(cache);
+    lastFastTs = Date.now();
+    saveDiskCache();
     return cache;
   })().finally(() => { fastInflight = null; });
   return fastInflight;
 }
 
-let lastFullTs = 0;
-
 async function refresh() {
   if (inflight) return inflight;
-  inflight = build().then((r) => { cache = r; lastFullTs = Date.now(); return r; }).finally(() => { inflight = null; });
+  inflight = build().then((r) => {
+    cache = r;
+    lastFullTs = Date.now();
+    lastFastTs = Date.now();
+    saveDiskCache();
+    return r;
+  }).finally(() => { inflight = null; });
   return inflight;
 }
 
-// 统一 /api/data 请求处理器 (兼容本地 Node HTTP Server 与 Vercel Serverless Function)
+// 统一 /api/data 请求处理器：
+// 1) 低频数据(1D kNN / GVZ / 金十周历)优先使用服务端缓存，过期后在后台异步静默更新，绝不阻塞打开网页！
+// 2) 高频数据(1M~4H价格与震荡指数 / 跨市场指数 / 特朗普言论)实时并行拉取(~0.4秒内返回)。
 async function handleApiData(req, res) {
   try {
     const u = new URL(req.url || '/api/data', 'http://localhost');
     const force = u.searchParams.get('force') === '1';
     const fast = u.searchParams.get('fast') === '1';
-    const isStaleFull = !cache || (Date.now() - lastFullTs > REFRESH_MS);
-    const data = (force || isStaleFull) ? await refresh() : (fast ? await refreshFast() : cache);
+    const now = Date.now();
+    const isStaleFull = !lastFullTs || (now - lastFullTs > REFRESH_MS);
+    const isStaleFast = !lastFastTs || (now - lastFastTs > 6000); // 6秒内多端重复打开直接复用热实时缓存
+
+    let data;
+    if (force) {
+      data = await refresh();
+    } else if (!cache) {
+      // 若冷启动尚无缓存且请求的是 fast=1，先极速抓高频数据(0.4s)立即返回，同时后台异步补全日线kNN与周历
+      if (fast) {
+        data = await refreshFast();
+        refresh().catch(() => {});
+      } else {
+        data = await refresh();
+      }
+    } else {
+      // 已有缓存：若低频数据(20分钟)过期，后台静默异步刷新，不阻塞当前请求！
+      if (isStaleFull && !inflight) {
+        refresh().catch(() => {});
+      }
+      // 高频数据：只要距离上次抓取超过 6 秒或明确指定 fast=1，立即刷新高频实时数据(~0.4s)
+      if (fast || isStaleFast) {
+        data = await refreshFast();
+      } else {
+        data = cache;
+      }
+    }
+
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(data));
   } catch (e) {
