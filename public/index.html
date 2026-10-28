@@ -488,6 +488,7 @@ const toast = (m) => { const t = $('toast'); t.textContent = m; t.style.display 
 
 function clamp(x, a = 0, b = 100) { return Math.max(a, Math.min(b, x)); }
 function r1(x) { return Math.round(x * 10) / 10; }
+function r2(x) { return Math.round(x * 100) / 100; }
 function lerp(x, pts) {
   if (x <= pts[0][0]) return pts[0][1];
   for (let i = 1; i < pts.length; i++) {
