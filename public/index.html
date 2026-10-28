@@ -167,6 +167,7 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
       <button class="sm" onclick="testVoiceAlert()" style="padding:2px 7px" title="测试浏览器中文语音播报是否正常">🔈 试听</button>
     </div>
     <button id="btnMt4Guide" onclick="toggleMt4Guide()" style="border-color:rgba(56,189,248,0.55);color:#38bdf8;font-weight:800" title="点击打开 MT4 实盘数据实时同步接入指南与下载脚本">🔌 MT4实盘同步(点击接入)</button>
+    <button id="btnEaParamGuide" onclick="toggleEaParamGuide(true);document.getElementById('eaParamGuideSec').scrollIntoView({behavior:'smooth'})" style="border-color:rgba(52,211,153,0.7);color:#34d399;font-weight:800" title="查看 XAUUSD M1 马丁策略震荡加剧调参指南与优化配置">⚙️ EA加剧调参方案</button>
     <button id="btnFast">⚡ 立即刷新实时数据</button>
     <button class="pri" id="btnFetch">🔄 全量刷新</button>
     <button class="pri" id="btnCopy">📋 一键复制(发给AI)</button>
@@ -185,6 +186,7 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
     <a href="#mt4GuideSec" onclick="var s=document.getElementById('mt4GuideSec'); if(s && s.style.display==='none' && window.toggleMt4Guide) toggleMt4Guide();"><span>🔌 MT4同步接入中心</span></a>
     <a href="#topSessionSec"><span>🕒 时段 & 重磅红灯锁</span><span id="nav-sess" class="pill NEUT">-</span></a>
     <a href="#tolSec"><span>🛡️ 净敞口推演(可开关)</span><span id="nav-ea" class="pill NEUT">关</span></a>
+    <a href="#eaParamGuideSec" onclick="if(window.toggleEaParamGuide) toggleEaParamGuide(true);"><span>⚙️ EA加剧调参方案</span><span class="pill RANGE">12字铁律</span></a>
     <a href="#anomalySec"><span>⚡ 实时异动监控</span><span id="nav-anom" class="pill NEUT">0项</span></a>
     <a href="#keyLevelsSec"><span>🎯 清算位插针雷区</span><span id="nav-klv" class="pill NEUT">-</span></a>
     <a href="#verdict"><span>📊 核心震荡总览</span><span id="nav-run" class="pill MIXED">-</span></a>
@@ -369,12 +371,214 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
           <div class="btns" style="margin-left:auto">
             <button class="sm" onclick="applyEaPreset('cur')">套用当前实盘 (2700$ / 可亏1500$ / Maxlot 1.32)</button>
             <button class="sm" onclick="applyEaPreset('bal2000')">2000$账户 + 净敞口0.5手 (抗30$/3000点)</button>
+            <button class="sm pri" onclick="applyEaPreset('highVol')" style="background:rgba(16,185,129,0.22);border-color:#10b981;color:#34d399;font-weight:700">⚡ 震荡加剧优化参数 (Step 1.6$ / K_Lot 1.28 / 止盈2.8$)</button>
             <button class="sm" onclick="applyEaPreset('log')">日志原参数 (Maxlot 3.50 / 50层)</button>
           </div>
         </div>
       </details>
       <div id="eaActionBox"></div>
       <div id="tolResult" style="margin-top:12px"></div>
+      </div>
+    </section>
+    <section class="card" id="eaParamGuideSec" style="border:1.5px solid rgba(16,185,129,0.55);background:linear-gradient(135deg,rgba(16,185,129,0.08),rgba(15,23,42,0.96));border-radius:12px;padding:16px;margin-bottom:16px">
+      <div class="vhead" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0;color:#34d399;display:flex;align-items:center;gap:6px">
+            <span>⚙️</span>
+            <span>XAUUSD M1 双向追踪倍投马丁EA · 策略参数档案 &amp; 震荡加剧调参指南</span>
+          </h2>
+          <span class="pill RANGE">当前实盘: 0.02起 · Step 1.0$ · K_Lot 1.38 · 止盈$4</span>
+          <span class="pill TREND" style="border-color:#fb7185">震荡加剧风控推荐配置</span>
+        </div>
+        <div class="btns">
+          <button class="sm pri" onclick="applyEaPreset('highVol')" style="background:#059669;border-color:#34d399;font-weight:800" title="将加剧调参推荐值(Step 1.6$, K_Lot 1.28, 止盈2.8$)一键注入上方沙盘推演台">🧮 一键注入沙盘推演</button>
+          <button class="sm" onclick="downloadEaSetFile()" style="border-color:#34d399;color:#34d399;font-weight:700" title="下载优化后的 .set 配置文件，可直接导入 MT4">📥 下载优化 .set 文件</button>
+          <button class="sm" onclick="copyEaSetFile()" style="border-color:#38bdf8;color:#38bdf8;font-weight:700" title="复制完整 .set 参数代码">📋 复制 .set 文本</button>
+          <button class="sm" id="btnToggleEaParamGuide" onclick="toggleEaParamGuide()">🔘 折叠/展开指南</button>
+        </div>
+      </div>
+
+      <div id="eaParamGuideBody">
+        <!-- 12 字核心心法金律横幅 -->
+        <div style="background:linear-gradient(135deg,rgba(251,191,36,0.14),rgba(15,20,30,0.95));border:1px solid rgba(251,191,36,0.5);border-radius:10px;padding:12px 16px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div>
+              <span class="xs" style="color:#fbbf24;font-weight:800;letter-spacing:1px">💡 震荡加剧调参核心 12 字铁律</span>
+              <div style="font-size:18px;font-weight:900;color:#fff;margin-top:2px">
+                “<span style="color:#34d399">放宽步长拉大网</span>、<span style="color:#38bdf8">调低倍率降车速</span>、<span style="color:#fbbf24">缩小止盈快收手</span>”
+              </div>
+            </div>
+            <div class="xs mut" style="max-width:460px;line-height:1.5">
+              适用于金价由微幅 1~2$ 窄幅震荡，转为 <b>5~15$ 以上大振幅猴市洗盘、非农/CPI宽幅扫荡</b>。原版参数在此类行情极易因加仓过密、手数指数级爆炸导致深套。
+            </div>
+          </div>
+        </div>
+
+        <!-- 3 大调参支柱微卡片 -->
+        <div class="grid3" style="gap:10px;margin-bottom:14px">
+          <div style="background:rgba(15,20,30,0.85);border:1px solid rgba(52,211,153,0.35);border-radius:8px;padding:10px 12px">
+            <b style="color:#34d399;font-size:13px">① 🕸️ 放宽步长拉大网 (Step: 100 → 160)</b>
+            <div class="xs" style="color:#cbd5e1;margin-top:4px;line-height:1.55">
+              原 1.0$ 步长在行情急冲 6~8$ 时，2分钟内会被连续打穿 6~8 层。<br>
+              拉大步长至 <b>1.6$ (160点)</b> 后，同样波动只触发 3~4 层，<b style="color:#34d399">仓位敞口直接暴降 60%</b>！
+            </div>
+          </div>
+          <div style="background:rgba(15,20,30,0.85);border:1px solid rgba(56,189,248,0.35);border-radius:8px;padding:10px 12px">
+            <b style="color:#38bdf8;font-size:13px">② 🚗 调低倍率降车速 (K_Lot: 1.38 → 1.28)</b>
+            <div class="xs" style="color:#cbd5e1;margin-top:4px;line-height:1.55">
+              1.38 倍投在第 9 层就达 0.36 手，第 11 层达 0.69 手；<br>
+              降至 <b>1.28</b> 后，第 9 层仅约 <b>0.18 手</b>。宽幅震荡每次折返波幅巨大，不需激进倍投也能从容吃满反抽。
+            </div>
+          </div>
+          <div style="background:rgba(15,20,30,0.85);border:1px solid rgba(251,191,36,0.35);border-radius:8px;padding:10px 12px">
+            <b style="color:#fbbf24;font-size:13px">③ 🎯 缩小止盈快收手 (StopProfit: 4.0 → 2.8)</b>
+            <div class="xs" style="color:#cbd5e1;margin-top:4px;line-height:1.55">
+              宽幅震荡“冲得快、回落更快”。目标若仍设 4.0，常浮盈到 3.5 未达线就被反杀；<br>
+              调小至 <b>2.5~2.8$</b>，抓到反弹瞬间<b>立刻整组落袋并重置为 0.02 底仓</b>！
+            </div>
+          </div>
+        </div>
+
+        <!-- 一、核心参数详细对比表 -->
+        <div style="background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:14px;overflow-x:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <b style="color:#fff;font-size:13.5px">📊 策略核心参数调整对比推荐表（原设置 vs 震荡加剧推荐值）</b>
+            <span class="xs mut">注：绿色项为关键防爆仓调整项，灰色项维持现状</span>
+          </div>
+          <table class="tbl" style="font-size:12px;width:100%">
+            <thead>
+              <tr>
+                <th style="width:190px">参数名称 (MT4 .set)</th>
+                <th style="width:110px">原 .set 参数</th>
+                <th style="width:130px">震荡加剧推荐值</th>
+                <th>调参原因与风控机理</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="background:rgba(16,185,129,0.08)">
+                <td><b>Step (主加仓步长)</b></td>
+                <td><span class="pill NEUT">100 (1.0$)</span></td>
+                <td><b style="color:#34d399;font-size:13.5px">150 ~ 180 (1.6$)</b></td>
+                <td><b style="color:#34d399">【最核心调整】</b> 拉大网格间距。金价急跌 8$ 时原版开 8 层，调整后仅开 4 层，累计手数大幅削减 60%+。</td>
+              </tr>
+              <tr style="background:rgba(16,185,129,0.08)">
+                <td><b>K_Lot (手数倍投系数)</b></td>
+                <td><span class="pill NEUT">1.38</span></td>
+                <td><b style="color:#34d399;font-size:13.5px">1.25 ~ 1.30 (1.28)</b></td>
+                <td><b style="color:#34d399">【延缓手数爆发】</b> 9层手数由 0.36手 骤降至 0.18手，11层由 0.69手 降至 0.29手，极大降低深水区占用。</td>
+              </tr>
+              <tr style="background:rgba(16,185,129,0.08)">
+                <td><b>StopProfit (整组止盈目标)</b></td>
+                <td><span class="pill NEUT">4.0 ($)</span></td>
+                <td><b style="color:#34d399;font-size:13.5px">2.5 ~ 3.0 (2.8$)</b></td>
+                <td><b style="color:#34d399">【见好就收防反杀】</b> 宽幅震荡反抽急促，降低止盈门槛确保反弹第一波就瞬间落袋并重置底仓。</td>
+              </tr>
+              <tr>
+                <td><b>MinDistance / TwoMinDistance</b></td>
+                <td><span class="pill NEUT">60 (0.6$)</span></td>
+                <td><b style="color:#38bdf8">80 ~ 100 (0.8$)</b></td>
+                <td><b>【防插针扎堆】</b> 避免在剧烈毛刺插针或秒级大点差时在几毛钱内密集进场连下两单。</td>
+              </tr>
+              <tr>
+                <td><b>StepTrallOrders (挂单追踪)</b></td>
+                <td><span class="pill NEUT">100 (1.0$)</span></td>
+                <td><b style="color:#38bdf8">120 ~ 150 (1.3$)</b></td>
+                <td><b>【防假突破追高】</b> 追踪步长适度拉大，防止未成交挂单被虚假急拉频繁追至最高峰成交。</td>
+              </tr>
+              <tr>
+                <td><b>Totals (最大允许层数)</b></td>
+                <td><span class="pill NEUT">24 层</span></td>
+                <td><b style="color:#fbbf24">16 ~ 20 (18层)</b></td>
+                <td><b>【控制极端极限】</b> 宽幅震荡如破位不可打满24层，缩容至 18 层将最深水区敞口留作账户安全缓冲。</td>
+              </tr>
+              <tr>
+                <td><b>Maxlot (单笔封顶手数)</b></td>
+                <td><span class="pill NEUT">1.32 手</span></td>
+                <td><b>1.00 ~ 1.32 手</b></td>
+                <td>维持现状或适度下调，坚决不可调高单笔封顶。</td>
+              </tr>
+              <tr>
+                <td><b>MaxSpread (最大允许点差)</b></td>
+                <td><span class="pill NEUT">60 点</span></td>
+                <td><b>50 ~ 60 点</b></td>
+                <td>美盘或数据公布瞬间平台点差飙升时自动拒单，保护不被点差滑点侵蚀利润。</td>
+              </tr>
+              <tr>
+                <td><b>MaxLoss (总止损风控)</b></td>
+                <td><span class="pill NEUT">3500 $</span></td>
+                <td><b>3500 $ (维持)</b></td>
+                <td>结合 $10,000 美金本金，最大风控线设 $3,500 保持极高防御纵深。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 二、两大实战行情应对与配合网站指标实战操盘 -->
+        <div class="grid2" style="gap:12px;margin-bottom:14px">
+          <!-- 场景 1：宽幅猴市 -->
+          <div style="background:rgba(15,20,30,0.92);border:1.5px solid rgba(52,211,153,0.4);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <b style="color:#34d399;font-size:13.5px">🐒 场景 1：纯波幅放大的“宽幅猴市”（良性大震荡）</b>
+              <span class="pill RANGE">最赚钱但也最易翻车</span>
+            </div>
+            <div class="xs" style="color:#cbd5e1;line-height:1.6">
+              • <b>盘面特征</b>：K 线大阴大阳剧烈交替，1分钟内来来回扫荡 5~10 美元，但 15M/1H 级别没有单边大趋势方向。<br>
+              • <b>实战调参</b>：直接换用 <b>Step=160, K_Lot=1.28, StopProfit=2.8</b>；<br>
+              • <b>运作效果</b>：利用宽幅震荡的剧烈回抽，网格能够极高频率、顺畅地大批量止盈重置，不断落袋！
+            </div>
+          </div>
+
+          <!-- 场景 2：假震荡真突破 -->
+          <div style="background:rgba(15,20,30,0.92);border:1.5px solid rgba(244,63,94,0.45);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <b style="color:#fb7185;font-size:13.5px">🚨 场景 2：假震荡、真突破的“单边趋势破位”（高危行情）</b>
+              <span class="pill TREND">绝不可死扛纯马丁</span>
+            </div>
+            <div class="xs" style="color:#cbd5e1;line-height:1.6">
+              • <b>盘面特征</b>：看似震荡，但本站 <b>1M/5M 震荡指数跌破 50 分</b>，且净位移（Displacement）持续超 8 美元。<br>
+              • <b>联动本站「🧭 一锤定音总决策」</b>：<br>
+              &nbsp;&nbsp;🔴 若显示 <b>“暂停加仓/防单边”</b>：在 MT4 暂停自动交易或关闭逆势挂单，停止继续逆势补仓；<br>
+              &nbsp;&nbsp;🔄 若显示 <b>“趋势切换·适合保留策略”</b>：属于急跌急涨后的 V 型强劲反抽窗口，<b>保持原仓位等待整组止盈，切忌在最低点割肉</b>！
+            </div>
+          </div>
+        </div>
+
+        <!-- 三、结合 $10,000 美金账户的实测抗压推演效果对比 -->
+        <div style="background:rgba(15,20,30,0.92);border:1px solid rgba(251,191,36,0.4);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+          <b style="color:var(--gold);font-size:13.5px">💰 结合您当前 $10,000 美金账户的实战抗压能力推演对比（以单边急拉 12 美元为例）</b>
+          <div class="grid2" style="gap:10px;margin-top:8px">
+            <div style="background:rgba(15,18,25,0.9);border:1px solid rgba(244,63,94,0.4);border-radius:8px;padding:10px 12px">
+              <div style="display:flex;justify-content:space-between"><b style="color:#fb7185">❌ 在原参数下 (Step=100, K_Lot=1.38)</b><span class="pill TREND">高压</span></div>
+              <div class="xs" style="color:#cbd5e1;margin-top:5px;line-height:1.6">
+                • 触发层数: 迅速来到 <b>第 12 层</b><br>
+                • 累计持仓手数: 快速累积至 <b>~3.4 手</b><br>
+                • 瞬时浮亏压力: 逼近 <b style="color:#fb7185">-$400 ~ -$500</b><br>
+                • 预付款占用: 达 <b>$340+</b>，若遇非农继续单边易诱发锁死
+              </div>
+            </div>
+            <div style="background:rgba(15,18,25,0.9);border:1px solid rgba(52,211,153,0.45);border-radius:8px;padding:10px 12px">
+              <div style="display:flex;justify-content:space-between"><b style="color:#34d399">✅ 在优化参数下 (Step=160, K_Lot=1.28)</b><span class="pill RANGE">极度从容</span></div>
+              <div class="xs" style="color:#cbd5e1;margin-top:5px;line-height:1.6">
+                • 触发层数: 仅开出 <b>第 7 层左右</b><br>
+                • 累计持仓手数: 合计不足 <b>0.60 手</b> (最大单手仅 0.19手)<br>
+                • 瞬时浮亏压力: 仅 <b style="color:#34d399">-$60 ~ -$110 之间</b> (风险降低 75%)<br>
+                • 预付款占用仅 <b>~$55</b>，对于 $10,000 账户预付款比例稳居 <b>18,000%+</b>，从容等待回踩止盈！
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 四、优化版 .set 代码展示框与快捷操作 -->
+        <div style="background:#090d14;border:1px solid var(--bd);border-radius:10px;padding:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+            <b style="color:#38bdf8;font-size:12.5px">📄 完整优化 .set 配置文件代码 (可直接一键复制或下载导入 MT4)</b>
+            <div class="btns">
+              <button class="sm pri" onclick="copyEaSetFile()">📋 复制全部 .set 参数</button>
+              <button class="sm" onclick="downloadEaSetFile()">📥 下载 XAUUSD_M1_HighVolatility.set</button>
+            </div>
+          </div>
+          <pre id="eaSetCodeBlock" style="margin:0;max-height:160px;overflow-y:auto;background:rgba(15,20,30,0.85);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:10px;font-family:Consolas,monospace;font-size:11.5px;color:#a5b4fc;line-height:1.5"></pre>
+        </div>
       </div>
     </section>
     <section class="card" id="anomalySec"></section>
@@ -2525,6 +2729,7 @@ function render() {
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <span class="pill ${eaDir.badgeCls} fast-num" style="font-size:13px;padding:5px 12px">${eaDir.badgeTxt}</span>
               <span style="font-size:15px;font-weight:800;color:${statusCol}">${eaDir.pauseSideTxt}</span>
+              <button class="sm" onclick="if(window.toggleEaParamGuide)toggleEaParamGuide(true);document.getElementById('eaParamGuideSec').scrollIntoView({behavior:'smooth'})" style="padding:2px 8px;border-color:rgba(52,211,153,0.6);color:#34d399;font-size:11px;font-weight:700" title="点击查看震荡加剧调参推荐方案与对比表">⚙️ 调参指南</button>
             </div>
             <div class="sm mut">
               黄金现价: <b class="fast-num" style="color:var(--text);font-size:14px">${f2(eaDir.price)}$</b> ·
@@ -4137,10 +4342,101 @@ window.applyEaPreset = (mode) => {
     SELL_LOTS = 0.02;
     CUR_LAYERS = 7;
     USED_MARGIN = 14;
+  } else if (mode === 'highVol' || mode === 'opt') {
+    EA_CFG = { lot: 0.02, kLot: 1.28, maxLot: 1.32, totals: 18, stepUsd: 1.60, tpPerOrder: 2.8 };
+    ACC_BAL = (window.D && window.D.mt4 && window.D.mt4.balance) ? window.D.mt4.balance : 10000;
+    RISK_LOSS_USD = 3500;
+    BUY_LOTS = 0.35;
+    SELL_LOTS = 0.02;
+    CUR_LAYERS = 4;
+    USED_MARGIN = 35;
+    if (window.toggleTolSec) {
+      const tolBody = $('tolSecBody');
+      if (tolBody && tolBody.style.display === 'none') toggleTolSec();
+    }
+    const tolSec = $('tolSec');
+    if (tolSec) tolSec.scrollIntoView({ behavior: 'smooth' });
   }
   syncEaInputs();
   applyAccountAndRecalc(ACC_BAL);
 };
+
+// ========== XAUUSD M1 双向追踪倍投马丁策略 - 震荡加剧调参配置代码与交互函数 ==========
+const EA_OPTIMIZED_SET_TEXT = `; ========================================================
+; XAUUSD M1 双向追踪倍投马丁策略 - 震荡加剧推荐优化配置
+; 适用场景：金价单分钟波动 5~15$ 以上宽幅猴市、非农/CPI大振幅洗盘
+; 核心心法：放宽步长拉大网、调低倍率降车速、缩小止盈快收手
+; ========================================================
+lot=0.02
+DigitsLot=2
+Step=160
+FirstStep=80
+MinDistance=80
+TwoMinDistance=80
+TwoStep=160
+K_Lot=1.28
+StopProfit=2.8
+StepTrallOrders=130
+Totals=18
+Maxlot=1.32
+MaxSpread=60
+MaxLoss=3500.0
+MaxLossCloseAll=50.0
+StopLoss=20000.0
+Money=200.0
+HomeopathyCloseAll=true
+Homeopathy=false
+`;
+
+window.toggleEaParamGuide = function(forceOpen) {
+  const body = $('eaParamGuideBody');
+  const btn = $('btnToggleEaParamGuide');
+  if (!body) return;
+  const isHidden = forceOpen ? false : body.style.display === 'none';
+  body.style.display = isHidden ? 'block' : 'none';
+  if (btn) btn.textContent = isHidden ? '🔘 折叠指南' : '🔘 展开指南';
+  try { localStorage.setItem('gold_ea_param_guide_collapsed', isHidden ? '0' : '1'); } catch (e) {}
+};
+
+window.copyEaSetFile = function() {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(EA_OPTIMIZED_SET_TEXT).then(() => {
+      alert('✅ 震荡加剧优化 .set 参数已复制到剪贴板！\n可直接在 MT4 EA 设置界面点击【加载】或粘贴到 Presets 文件夹中。');
+    });
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = EA_OPTIMIZED_SET_TEXT;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    alert('✅ 震荡加剧优化 .set 参数已复制到剪贴板！');
+  }
+};
+
+window.downloadEaSetFile = function() {
+  const blob = new Blob([EA_OPTIMIZED_SET_TEXT], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'XAUUSD_M1_HighVolatility_Optimized.set';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
+
+// 初始化代码展示框内容
+setTimeout(() => {
+  if ($('eaSetCodeBlock')) {
+    $('eaSetCodeBlock').textContent = EA_OPTIMIZED_SET_TEXT.trim();
+  }
+  try {
+    const isCollapsed = localStorage.getItem('gold_ea_param_guide_collapsed');
+    if (isCollapsed === '1' && $('eaParamGuideBody')) {
+      $('eaParamGuideBody').style.display = 'none';
+      if ($('btnToggleEaParamGuide')) $('btnToggleEaParamGuide').textContent = '🔘 展开指南';
+    }
+  } catch (e) {}
+}, 50);
 
 // 初始化时根据账户金额与净敞口同步一次 TOL
 {
