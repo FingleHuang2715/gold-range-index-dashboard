@@ -1586,8 +1586,15 @@ try {
 
 // Vercel 无状态：多个函数实例之间不共享内存/磁盘，需借助外部 Redis(Upstash REST) 在 MT4 推送与网页读取间共享数据。
 // 配置 UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN (或 Vercel KV 的 KV_REST_API_URL / KV_REST_API_TOKEN) 即自动启用。
-const MT4_REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
-const MT4_REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
+function findEnvBySuffix(...suffixes) {
+  for (const k of Object.keys(process.env)) {
+    if (suffixes.some((s) => k.endsWith(s)) && process.env[k]) return process.env[k];
+  }
+  return '';
+}
+// 兼容自定义前缀(如 STORAGE_KV_REST_API_URL / STORAGE_UPSTASH_REDIS_REST_URL 等)
+const MT4_REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || findEnvBySuffix('KV_REST_API_URL', 'REDIS_REST_URL');
+const MT4_REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || findEnvBySuffix('KV_REST_API_TOKEN', 'REDIS_REST_TOKEN');
 const MT4_PUSH_TOKEN = process.env.MT4_TOKEN || '';
 async function mt4Redis(cmd) {
   if (!MT4_REDIS_URL || !MT4_REDIS_TOKEN) return null;
