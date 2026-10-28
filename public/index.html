@@ -41,6 +41,10 @@
   aside.sidenav .ng:first-child{margin-top:0}
   aside.sidenav a{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px 9px;border-radius:6px;color:#b8c2d4;text-decoration:none;font-size:12.5px;border:1px solid transparent;transition:all .15s;min-width:0}
   aside.sidenav a span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+aside.sidenav .nd{font-style:normal;font-size:10px;font-weight:800;margin-left:4px;padding:0 4px;border-radius:3px;white-space:nowrap}
+aside.sidenav .nd.up{color:#34d399;background:rgba(16,185,129,.2)}
+aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
+[id^="mt4"]{scroll-margin-top:70px}
   aside.sidenav a:hover,aside.sidenav a.active{background:var(--card2);border-color:#2c364b;color:#fff}
   main{padding:18px 22px;display:grid;gap:16px;min-width:0}
   @media(max-width:960px){.layout{grid-template-columns:1fr}aside.sidenav{position:static;height:auto;flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--bd)}.sidenav .ng{width:100%}header{flex-wrap:wrap}}
@@ -173,6 +177,11 @@
     <div class="ng">核心决策</div>
     <a href="#masterDecisionSec"><span>🧭 一锤定音总决策</span><span id="nav-master" class="pill RANGE">-</span></a>
     <a href="#mt4CurveSec"><span>💰 MT4余额/净值/收益图</span><span id="nav-mt4" class="pill NEUT">未连</span></a>
+    <a href="#mt4PeakSec"><span>🏆 历史峰值压力档案</span><span id="nav-mt4pk" class="pill NEUT">未连</span></a>
+    <a href="#mt4HeatSec"><span>🕒 高危时段热力表</span><span id="nav-mt4heat" class="pill NEUT">未连</span></a>
+    <a href="#mt4TierSec"><span>📊 浮亏阶梯次数统计</span><span id="nav-mt4tier" class="pill NEUT">未连</span></a>
+    <a href="#mt4CapSec"><span>💵 入金备付决策</span><span id="nav-mt4cap" class="pill NEUT">未连</span></a>
+    <a href="#mt4GuideSec" onclick="var s=document.getElementById('mt4GuideSec'); if(s && s.style.display==='none' && window.toggleMt4Guide) toggleMt4Guide();"><span>🔌 MT4同步接入中心</span></a>
     <a href="#topSessionSec"><span>🕒 时段 & 重磅红灯锁</span><span id="nav-sess" class="pill NEUT">-</span></a>
     <a href="#tolSec"><span>🛡️ 净敞口推演(可开关)</span><span id="nav-ea" class="pill NEUT">关</span></a>
     <a href="#anomalySec"><span>⚡ 实时异动监控</span><span id="nav-anom" class="pill NEUT">0项</span></a>
@@ -747,6 +756,18 @@ function calcEaModel(bal = ACC_BAL, cfg = EA_CFG, curL = CUR_LAYERS, usedMargin 
 }
 
 // ========== 基于 1M + 5M 为主(65%)、15M + 1H 为辅(35%) 的 EA 实时手动操作指令引擎 ==========
+// 读取 1M/5M 最近 3 根K线内是否出现「急涨急跌趋势切换」(V型/倒V)，用于把“不适合”改判为“适合保留策略”
+function getReversalInfo(eMap) {
+  if (!eMap) return null;
+  for (const k of ['1M', '5M']) {
+    const ser = (eMap[k] && eMap[k].ser) || [];
+    for (let j = ser.length - 1; j >= Math.max(0, ser.length - 3); j--) {
+      if (ser[j] && ser[j].revDir) return { dir: ser[j].revDir, tf: k, range: ser[j].revRange };
+    }
+  }
+  return null;
+}
+
 function calcEaDirective(d, ea, adjMap, eMap) {
   const t1 = (d.timeframes && d.timeframes['1M']) || {};
   const t5 = (d.timeframes && d.timeframes['5M']) || {};
@@ -803,9 +824,11 @@ function calcEaDirective(d, ea, adjMap, eMap) {
   // 判断风险等级与具体手动操作指令 (以 1M+5M 为主触发 65%，参考 15M+1H 趋势 35%)
   const curHighRisk = ea.curInfo.ddUsd >= ea.bal * 0.55 || ea.curLayerNum >= ea.uncontrolledWarn.layer;
   const isAccountBreach = oneWayMove >= ea.remHardSpan || curHighRisk;
-  const isExtremeWhipsaw = (fastIdx < 32 && Math.abs(dirScore) < 0.35) || fastDrop >= 8.5;
-  const isTrendDanger = isAccountBreach || fastIdx < 50 || adj5 < 48 || (adj1 < 45 && adj5 < 54) || fastDrop >= 4.0 || (midIdx < 45 && fastIdx < 56) || spanWarnRatio >= 0.90;
-  const isWatch = !isExtremeWhipsaw && !isTrendDanger && (fastIdx < 58 || fastDrop >= 2.5 || midIdx < 52 || spanWarnRatio >= 0.70 || ea.curLayerNum >= Math.max(10, ea.uncontrolledWarn.layer - 2));
+  const revInfoEa = getReversalInfo(eMap);
+  const reversalKeep = !!revInfoEa && !isAccountBreach;
+  const isExtremeWhipsaw = !reversalKeep && ((fastIdx < 32 && Math.abs(dirScore) < 0.35) || fastDrop >= 8.5);
+  const isTrendDanger = isAccountBreach || (!reversalKeep && (fastIdx < 50 || adj5 < 48 || (adj1 < 45 && adj5 < 54) || fastDrop >= 4.0 || (midIdx < 45 && fastIdx < 56) || spanWarnRatio >= 0.90));
+  const isWatch = !reversalKeep && !isExtremeWhipsaw && !isTrendDanger && (fastIdx < 58 || fastDrop >= 2.5 || midIdx < 52 || spanWarnRatio >= 0.70 || ea.curLayerNum >= Math.max(10, ea.uncontrolledWarn.layer - 2));
 
   // 计算关键防守价位
   const upWarnPx = price ? f2(price + ea.remWarnSpan) : '-';
@@ -906,6 +929,12 @@ function calcEaDirective(d, ea, adjMap, eMap) {
       `<b>账户安全边界</b>：您的 $${ea.bal} 账户可安全抗住 <b>${f2(ea.warn.span)}$</b>（第 <b>${ea.warn.layer}</b> 层，上下安全边界 <b>${dnWarnPx}$ ~ ${upWarnPx}$</b>），强平极限为 <b>${f2(ea.hard.span)}$</b>（第 <b>${ea.hard.layer}</b> 层）。`
     ];
     resumeRule = `保持当前设置即可；系统每 15 秒自动监测 1M/5M 突变并实时更新操作指令。`;
+    if (reversalKeep) {
+      const rvTxt = revInfoEa.dir === 'UP' ? '急跌后V型反抽' : '急涨后倒V回落';
+      badgeTxt = '🔄 趋势切换 · 适合保留策略(别离场)';
+      headline = '🔄 ' + revInfoEa.tf + ' 刚出现' + rvTxt + '(波幅$' + revInfoEa.range + ')，行情已切换方向：适合保留现有策略，不要手动离场/停EA！';
+      steps.unshift('<b>趋势切换保留原则</b>：急涨急跌后方向反转，马丁网格会借反向波动整组止盈，此刻离场多半亏在最低(高)点。保持 EA 双向运行，仅需盯紧预付款比例与100%锁死价。');
+    }
   }
 
   return {
@@ -943,6 +972,25 @@ function calcEaDirective(d, ea, adjMap, eMap) {
 }
 
 // 仅对 1M 和 5M 的震荡指数与价格数字本身触发背景颜色高亮动画
+// 左侧菜单指数涨跌分显示：对比约 4 分钟窗口内的起点值，涨跌幅超过阈值才显示 ▲/▼，小波动不显示
+const NAV_HIST = {};
+function navDelta(id, val, thr, text) {
+  const el = document.getElementById(id);
+  if (!el || val == null || isNaN(val)) return;
+  const now = Date.now();
+  const h = NAV_HIST[id] || (NAV_HIST[id] = []);
+  if (!h.length || now - h[h.length - 1].t >= 4000) h.push({ t: now, v: Number(val) });
+  while (h.length && now - h[0].t > 240000) h.shift();
+  const base = h[0];
+  const delta = Number(val) - base.v;
+  let html = text != null ? text : String(val);
+  if (h.length > 1 && now - base.t >= 20000 && Math.abs(delta) >= thr) {
+    const up = delta > 0;
+    html += '<i class="nd ' + (up ? 'up' : 'dn') + '" title="近' + Math.round((now - base.t) / 60000 * 10) / 10 + '分钟内' + (up ? '上涨' : '下跌') + Math.abs(delta).toFixed(1) + '分">' + (up ? '▲' : '▼') + Math.abs(delta).toFixed(1) + '</i>';
+  }
+  el.innerHTML = html;
+}
+
 function triggerFlash() {
   document.querySelectorAll('.fast-num').forEach((el) => {
     el.classList.remove('flash-num');
@@ -1513,16 +1561,35 @@ function calcEntrySeries(rawArr, tol, tf) {
     const dipFromHi = Math.max(0, winHi - curC);
     const hasSawtoothPb = (winHi - winLo >= 4.0) && (bounceFromLo >= 2.4 && dipFromHi >= 2.4);
 
+    // 急涨急跌「趋势切换」检测 (V型反抽 / 倒V回落)：近12根内先急跌后反抽(或先急涨后回落)，且已回吐≥40%波幅 → 属于马丁最爱的反转行情，适合保留策略
+    let revDir = null, revRange = 0;
+    {
+      let hiIdx = i, loIdx = i, hiV = -Infinity, loV = Infinity;
+      for (let j = Math.max(0, i - 11); j <= i; j++) {
+        const bj = base[j];
+        const hv = bj.h ?? bj.c, lv = bj.l ?? bj.c;
+        if (hv >= hiV) { hiV = hv; hiIdx = j; }
+        if (lv <= loV) { loV = lv; loIdx = j; }
+      }
+      const rng = hiV - loV;
+      const minRng = 8 * (TF_SPAN_SCALE[useTf] || 1.0);
+      if (rng >= minRng && i >= 3) {
+        if (loIdx > hiIdx && i - loIdx >= 1 && i - loIdx <= 6 && (curC - loV) >= 0.4 * rng) revDir = 'UP';
+        else if (hiIdx > loIdx && i - hiIdx >= 1 && i - hiIdx <= 6 && (hiV - curC) >= 0.4 * rng) revDir = 'DOWN';
+        if (revDir) revRange = r2(rng);
+      }
+    }
+
     // 原始单根入场评分（温和扣分，避免单根K线直接砸穿30分造成剧烈毛刺）
-    let rawScore = p.adjV + (hasSawtoothPb ? 7 : 0);
-    if (effDrop1 >= 4.0) rawScore -= Math.min(18, (effDrop1 - 3.5) * 2.2);
-    if (effDrop3 >= 9.0) rawScore -= Math.min(14, (effDrop3 - 8.0) * 1.4);
-    if (tol > 0 && barSpan > tol * 0.35) rawScore -= Math.min(14, (barSpan / tol - 0.35) * 32);
+    let rawScore = p.adjV + (hasSawtoothPb ? 7 : 0) + (revDir ? 10 : 0);
+    if (!revDir && effDrop1 >= 4.0) rawScore -= Math.min(18, (effDrop1 - 3.5) * 2.2);
+    if (!revDir && effDrop3 >= 9.0) rawScore -= Math.min(14, (effDrop3 - 8.0) * 1.4);
+    if (!revDir && tol > 0 && barSpan > tol * 0.35) rawScore -= Math.min(14, (barSpan / tol - 0.35) * 32);
     const bbBreak = p.bbU != null && p.bbL != null && (p.c > p.bbU || p.c < p.bbL);
     if (bbBreak) rawScore -= 6;
     rawScore = r1(clamp(rawScore, 5, 98));
 
-    return { ...p, barSpan, effChg1, effDrop1, effDrop3, bbBreak, hasSawtoothPb, rawScore };
+    return { ...p, barSpan, effChg1, effDrop1, effDrop3, bbBreak, hasSawtoothPb, rawScore, revDir, revRange };
   });
 
   // 第二步：计算「抗毛刺快线 (entryFast, 3周期加权平滑)」与「稳定慢均线 (entrySlow, EMA8 指数均线)」
@@ -1575,6 +1642,16 @@ function calcEntrySeries(rawArr, tol, tf) {
       entryCls = 'MIXED';
       entryCol = '#f0b429';
       entryReason = `双线处于46~56过渡缓冲带(快线${entryFast}/均线${entrySlow})，有单者等$2.7反抽平仓，空仓暂缓新开`;
+    }
+
+    // 趋势急速切换(V型/倒V)：判定为「适合保留策略」，绝不显示成不适合/离场，避免在反转起点割肉
+    if (p.revDir && entryState !== 'OK') {
+      entryState = 'OK';
+      zoneName = '🔄 趋势切换·保留策略';
+      entryTxt = '🔄 急涨急跌切换·适合保留策略(勿离场)';
+      entryCls = 'RANGE';
+      entryCol = '#22d3ee';
+      entryReason = '近12根K线出现' + (p.revDir === 'UP' ? '急跌后V型反抽' : '急涨后倒V回落') + '(波幅$' + p.revRange + ')，行情已切换方向，马丁网格正好借反向波动止盈解套，保留现有策略比此时离场更划算';
     }
 
     return {
@@ -2224,7 +2301,8 @@ function render() {
 
       // 合成全站唯一主指数：【马丁实盘可做总分 (0~100)】= 基础短周期震荡指数 + 锯齿回调修正加分(下跌10$但回调3$平仓了就加分！) - 红灯锁惩罚
       const baseShortScore = Math.round(0.35 * (adjMap['1M'] || 60) + 0.40 * (adjMap['5M'] || 60) + 0.25 * (adjMap['15M'] || 60));
-      const rawMartingaleScore = baseShortScore + (pb.sawtoothBonus || 0) - (hasRedLock ? 25 : 0);
+      const revInfo = getReversalInfo(eMap);
+      const rawMartingaleScore = baseShortScore + (pb.sawtoothBonus || 0) + (revInfo ? 16 : 0) - (hasRedLock ? 25 : 0);
       const martingaleScore = Math.max(5, Math.min(99, Math.round(rawMartingaleScore)));
       const mCls = martingaleScore >= 60 ? 'RANGE' : martingaleScore >= 46 ? 'MIXED' : 'TREND';
       const mStatusTxt = martingaleScore >= 60
@@ -2236,6 +2314,7 @@ function render() {
       if ($('nav-master')) {
         $('nav-master').textContent = `${martingaleScore}分`;
         $('nav-master').className = 'pill ' + mCls + ' fast-num';
+        navDelta('nav-master', martingaleScore, 3, martingaleScore + '分');
       }
 
       // 计算 MT4 实盘专属联动决策模型（精确到回本价、整组止盈价、100%预付款锁死价、50%/20%强平生死线）
@@ -2272,6 +2351,10 @@ function render() {
         entryHeadline = `🔴 严禁现在新开 EA（正处于 ${topLk.time} 重磅红灯锁）`;
         entryDetail = `当前处于【${topLk.title}】前${topLk.pre}分~后${topLk.post}分高危窗口，极易瞬间扫损拉出无回调单边，请等红灯锁解除后再入场！`;
         entryBoxCls = 'TREND';
+      } else if (revInfo) {
+        entryHeadline = '🔄 K线急涨急跌·趋势已切换：适合保留现有策略，不要离场';
+        entryDetail = '近期 <b>' + revInfo.tf + '</b> 出现<b>' + (revInfo.dir === 'UP' ? '急跌后V型反抽' : '急涨后倒V回落') + '</b>(波幅 $' + revInfo.range + ')，方向已反转。马丁网格靠反向波动整组止盈，此刻割肉离场往往亏在最低(高)点，请保留现有仓位与EA继续运行，仅需关注预付款安全线。';
+        entryBoxCls = 'RANGE';
       } else if (martingaleScore >= 60 && pb.pattern !== 'NO_PB_BULLDOZER') {
         entryHeadline = `🟢 可以入场 / 保持双向 EA 开启 (${martingaleScore}分)`;
         entryDetail = pb.totalClears90m >= 1 && pb.span90m >= 6.0
@@ -2306,6 +2389,19 @@ function render() {
         card3Headline = mt4Dec.escapeHeadline;
         card3Detail = mt4Dec.escapeDetail;
         card3FooterHtml = mt4Dec.escapeFooterHtml;
+      }
+
+      // 急涨急跌趋势切换：改判为「适合保留策略」，避免在反转起点离场造成大额亏损
+      if (revInfo) {
+        const revTxt = revInfo.dir === 'UP' ? '急跌后V型反抽' : '急涨后倒V回落';
+        const revNote = '<br>🔄 <b style="color:#22d3ee">' + revInfo.tf + ' 刚出现' + revTxt + '(波幅$' + revInfo.range + ')，趋势已切换 → 适合保留策略，除非预付款告急，否则不要割肉离场。</b>';
+        if (!(mt4Dec && mt4Dec.hasPositions && !isMockAcc)) {
+          card3Cls = 'RANGE';
+          card3Headline = '🔄 趋势切换·建议保留策略、继续持有等反向止盈';
+          card3Badge = '趋势切换·保留';
+        }
+        card3Detail = card3Detail + revNote;
+        card2Footer = card2Footer + ' | 🔄 趋势切换中：保留策略优先';
       }
 
       // 如果已连接 MT4 实盘，渲染顶部实时状态横幅
@@ -2355,6 +2451,7 @@ function render() {
               ${mt4Dec && !isMockAcc ? `<span class="pill ${mt4Dec.healthCls}" style="font-size:11px">🛡️ 实盘账户安全分: ${mt4Dec.accountHealthScore}分</span>` : ''}
             </div>
             ${idxBar(martingaleScore)}
+            ${revInfo ? '<div class="xs" style="margin-top:6px;color:#22d3ee;font-weight:800">🔄 检测到急涨急跌趋势切换(' + revInfo.tf + ')：已自动上调可做分 +16，适合保留策略</div>' : ''}
             <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--bd);font-size:12px;line-height:1.55;color:#cbd5e1">
               • 近90分钟总波幅: <b>$${f2(pb.span90m)}</b> | 满$2.7止盈回调: <b style="color:#34d399">${pb.totalClears90m} 次</b> (最大回调 <b>$${f2(pb.maxPb90m)}</b>)<br>
               • <b>当前连续未解套跨度</b>: <b style="color:${pb.activeUnretraced <= 5.5 ? '#34d399' : '#fb7185'}">$${f2(pb.activeUnretraced)}</b> ${mt4Dec && !isMockAcc ? `| <b>实盘100%锁死线</b>: <b style="color:#fb7185">$${f2(mt4Dec.margin100Px)}</b> (余$${f2(mt4Dec.distToMargin100)})` : `<span class="xs mut">(≥60分即可正常做马丁)</span>`}
@@ -2614,12 +2711,13 @@ function render() {
       </details>`;
 
     if ($('nav-tol')) $('nav-tol').textContent = f2(TOL) + '$';
-    if ($('nav-run')) { $('nav-run').textContent = adjRun; $('nav-run').className = 'pill ' + runLv.cls; }
+    if ($('nav-run')) { $('nav-run').textContent = adjRun; $('nav-run').className = 'pill ' + runLv.cls; navDelta('nav-run', adjRun, 3, String(adjRun)); }
     for (const k of ['1M', '5M', '15M', '1H', '4H']) {
       const el = $('nav-' + k);
       if (el && adjMap[k] != null) {
         el.textContent = adjMap[k];
         el.className = 'pill ' + lvMap[k].cls + ((k === '1M' || k === '5M') ? ' fast-num' : '');
+        navDelta('nav-' + k, adjMap[k], k === '1M' ? 5 : k === '5M' ? 4 : 3, String(adjMap[k]));
       }
     }
 
@@ -5276,6 +5374,11 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
   }).join('');
 
   const cur = rows[bjNowH], curLv = level(cur);
+  const heatPill = document.getElementById('nav-mt4heat');
+  if (heatPill) {
+    heatPill.textContent = curLv.t;
+    heatPill.className = 'pill ' + (curLv.t === '高危' ? 'TREND' : (curLv.t === '警惕' || curLv.t === '轻微') ? 'MIXED' : curLv.t === '安全' ? 'RANGE' : 'NEUT');
+  }
   const curMsg = curLv.t === '高危' || curLv.t === '警惕'
     ? '<span style="color:#fb7185;font-weight:800">⚠️ 现在北京时间 ' + String(bjNowH).padStart(2, '0') + ':' + String(bjNowM).padStart(2, '0') + ' 正处于历史【' + curLv.t + '】时段，建议减少新开仓、控制层数</span>'
     : curLv.t === '无数据' ? '<span class="mut">当前时段(' + fmtRange(bjNowH) + ')尚无历史数据，持续监测中</span>'
@@ -5285,7 +5388,7 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
     ? rank.map((r, i) => { const L = level(r); return '<span class="pill ' + (L.t === '高危' ? 'TREND' : 'MIXED') + '" style="font-size:11.5px;padding:3px 9px">' + (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)) + ' <b>' + fmtRange(r.hour) + '</b> ' + sessOf(r.hour)[0] + ' · 最大浮亏-$' + Math.round(r.dd) + ' · 深套' + r.w100 + '次</span>'; }).join(' ')
     : '<span class="xs mut">目前各时段尚未出现明显深套 (浮亏≥$50)，数据积累越久越准</span>';
 
-  return '<div style="margin-top:12px;background:linear-gradient(135deg,rgba(244,63,94,0.08),rgba(15,20,30,0.95));border:1.5px solid rgba(244,63,94,0.4);border-radius:10px;padding:11px 13px">'
+  return '<div id="mt4HeatSec" style="margin-top:12px;background:linear-gradient(135deg,rgba(244,63,94,0.08),rgba(15,20,30,0.95));border:1.5px solid rgba(244,63,94,0.4);border-radius:10px;padding:11px 13px">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><b style="color:#fff;font-size:13.5px">🕒 浮亏高危时段热力表 (北京时间 24 小时 × 浮亏阶梯 · 格内数字=该小时独立深套发生次数，颜色越红越危险)</b><span class="xs">' + curMsg + '</span></div>'
     + '<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center"><b class="xs" style="color:#fbbf24">🚫 建议避开开仓的高危时段榜：</b>' + rankHtml + '</div>'
     + '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr><th style="text-align:left;padding:3px 8px;color:#94a3b8;font-size:11px">阶梯 \ 时(北京)</th>' + head + '</tr></thead><tbody>' + tierRows + ddRow + marRow + monRow + lvRow + '</tbody></table></div>'
@@ -5333,6 +5436,20 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
   const capTier3 = Math.ceil((Math.max(obsMaxDd * 2.5, 650) + obsMaxMar * 3.2) / 50) * 50;
 
   const curBal = mt4.balance || 0;
+  {
+    const pkDd = pk.maxDd.val || 0;
+    const npk = document.getElementById('nav-mt4pk');
+    if (npk) { npk.textContent = '-$' + Math.round(pkDd); npk.className = 'pill ' + (pkDd >= 200 ? 'TREND' : pkDd >= 100 ? 'MIXED' : 'RANGE'); }
+    const ncap = document.getElementById('nav-mt4cap');
+    if (ncap) { ncap.textContent = '$' + capTier2; ncap.className = 'pill ' + (curBal >= capTier2 ? 'RANGE' : 'MIXED'); }
+    const hitT = ((stats && stats.tiers) || []).filter(function (t) { return (t.waves || 0) > 0; });
+    const ntier = document.getElementById('nav-mt4tier');
+    if (ntier) {
+      const topT = hitT.length ? hitT[hitT.length - 1].th : 0;
+      ntier.textContent = topT ? ('≥$' + topT) : '无';
+      ntier.className = 'pill ' + (topT >= 400 ? 'TREND' : topT >= 150 ? 'MIXED' : 'RANGE');
+    }
+  }
   const gapTier1 = r2(Math.max(0, capTier1 - curBal));
   const gapTier2 = r2(Math.max(0, capTier2 - curBal));
   const gapTier3 = r2(Math.max(0, capTier3 - curBal));
@@ -5451,7 +5568,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
     </div>
 
     <!-- 第二排：🏆 账户历史 4 大极值峰值纪念碑（专为评估账户最大压力与资金配置设计） -->
-    <div style="margin-bottom:12px;padding:11px 13px;background:linear-gradient(135deg,rgba(244,63,94,0.11),rgba(15,23,42,0.95));border:1.5px solid rgba(244,63,94,0.45);border-radius:10px">
+    <div id="mt4PeakSec" style="margin-bottom:12px;padding:11px 13px;background:linear-gradient(135deg,rgba(244,63,94,0.11),rgba(15,23,42,0.95));border:1.5px solid rgba(244,63,94,0.45);border-radius:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px">
         <b style="color:#fff;font-size:13.5px">🏆 您的账户历史「峰值压力档案」 (每 5 秒捕捉极值 · 刷新历史峰值时立即永久写入云端 Redis，绝不漏掉任何一次插针)</b>
         <span class="pill MIXED" style="font-size:11px">决定您账户最少要放多少本金的核心依据</span>
@@ -5524,7 +5641,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
     <!-- 第四排：📊 浮亏分阶段突破次数统计表 ($50 ~ $2000) & 💰 后期账户放多少钱决策测算器 -->
     <div style="display:grid;grid-template-columns:1.45fr 1fr;gap:12px;margin-top:12px">
       <!-- 左侧：浮亏超过 50 / 100 / 200 / 400 / 600 / 800 / 1000... 阶段次数统计表 -->
-      <div style="background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:10px;padding:11px 13px;overflow-x:auto">
+      <div id="mt4TierSec" style="background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:10px;padding:11px 13px;overflow-x:auto">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           <b style="color:var(--gold);font-size:13.5px">📊 账户浮亏分阶段突破次数统计表 (独立深套波次计数 · 含 $200 / $400 / $600 / $1000+ 阶梯)</b>
           <span class="xs mut">同一轮马丁扛单不重复刷次数，平仓解套重置后再次突破才计为下一波</span>
@@ -5549,7 +5666,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
 
       <!-- 右侧：💰 后期往账户放多少钱？三档本金配置决策器 + 历史深套战役档案 -->
       <div style="display:flex;flex-direction:column;gap:10px">
-        <div style="background:linear-gradient(135deg,rgba(16,185,129,0.10),rgba(15,23,42,0.95));border:1px solid rgba(16,185,129,0.45);border-radius:10px;padding:11px 13px">
+        <div id="mt4CapSec" style="background:linear-gradient(135deg,rgba(16,185,129,0.10),rgba(15,23,42,0.95));border:1px solid rgba(16,185,129,0.45);border-radius:10px;padding:11px 13px">
           <b style="color:#34d399;font-size:13.5px">💰 决策模型：根据您的实盘峰值，账户到底该放多少钱？</b>
           <div class="xs mut" style="margin:4px 0 8px">基于您实测录得的 <b>最大浮亏 (-$${f2(pk.maxDd.val)})</b> + <b>最高预付款 ($${f2(pk.maxMargin.val)})</b> 自动推演：</div>
 
