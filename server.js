@@ -832,6 +832,7 @@ async function fetchRetailSentiment(fastMode = false) {
   // 计算散户拥挤度与「散户反指信号」
   // 散户多头 >= 72% -> 散户极度重仓做多 -> 反指看空（警惕主力向下逼多扫损）
   // 散户空头 >= 65% (即多头 <= 35%) -> 散户大举逆势摸顶做空 -> 反指看多（警惕主力向上逼空拉升）
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const crowdSide = retailLongPct >= 50 ? 'LONG' : 'SHORT';
   const crowdPct = Math.max(retailLongPct, retailShortPct);
   const retailWhaleDiff = +(retailLongPct - whaleLongPct).toFixed(1); // 正值代表散户比大户更狂热看多
