@@ -143,7 +143,25 @@
     <h1>🥇 <b>黄金震荡指数</b> <span class="mut sm" style="font-weight:400">· 网格马丁量化决策台</span></h1>
     <div class="sub" id="meta">加载中…</div>
   </div>
-  <div class="btns">
+  <div class="btns" style="align-items:center">
+    <div style="display:flex;align-items:center;gap:6px;background:#111722;border:1px solid var(--bd);padding:4px 9px;border-radius:8px;font-size:12px">
+      <button id="btnVoiceToggle" class="sm" onclick="toggleVoiceAlert()" style="padding:3px 8px;font-weight:700">🔊 语音报警: 开</button>
+      <span class="mut xs">敏感度:</span>
+      <select id="voiceSensSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:var(--gold);border:1px solid var(--bd);border-radius:5px;padding:2px 5px;font-size:11.5px;font-weight:700" title="自行设定语音报警触发敏感度，避免频繁打扰">
+        <option value="1">Lv1 仅极高危保命 (推荐)</option>
+        <option value="2">Lv2 中高危均衡报警</option>
+        <option value="3">Lv3 高灵敏盯盘模式</option>
+        <option value="0">Lv0 仅手动重磅倒计时锁</option>
+      </select>
+      <span class="mut xs">冷却:</span>
+      <select id="voiceCoolSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:#cbd5e1;border:1px solid var(--bd);border-radius:5px;padding:2px 5px;font-size:11.5px" title="同一类型预警在冷却时间内不重复播报">
+        <option value="15">15分钟</option>
+        <option value="5">5分钟</option>
+        <option value="30">30分钟</option>
+        <option value="60">60分钟</option>
+      </select>
+      <button class="sm" onclick="testVoiceAlert()" style="padding:2px 7px" title="测试浏览器中文语音播报是否正常">🔈 试听</button>
+    </div>
     <button id="btnFast">⚡ 立即刷新实时数据</button>
     <button class="pri" id="btnFetch">🔄 全量刷新</button>
     <button class="pri" id="btnCopy">📋 一键复制(发给AI)</button>
@@ -152,9 +170,10 @@
 <div class="layout">
   <aside class="sidenav" id="sidenav">
     <div class="ng">核心决策</div>
-    <a href="#topSessionSec"><span>🕒 交易时段进度</span><span id="nav-sess" class="pill NEUT">-</span></a>
+    <a href="#topSessionSec"><span>🕒 时段 & 重磅红灯锁</span><span id="nav-sess" class="pill NEUT">-</span></a>
     <a href="#tolSec"><span>🛡️ 账户推演 & 手动操作</span><span id="nav-ea" class="pill RANGE">-</span></a>
     <a href="#anomalySec"><span>⚡ 实时异动监控</span><span id="nav-anom" class="pill NEUT">0项</span></a>
+    <a href="#keyLevelsSec"><span>🎯 清算位插针雷区</span><span id="nav-klv" class="pill NEUT">-</span></a>
     <a href="#verdict"><span>📊 核心震荡总览</span><span id="nav-run" class="pill MIXED">-</span></a>
     <a href="#entrySec"><span>🚦 是否适合入场图</span><span id="nav-entry" class="pill MIXED">-</span></a>
     <a href="#forecastSec"><span>🔮 未来5日预测</span></a>
@@ -171,7 +190,8 @@
     <a href="#ind-1H"><span>🎛️ 1H 指标进度条</span></a>
     <a href="#ind-4H"><span>🎛️ 4H 指标进度条</span></a>
     <a href="#ind-1D"><span>🎛️ 1D 日线指标</span></a>
-    <div class="ng">宏观与日历</div>
+    <div class="ng">情绪、宏观与日历</div>
+    <a href="#sentimentSec"><span>📊 散户反指情绪</span><span id="nav-sent" class="pill NEUT">-</span></a>
     <a href="#attentionSec"><span>🔥 黄金受关注度</span><span id="nav-attn" class="pill NEUT">-</span></a>
     <a href="#trumpSec"><span>🦅 特朗普言论监控</span><span id="nav-trump" class="pill NEUT">-</span></a>
     <a href="#macroSec"><span>🌐 跨市场长周期备查</span><span id="nav-macro" class="pill NEUT">-</span></a>
@@ -180,7 +200,35 @@
     <a href="#sources"><span>🔗 数据源验证</span></a>
   </aside>
   <main>
-    <section class="card" id="topSessionSec"></section>
+    <section class="card" id="topSessionSec">
+      <div id="topSessionDynamic"></div>
+      <div id="topEventEditorBar" style="margin-top:12px;padding:10px 12px;background:rgba(15,20,30,0.92);border:1px solid rgba(244,63,94,0.4);border-radius:9px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <b style="color:#fda4af;font-size:13px">⏱️ 重磅数据「前 30 分钟 ~ 后 15 分钟」自动红灯倒计时锁（支持添加多个 · 直接投射至上方24h时间轴）</b>
+            <span id="customLockStatusBadge" class="pill RANGE">🟢 当前无激活的红灯锁</span>
+          </div>
+          <div id="voiceLastLog" class="xs mut" style="margin-left:auto">🔊 语音就绪：触发高危阈值或进入数据前30分钟将自动播报</div>
+        </div>
+        <div id="customEventList" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px">
+          <label style="font-weight:700;color:#fff">➕ 手动新增锁定时点(北京时间):</label>
+          <input type="time" id="newEvTimeInput" value="20:30" style="background:var(--bg);color:var(--gold);border:1px solid var(--gold);padding:4px 8px;border-radius:6px;font-size:13px;font-weight:800">
+          <input type="text" id="newEvTitleInput" placeholder="输入重磅事件名称，如：美国CPI / 初请失业金 / 非农 / 鲍威尔讲话" style="width:270px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:5px 8px;border-radius:6px;font-size:12.5px">
+          <label class="xs mut" style="display:flex;align-items:center;gap:3px">提前锁(分):<input type="number" id="newEvPreInput" value="30" min="5" max="120" step="5" style="width:44px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:3px 4px;border-radius:4px"></label>
+          <label class="xs mut" style="display:flex;align-items:center;gap:3px">延后锁(分):<input type="number" id="newEvPostInput" value="15" min="5" max="120" step="5" style="width:44px;background:var(--bg);color:#fff;border:1px solid var(--bd);padding:3px 4px;border-radius:4px"></label>
+          <button class="pri sm" onclick="addCustomLockEvent()">➕ 添加至时间轴红灯锁</button>
+          <div class="btns" style="margin-left:auto">
+            <button class="sm" onclick="quickAddLockEvent('20:30','美国20:30重磅数据(CPI/初请/非农)')">+20:30美盘数据</button>
+            <button class="sm" onclick="quickAddLockEvent('21:45','美国21:45 PMI数据')">+21:45 PMI</button>
+            <button class="sm" onclick="quickAddLockEvent('22:00','美国22:00 ISM/信心指数/联储官员')">+22:00美盘数据</button>
+            <button class="sm" onclick="quickAddLockEvent('02:00','美联储02:00利率决议/纪要')">+02:00美联储</button>
+            <button class="sm" onclick="importJin10TodayLocks()" title="自动把今日金十周历中★★★以上美国/重磅数据一键加入红灯锁">📥 导入今日金十★★★</button>
+            <button class="sm" onclick="clearCustomLockEvents()" style="color:#fb7185">🗑️ 清空</button>
+          </div>
+        </div>
+      </div>
+    </section>
     <section class="card" id="tolSec">
       <div class="vhead" style="margin-bottom:10px">
         <h2 style="margin:0">🛡️ M1双向追踪倍投马丁EA · 多空净敞口风控推演与实时操作指令台 <span class="mut sm" style="font-weight:400">(核心公式：抗单边美元 D = 可亏金额 ÷ (多空净敞口 N × 100) · 真正决定浮亏速度的是「买单手数 − 卖单手数」的净敞口)</span></h2>
@@ -251,11 +299,13 @@
       <div id="tolResult" style="margin-top:12px"></div>
     </section>
     <section class="card" id="anomalySec"></section>
+    <section class="card" id="keyLevelsSec"></section>
     <section class="card" id="verdict"></section>
     <section class="card" id="entrySec"></section>
     <section class="card" id="forecastSec"></section>
     <div id="bigCharts"></div>
     <section class="card" id="tfSec"><h2>🎛️ 分周期 10 项技术指标明细 <span class="mut sm" style="font-weight:400">(正常指标自动静默为深灰，仅触发趋势/极值预警的指标高亮提示)</span></h2><div id="tf"></div></section>
+    <section class="card" id="sentimentSec"></section>
     <section class="card" id="attentionSec"></section>
     <section class="card" id="trumpSec"></section>
     <section class="card" id="macroSec"></section>
@@ -829,6 +879,393 @@ function triggerFlash() {
 }
 
 const LOCAL_DATA_CACHE_KEY = 'gold_dashboard_cache_v2';
+const CUSTOM_EVENTS_STORAGE_KEY = 'gold_custom_events_v1';
+const VOICE_CFG_STORAGE_KEY = 'gold_voice_cfg_v1';
+
+// ---------- 1. 重磅数据「前30分 ~ 后15分」手动红灯倒计时锁 (支持添加多个 + 投射至顶部24h时间轴) ----------
+let CUSTOM_LOCK_EVENTS = [
+  { id: 'ev_default_2030', time: '20:30', title: '美盘20:30重磅数据窗口(CPI/初请/零售)', preMin: 30, postMin: 15, enabled: true }
+];
+try {
+  const savedEv = JSON.parse(localStorage.getItem(CUSTOM_EVENTS_STORAGE_KEY) || 'null');
+  if (Array.isArray(savedEv)) CUSTOM_LOCK_EVENTS = savedEv;
+} catch (e) {}
+
+function saveCustomLockEvents() {
+  try { localStorage.setItem(CUSTOM_EVENTS_STORAGE_KEY, JSON.stringify(CUSTOM_LOCK_EVENTS)); } catch (e) {}
+}
+
+function getBjNowMinutes() {
+  const now = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+  const bj = new Date(utcMs + 8 * 3600000);
+  return {
+    hh: bj.getHours(),
+    mm: bj.getMinutes(),
+    ss: bj.getSeconds(),
+    curMin: bj.getHours() * 60 + bj.getMinutes() + bj.getSeconds() / 60,
+    bjStr: String(bj.getHours()).padStart(2, '0') + ':' + String(bj.getMinutes()).padStart(2, '0') + ':' + String(bj.getSeconds()).padStart(2, '0')
+  };
+}
+
+function evalCustomLockState() {
+  const bj = getBjNowMinutes();
+  const curMin = bj.curMin;
+  const evaluated = CUSTOM_LOCK_EVENTS.map((ev) => {
+    const [eh, em] = (ev.time || '20:30').split(':').map(Number);
+    const evMin = (eh || 0) * 60 + (em || 0);
+    const pre = Number(ev.preMin) || 30;
+    const post = Number(ev.postMin) || 15;
+    const startMin = evMin - pre;
+    const endMin = evMin + post;
+    // 处理跨午夜差值（单位：分钟，正数表示未来，负数表示已过去）
+    let diffToEv = evMin - curMin;
+    if (diffToEv < -720) diffToEv += 1440;
+    if (diffToEv > 720) diffToEv -= 1440;
+
+    let state = 'WAIT'; // 'PRE_LOCK' | 'POST_LOCK' | 'WAIT' | 'DONE'
+    let badge = '';
+    let remainSec = 0;
+    if (!ev.enabled) {
+      state = 'DISABLED';
+      badge = '⏸️ 已暂停监控';
+    } else if (diffToEv >= 0 && diffToEv <= pre) {
+      state = 'PRE_LOCK';
+      remainSec = Math.max(0, Math.round(diffToEv * 60));
+      const m = Math.floor(remainSec / 60), s = remainSec % 60;
+      badge = `🚨 红灯锁已激活(前${pre}分) · 距公布仅剩 ${m}分${String(s).padStart(2, '0')}秒`;
+    } else if (diffToEv < 0 && Math.abs(diffToEv) <= post) {
+      state = 'POST_LOCK';
+      remainSec = Math.max(0, Math.round((post + diffToEv) * 60));
+      const m = Math.floor(remainSec / 60), s = remainSec % 60;
+      badge = `🛑 公布后脉冲锁(后${post}分) · 距解除剩 ${m}分${String(s).padStart(2, '0')}秒`;
+    } else if (diffToEv > pre) {
+      state = 'WAIT';
+      const toLockMin = Math.round(diffToEv - pre);
+      const h = Math.floor(toLockMin / 60), m = toLockMin % 60;
+      badge = `⏳ 距开启红灯锁还有 ${h > 0 ? h + '小时' : ''}${m}分钟`;
+    } else {
+      state = 'DONE';
+      badge = `✅ 今日窗口已过 (+${post}分已解除)`;
+    }
+
+    return {
+      ...ev,
+      evMin,
+      pre,
+      post,
+      startMin: (startMin + 1440) % 1440,
+      endMin: (endMin + 1440) % 1440,
+      rawStartMin: startMin,
+      rawEndMin: endMin,
+      diffToEv,
+      state,
+      badge,
+      isLocked: state === 'PRE_LOCK' || state === 'POST_LOCK'
+    };
+  });
+
+  const activeLocks = evaluated.filter((x) => x.isLocked);
+  const nextUpcoming = evaluated.filter((x) => x.enabled && x.state === 'WAIT').sort((a, b) => a.diffToEv - b.diffToEv)[0] || null;
+  return { bj, items: evaluated, activeLocks, nextUpcoming };
+}
+
+window.addCustomLockEvent = () => {
+  const timeEl = $('newEvTimeInput');
+  const titleEl = $('newEvTitleInput');
+  const preEl = $('newEvPreInput');
+  const postEl = $('newEvPostInput');
+  const time = (timeEl && timeEl.value) ? timeEl.value.trim() : '20:30';
+  const title = (titleEl && titleEl.value && titleEl.value.trim()) ? titleEl.value.trim() : `${time} 重点行情窗口`;
+  const preMin = Math.max(5, Math.min(180, parseInt(preEl && preEl.value, 10) || 30));
+  const postMin = Math.max(5, Math.min(180, parseInt(postEl && postEl.value, 10) || 15));
+  CUSTOM_LOCK_EVENTS.push({
+    id: 'ev_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    time,
+    title,
+    preMin,
+    postMin,
+    enabled: true
+  });
+  CUSTOM_LOCK_EVENTS.sort((a, b) => a.time.localeCompare(b.time));
+  if (titleEl) titleEl.value = '';
+  saveCustomLockEvents();
+  if (D) render(); else renderCustomEventBar();
+};
+
+window.quickAddLockEvent = (time, title) => {
+  if (CUSTOM_LOCK_EVENTS.some((x) => x.time === time && x.title === title)) {
+    const t = $('toast');
+    if (t) { t.textContent = `已存在 ${time} ${title}`; t.style.display = 'block'; setTimeout(() => { t.style.display = 'none'; }, 2000); }
+    return;
+  }
+  CUSTOM_LOCK_EVENTS.push({
+    id: 'ev_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    time,
+    title,
+    preMin: 30,
+    postMin: 15,
+    enabled: true
+  });
+  CUSTOM_LOCK_EVENTS.sort((a, b) => a.time.localeCompare(b.time));
+  saveCustomLockEvents();
+  if (D) render(); else renderCustomEventBar();
+};
+
+window.removeCustomLockEvent = (id) => {
+  CUSTOM_LOCK_EVENTS = CUSTOM_LOCK_EVENTS.filter((x) => x.id !== id);
+  saveCustomLockEvents();
+  if (D) render(); else renderCustomEventBar();
+};
+
+window.toggleCustomLockEvent = (id) => {
+  const item = CUSTOM_LOCK_EVENTS.find((x) => x.id === id);
+  if (item) item.enabled = !item.enabled;
+  saveCustomLockEvents();
+  if (D) render(); else renderCustomEventBar();
+};
+
+window.clearCustomLockEvents = () => {
+  CUSTOM_LOCK_EVENTS = [];
+  saveCustomLockEvents();
+  if (D) render(); else renderCustomEventBar();
+};
+
+window.importJin10TodayLocks = () => {
+  if (!D || !D.calendar || !Array.isArray(D.calendar.items)) return;
+  const bj = getBjNowMinutes();
+  const now = new Date(Date.now() + (new Date().getTimezoneOffset() * 60000) + 8 * 3600000);
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  let added = 0;
+  for (const e of D.calendar.items) {
+    if ((e.star || 0) >= 3 && e.kind !== 'holiday' && (e.time || '').startsWith(todayStr)) {
+      const hhmm = (e.time || '').slice(11, 16);
+      if (/^\d{2}:\d{2}$/.test(hhmm) && !CUSTOM_LOCK_EVENTS.some((x) => x.time === hhmm)) {
+        CUSTOM_LOCK_EVENTS.push({
+          id: 'ev_jin10_' + hhmm + '_' + Math.random().toString(36).slice(2, 5),
+          time: hhmm,
+          title: `[${e.country}] ${e.title.slice(0, 26)}`,
+          preMin: 30,
+          postMin: 15,
+          enabled: true
+        });
+        added++;
+      }
+    }
+  }
+  CUSTOM_LOCK_EVENTS.sort((a, b) => a.time.localeCompare(b.time));
+  saveCustomLockEvents();
+  const t = $('toast');
+  if (t) {
+    t.textContent = added > 0 ? `✅ 已导入今日 ${added} 个金十★★★重磅时点至顶部时间轴` : '今日暂无更多未添加的金十★★★重磅数据';
+    t.style.display = 'block';
+    setTimeout(() => { t.style.display = 'none'; }, 2600);
+  }
+  if (D) render(); else renderCustomEventBar();
+};
+
+function renderCustomEventBar() {
+  const st = evalCustomLockState();
+  const badgeEl = $('customLockStatusBadge');
+  const listEl = $('customEventList');
+  if (badgeEl) {
+    if (st.activeLocks.length) {
+      const top = st.activeLocks[0];
+      badgeEl.className = 'pill TREND';
+      badgeEl.textContent = `🚨 红灯锁生效中 (${st.activeLocks.length}项)：${top.time} ${top.title} · 严禁新开马丁逆势单！`;
+    } else if (st.nextUpcoming) {
+      badgeEl.className = 'pill MIXED';
+      badgeEl.textContent = `⏱️ 下一锁定窗口：${st.nextUpcoming.time} ${st.nextUpcoming.title} (${st.nextUpcoming.badge})`;
+    } else {
+      badgeEl.className = 'pill RANGE';
+      badgeEl.textContent = '🟢 当前无激活的重磅红灯锁';
+    }
+  }
+  if (listEl) {
+    if (!st.items.length) {
+      listEl.innerHTML = `<span class="xs mut">暂未添加重磅锁定时点，可在下方输入时间(如 20:30)添加，或点击右侧快捷按钮一键加入时间轴。</span>`;
+    } else {
+      listEl.innerHTML = st.items.map((ev) => {
+        const isLock = ev.isLocked;
+        const borderCol = isLock ? '#f43f5e' : (ev.state === 'WAIT' ? 'rgba(245,158,11,0.55)' : 'var(--bd)');
+        const bgCol = isLock ? 'rgba(244,63,94,0.22)' : 'rgba(23,30,44,0.9)';
+        return `<div style="display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border-radius:7px;border:1px solid ${borderCol};background:${bgCol};font-size:12px;opacity:${ev.enabled ? '1' : '0.55'}">
+          <input type="checkbox" ${ev.enabled ? 'checked' : ''} onchange="toggleCustomLockEvent('${ev.id}')" title="勾选/取消启用该时点红灯锁" style="cursor:pointer">
+          <b style="color:var(--gold);font-size:13px">${ev.time}</b>
+          <span style="color:#fff;font-weight:700">${ev.title}</span>
+          <span class="xs mut">[前${ev.pre}m~后${ev.post}m]</span>
+          <span class="pill ${isLock ? 'TREND' : (ev.state === 'WAIT' ? 'MIXED' : 'NEUT')}" style="padding:1px 7px;font-size:11px">${ev.badge}</span>
+          <button class="sm" onclick="removeCustomLockEvent('${ev.id}')" style="padding:0 5px;color:#fb7185;border:none;background:transparent;font-size:13px" title="删除该锁定时点">✕</button>
+        </div>`;
+      }).join('');
+    }
+  }
+  return st;
+}
+
+// ---------- 2. 浏览器语音报警系统 (支持自定义敏感度 Lv0~Lv3 与防打扰冷却时间) ----------
+let VOICE_CFG = { enabled: true, sens: 1, cooldownMin: 15 };
+try {
+  const savedV = JSON.parse(localStorage.getItem(VOICE_CFG_STORAGE_KEY) || 'null');
+  if (savedV && typeof savedV.enabled === 'boolean') VOICE_CFG = { ...VOICE_CFG, ...savedV };
+} catch (e) {}
+
+const VOICE_HISTORY = {}; // key -> lastSpokenTimestampMs
+
+function syncVoiceUi() {
+  const btn = $('btnVoiceToggle');
+  const sEl = $('voiceSensSelect');
+  const cEl = $('voiceCoolSelect');
+  if (btn) {
+    btn.textContent = VOICE_CFG.enabled ? '🔊 语音报警: 开' : '🔇 语音报警: 关';
+    btn.style.borderColor = VOICE_CFG.enabled ? 'rgba(16,185,129,0.6)' : 'var(--bd)';
+    btn.style.color = VOICE_CFG.enabled ? '#34d399' : '#94a3b8';
+  }
+  if (sEl) sEl.value = String(VOICE_CFG.sens);
+  if (cEl) cEl.value = String(VOICE_CFG.cooldownMin);
+}
+
+window.toggleVoiceAlert = () => {
+  VOICE_CFG.enabled = !VOICE_CFG.enabled;
+  try { localStorage.setItem(VOICE_CFG_STORAGE_KEY, JSON.stringify(VOICE_CFG)); } catch (e) {}
+  syncVoiceUi();
+  if (VOICE_CFG.enabled) {
+    playVoiceNow('语音报警已开启，将按您设定的敏感度播报风控指令');
+  } else if (window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+};
+
+window.updateVoiceCfg = () => {
+  const sEl = $('voiceSensSelect');
+  const cEl = $('voiceCoolSelect');
+  if (sEl) VOICE_CFG.sens = parseInt(sEl.value, 10);
+  if (cEl) VOICE_CFG.cooldownMin = parseInt(cEl.value, 10) || 15;
+  try { localStorage.setItem(VOICE_CFG_STORAGE_KEY, JSON.stringify(VOICE_CFG)); } catch (e) {}
+  syncVoiceUi();
+};
+
+function playBeep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.setValueAtTime(1174, ctx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.32);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.33);
+  } catch (e) {}
+}
+
+function playVoiceNow(text) {
+  playBeep();
+  const logEl = $('voiceLastLog');
+  const bj = getBjNowMinutes();
+  if (logEl) {
+    logEl.innerHTML = `<span style="color:var(--gold)">🔊 [${bj.bjStr} 已播报]</span>: ${text}`;
+  }
+  try {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'zh-CN';
+      u.rate = 1.08;
+      u.pitch = 1.0;
+      window.speechSynthesis.speak(u);
+    }
+  } catch (e) {}
+}
+
+window.testVoiceAlert = () => {
+  const sensNames = { 0: '仅重磅倒计时锁', 1: 'Lv1极高危保命档', 2: 'Lv2中高危均衡档', 3: 'Lv3高灵敏盯盘档' };
+  playVoiceNow(`黄金马丁风控语音测试正常，当前敏感度为${sensNames[VOICE_CFG.sens] || '默认'}，冷却时间${VOICE_CFG.cooldownMin}分钟。`);
+};
+
+function trySpeakAlert(key, reqSensLevel, text) {
+  if (!VOICE_CFG.enabled) return false;
+  // 若用户选择 Lv0(仅手动重磅倒计时锁)，则只播报 reqSensLevel === 0 的事件
+  if (VOICE_CFG.sens === 0 && reqSensLevel > 0) return false;
+  if (reqSensLevel > VOICE_CFG.sens) return false;
+
+  const now = Date.now();
+  const coolMs = (VOICE_CFG.cooldownMin || 15) * 60 * 1000;
+  if (VOICE_HISTORY[key] && (now - VOICE_HISTORY[key] < coolMs)) {
+    return false;
+  }
+  VOICE_HISTORY[key] = now;
+  playVoiceNow(text);
+  return true;
+}
+
+function evaluateVoiceAlerts(d, eaDir, lockState) {
+  if (!VOICE_CFG.enabled || !d) return;
+  // 优先级 0 (Lv0+): 手动重磅数据红灯倒计时锁
+  if (lockState && lockState.activeLocks && lockState.activeLocks.length) {
+    const top = lockState.activeLocks[0];
+    const modeKey = `lock_${top.id}_${top.state}`;
+    const msg = top.state === 'PRE_LOCK'
+      ? `红灯预警：距离${top.time}${top.title}公布不足${top.pre}分钟，已进入高危锁定期，建议暂停EA新开挂单并控制净敞口。`
+      : `脉冲预警：${top.title}刚刚公布，当前处于公布后${top.post}分钟剧烈插针期，严防双向扫损。`;
+    if (trySpeakAlert(modeKey, 0, msg)) return;
+  }
+
+  // 优先级 1 (Lv1+ 极高危保命): EA 触发立即暂停单边加仓指令
+  if (eaDir && eaDir.level === 'DANGER') {
+    if (trySpeakAlert('ea_danger_' + eaDir.pauseSideTxt, 1, `风控高危警报：${eaDir.pauseSideTxt}。${eaDir.headline}`)) return;
+  }
+
+  // 优先级 1 (Lv1+ 极高危保命): 1M 或 5M 单次暴跌 >= 8 分
+  const t1 = d.timeframes && d.timeframes['1M'];
+  const t5 = d.timeframes && d.timeframes['5M'];
+  if ((t1 && t1.idxDrop1 >= 8) || (t5 && t5.idxDrop1 >= 8)) {
+    const k = (t5 && t5.idxDrop1 >= 8) ? '5分钟' : '1分钟';
+    const drop = (t5 && t5.idxDrop1 >= 8) ? t5.idxDrop1 : t1.idxDrop1;
+    if (trySpeakAlert('plunge_severe_' + k, 1, `急跌警报：黄金${k}震荡指数单次急跌${drop}分，行情正在加速破位，请注意锁仓或暂停逆势马丁。`)) return;
+  }
+
+  // 优先级 1 (Lv1+ 极高危保命): 散户多空比极端拥挤 (>=74% 或 空头>=70%)
+  if (d.sentiment && (d.sentiment.retailLongPct >= 74 || d.sentiment.retailShortPct >= 70)) {
+    const isLongCrowd = d.sentiment.retailLongPct >= 74;
+    const msg = isLongCrowd
+      ? `散户反指警报：全市场散户做多比例高达百分之${d.sentiment.retailLongPct}，谨防主力向下砸盘逼多，切勿放任买单逆势加仓。`
+      : `散户反指警报：全市场散户做空比例高达百分之${d.sentiment.retailShortPct}，谨防主力向上拉升逼空，切勿放任卖单逆势加仓。`;
+    if (trySpeakAlert('sent_extreme_' + (isLongCrowd ? 'L' : 'S'), 1, msg)) return;
+  }
+
+  // 优先级 2 (Lv2+ 中高危均衡): 贴脸关键清算位 <= 1.8$
+  if (d.keyLevels && d.keyLevels.nearestDanger && d.keyLevels.nearestDanger.absDiff <= 1.8) {
+    const lv = d.keyLevels.nearestDanger;
+    if (trySpeakAlert('klv_' + lv.id, 2, `清算位雷区提醒：当前金价距离${lv.name}仅${lv.absDiff}美元，谨防触及止损池引发插针扫损。`)) return;
+  }
+
+  // 优先级 2 (Lv2+ 中高危均衡): 特朗普高危涉金言论 (近30分钟内)
+  if (d.trump && Array.isArray(d.trump.items)) {
+    const hotT = d.trump.items.find((x) => x.ageMin <= 30 && x.impact === 'HIGH' && x.isGoldRelevant);
+    if (hotT) {
+      if (trySpeakAlert('trump_' + hotT.id, 2, `突发重磅言论：检测到特朗普或关税联储高危快讯，${hotT.goldBias}，请留意盘面脉冲。`)) return;
+    }
+  }
+
+  // 优先级 3 (Lv3 高灵敏盯盘): 1M/5M 轻度急跌 >= 4.5分 或 关注度 >= 68
+  if ((t1 && t1.idxDrop1 >= 4.5) || (t5 && t5.idxDrop1 >= 4.5)) {
+    if (trySpeakAlert('plunge_mild', 3, `盯盘提醒：短周期震荡指数出现单次下滑，请留意K线波幅扩大。`)) return;
+  }
+}
+
+// 每秒刷新一次顶部手动重磅事件红灯锁倒计时（不发网络请求，纯本地零开销跳秒）
+setInterval(() => {
+  const st = renderCustomEventBar();
+  if (D && st && st.activeLocks && st.activeLocks.length) {
+    evaluateVoiceAlerts(D, null, st);
+  }
+}, 1000);
 
 // 合并快刷返回的数据与本地已缓存的低频数据(1D日线/kNN/GVZ/金十周历)，确保快刷时低频模块永不丢失
 function mergeDashboardData(prev, incoming) {
@@ -838,6 +1275,8 @@ function mergeDashboardData(prev, incoming) {
   out.timeframes = { ...(prev.timeframes || {}), ...(incoming.timeframes || {}) };
   if (!incoming.gvz && prev.gvz) out.gvz = prev.gvz;
   if (!incoming.attention && prev.attention) out.attention = prev.attention;
+  if (!incoming.sentiment && prev.sentiment) out.sentiment = prev.sentiment;
+  if (!incoming.keyLevels && prev.keyLevels) out.keyLevels = prev.keyLevels;
   if ((!incoming.calendar || !incoming.calendar.items || !incoming.calendar.items.length) && prev.calendar && prev.calendar.items && prev.calendar.items.length) {
     out.calendar = prev.calendar;
   }
@@ -1547,6 +1986,21 @@ function render() {
     const anoms = [];
     let quietCount = 0;
 
+    // 00. 检查顶部手动添加的重磅数据「前30分~后15分」红灯倒计时锁
+    const lockState = renderCustomEventBar();
+    if (lockState && lockState.activeLocks && lockState.activeLocks.length) {
+      for (const lkEv of lockState.activeLocks) {
+        anoms.push({
+          sev: 'high',
+          tag: '🚨 重磅红灯倒计时锁',
+          title: `${lkEv.time} ${lkEv.title}`,
+          val: lkEv.badge,
+          desc: `已进入您设定的 [前${lkEv.pre}分钟 ~ 后${lkEv.post}分钟] 重磅数据红灯锁定期，极易双向插针扫损，建议立即暂停EA新挂单或锁仓对冲！`,
+          href: '#topSessionSec'
+        });
+      }
+    } else quietCount++;
+
     // 0. 检查 EA 实时手动操作指令是否触发锁方向/暂停挂单
     if (eaDir.needManual) {
       anoms.push({
@@ -1558,6 +2012,34 @@ function render() {
         href: '#tolSec'
       });
     } else quietCount++;
+
+    // 0.5 检查散户反指效应异动 & 关键清算位贴脸雷区
+    if (d.sentiment && (d.sentiment.retailLongPct >= 68 || d.sentiment.retailShortPct >= 62)) {
+      const st = d.sentiment;
+      anoms.push({
+        sev: (st.retailLongPct >= 73 || st.retailShortPct >= 68) ? 'high' : 'med',
+        tag: '📊 散户反指效应预警',
+        title: st.signal.replace(/^[🚨⚠️🟢]+\s*/, ''),
+        val: `散户多头 ${st.retailLongPct}% vs 空头 ${st.retailShortPct}% (${st.retailRatio}:1) · 主动买盘 ${st.takerBuyPct}%`,
+        desc: st.eaAdvice,
+        href: '#sentimentSec'
+      });
+    } else quietCount++;
+
+    if (d.keyLevels && d.keyLevels.nearestDanger) {
+      const kl = d.keyLevels.nearestDanger;
+      anoms.push({
+        sev: kl.absDiff <= 1.4 ? 'high' : 'med',
+        tag: '🎯 关键清算位插针雷区',
+        title: `金价逼近【${kl.name} $${f2(kl.price)}】`,
+        val: `当前仅距 ${kl.absDiff}$ (${kl.pts}点 · ${kl.dir === 'UP' ? '上方阻力/止损池' : '下方支撑/止损池'})`,
+        desc: kl.desc + '（切勿在关键突破口密集挂逆势马丁单）',
+        href: '#keyLevelsSec'
+      });
+    } else quietCount++;
+
+    // 触发浏览器语音报警评估（自动按敏感度档位与冷却时间过滤）
+    evaluateVoiceAlerts(d, eaDir, lockState);
 
     // A. 检查跨市场长周期指标异动 (不计入短周期震荡指数，仅在异动较大时浮现前排)
     const mc = d.macro;
@@ -1961,6 +2443,151 @@ function render() {
       }).join('')}</div>${knnNote}`;
   }
 
+  // 渲染「🎯 关键清算位与整数关口“插针雷区”地图」(昨日高低点 PDH/PDL、今日亚盘高低点 Asian High/Low、今日高低点 HOD/LOD、$50/$10 整数关口)
+  const klv = d.keyLevels;
+  if ($('keyLevelsSec')) {
+    if (klv && Array.isArray(klv.levels) && klv.levels.length) {
+      if ($('nav-klv')) {
+        $('nav-klv').textContent = klv.dangerCount ? `${klv.dangerCount}雷区` : '安全';
+        $('nav-klv').className = 'pill ' + (klv.dangerCount ? 'TREND' : klv.statusCls || 'RANGE');
+      }
+      const upLevels = klv.levels.filter((x) => x.diff >= 0).sort((a, b) => a.absDiff - b.absDiff); // 从近到远排列上方阻力
+      const dnLevels = klv.levels.filter((x) => x.diff < 0).sort((a, b) => a.absDiff - b.absDiff);  // 从近到远排列下方支撑
+
+      const renderLvRow = (lv, isUp) => {
+        const badgeCls = lv.danger === 'DANGER' ? 'TREND' : lv.danger === 'WARN' ? 'MIXED' : 'RANGE';
+        const badgeTxt = lv.danger === 'DANGER' ? '🚨 贴脸雷区(≤2.2$)' : lv.danger === 'WARN' ? '⚠️ 临近警戒(≤4.5$)' : '🟢 安全距离';
+        const barPct = Math.max(6, Math.min(100, Math.round((1 - Math.min(lv.absDiff, 25) / 25) * 100)));
+        const col = lv.danger === 'DANGER' ? '#f43f5e' : lv.danger === 'WARN' ? '#f59e0b' : (isUp ? '#fb7185' : '#34d399');
+        return `<div style="padding:8px 10px;border-radius:8px;background:${lv.danger === 'DANGER' ? 'rgba(244,63,94,0.16)' : 'rgba(15,20,30,0.85)'};border:1px solid ${lv.danger === 'DANGER' ? '#f43f5e' : 'var(--bd)'};margin-bottom:7px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
+            <div>
+              <b style="color:#fff;font-size:13px">${lv.name}</b>
+              <span class="pill NEUT" style="padding:1px 6px;font-size:10.5px;margin-left:4px">${lv.tag}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <b style="font-size:14.5px;color:var(--gold)">$${f2(lv.price)}</b>
+              <span style="font-weight:800;font-size:12.5px;color:${isUp ? '#fb7185' : '#34d399'}">${isUp ? '+' : ''}${f2(lv.diff)}$ (${lv.pts}点)</span>
+              <span class="pill ${badgeCls}" style="padding:1px 7px;font-size:11px">${badgeTxt}</span>
+            </div>
+          </div>
+          <div style="height:5px;background:#1a2232;border-radius:99px;margin:6px 0 4px;overflow:hidden">
+            <div style="width:${barPct}%;height:100%;background:${col};border-radius:99px"></div>
+          </div>
+          <div class="xs mut">${lv.desc}</div>
+        </div>`;
+      };
+
+      $('keyLevelsSec').innerHTML = `
+        <div class="vhead" style="margin-bottom:10px">
+          <div>
+            <h2 style="margin:0">🎯 关键清算位与整数关口「插针雷区」地图 <span class="mut sm" style="font-weight:400">(昨日高低点 PDH/PDL · 今日亚盘高低点 Asian High/Low · 今日高低点 HOD/LOD · $50/$10 整数生死线)</span></h2>
+          </div>
+          <span class="pill ${klv.statusCls}" style="font-size:12px">当前现价: $${f2(klv.curPrice)} · ${klv.dangerCount ? `🚨 ${klv.dangerCount}个清算池贴脸` : '🟢 处于真空安全带'}</span>
+        </div>
+        <div style="padding:10px 14px;border-radius:9px;margin-bottom:12px;background:${klv.statusCls === 'TREND' ? 'rgba(244,63,94,0.16)' : klv.statusCls === 'MIXED' ? 'rgba(245,158,11,0.14)' : 'rgba(16,185,129,0.12)'};border:1px solid ${klv.statusCls === 'TREND' ? '#f43f5e' : klv.statusCls === 'MIXED' ? '#f59e0b' : 'rgba(16,185,129,0.4)'};font-size:13px;font-weight:700;color:#fff">
+          ${klv.headline}
+        </div>
+        <div class="grid2" style="gap:12px">
+          <div>
+            <div style="font-size:12.5px;font-weight:800;color:#fb7185;margin-bottom:8px;display:flex;justify-content:space-between">
+              <span>📈 上方空头止损池 & 突破加速雷区 (按距现价由近到远)</span>
+              <span class="xs mut">触及易向上扫损插针，防逆势死加空单(Sell)</span>
+            </div>
+            ${upLevels.length ? upLevels.map((x) => renderLvRow(x, true)).join('') : '<div class="mut sm">上方暂无邻近阻力数据</div>'}
+          </div>
+          <div>
+            <div style="font-size:12.5px;font-weight:800;color:#34d399;margin-bottom:8px;display:flex;justify-content:space-between">
+              <span>📉 下方多头止损池 & 破位下杀雷区 (按距现价由近到远)</span>
+              <span class="xs mut">跌破易向下踩踏插针，防逆势死加多单(Buy)</span>
+            </div>
+            ${dnLevels.length ? dnLevels.map((x) => renderLvRow(x, false)).join('') : '<div class="mut sm">下方暂无邻近支撑数据</div>'}
+          </div>
+        </div>`;
+    } else {
+      $('keyLevelsSec').innerHTML = `<h2>🎯 关键清算位与整数关口「插针雷区」地图</h2><span class="mut">正在计算 PDH/PDL、亚盘高低点与整数关口清算位...</span>`;
+    }
+  }
+
+  // 渲染「📊 黄金散户反指效应指标」(全市场散户账户多空比 vs 大户持仓多空比 vs 15M主动吃单买卖比 vs 沪金主动买盘)
+  const sent = d.sentiment;
+  if ($('sentimentSec')) {
+    if (sent && sent.retailLongPct != null) {
+      if ($('nav-sent')) {
+        $('nav-sent').textContent = `多${sent.retailLongPct}%`;
+        $('nav-sent').className = 'pill ' + (sent.cls || 'NEUT');
+      }
+      const histBars = (sent.history && sent.history.length)
+        ? sent.history.map((h) => {
+            const col = h.longPct >= 72 ? '#f43f5e' : h.longPct >= 62 ? '#f59e0b' : '#10b981';
+            return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px" title="${fmtBJ(h.t)} 散户做多占比 ${h.longPct}% (${h.ratio}:1)">
+              <div style="width:100%;height:34px;background:#1a2232;border-radius:4px;display:flex;align-items:flex-end;overflow:hidden">
+                <div style="width:100%;height:${Math.max(15, Math.min(100, h.longPct))}%;background:${col}"></div>
+              </div>
+              <span class="xs mut" style="font-size:9.5px">${fmtBJ(h.t).slice(0, 5)}</span>
+            </div>`;
+          }).join('')
+        : '';
+
+      $('sentimentSec').innerHTML = `
+        <div class="vhead" style="margin-bottom:10px">
+          <div>
+            <h2 style="margin:0">📊 黄金散户反指效应指标 (Retail Sentiment Contrarian Index) <span class="mut sm" style="font-weight:400">(核心规律：当散户单边多头 &ge;72% 时主力极易向下逼多洗盘；当散户空头 &ge;68% 时主力极易向上无回调逼空)</span></h2>
+          </div>
+          <div class="btns">
+            <a href="${(sent.urls && sent.urls.globalAcc) || '#'}" target="_blank" rel="noopener"><button class="sm">🔗 验证全市场散户多空比</button></a>
+            <a href="${(sent.urls && sent.urls.topPos) || '#'}" target="_blank" rel="noopener"><button class="sm">🔗 验证大户持仓比</button></a>
+            <a href="${(sent.urls && sent.urls.taker) || '#'}" target="_blank" rel="noopener"><button class="sm">🔗 验证15M主动吃单比</button></a>
+          </div>
+        </div>
+        <div style="background:linear-gradient(90deg,rgba(244,63,94,.14),rgba(15,23,42,.92));border:1px solid rgba(244,63,94,.4);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span class="pill ${sent.cls}" style="font-size:13px;padding:4px 11px;font-weight:800">${sent.signal}</span>
+              <span class="sm mut">散户多空人数比: <b style="color:#fff">${sent.retailRatio} : 1</b> (近3h多头占比变化 <b style="color:${sent.retailChg3h >= 0 ? '#34d399' : '#fb7185'}">${sent.retailChg3h >= 0 ? '+' : ''}${sent.retailChg3h}%</b>)</span>
+            </div>
+            <span class="pill ${sent.riskScore >= 70 ? 'TREND' : sent.riskScore >= 55 ? 'MIXED' : 'RANGE'}">反指挤压风险分: ${sent.riskScore}/100</span>
+          </div>
+          <div style="margin:8px 0">
+            <div style="display:flex;justify-content:space-between;font-size:12.5px;font-weight:800;margin-bottom:4px">
+              <span style="color:#34d399">🐂 散户做多账户占比: ${sent.retailLongPct}% ${sent.retailLongPct >= 70 ? '(🚨 极度拥挤·防向下逼多)' : ''}</span>
+              <span style="color:#fb7185">🐻 散户做空账户占比: ${sent.retailShortPct}% ${sent.retailShortPct >= 65 ? '(🚨 极度拥挤·防向上逼空)' : ''}</span>
+            </div>
+            <div style="height:14px;width:100%;background:#fb7185;border-radius:99px;overflow:hidden;display:flex;position:relative;border:1px solid rgba(255,255,255,0.15)">
+              <div style="width:${sent.retailLongPct}%;height:100%;background:linear-gradient(90deg,#059669,#34d399)"></div>
+              <div style="position:absolute;left:50%;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.7)" title="50% 多空均衡中轴线"></div>
+              <div style="position:absolute;left:72%;top:0;bottom:0;width:2px;background:#f43f5e" title="72% 散户多头极端反指警戒线"></div>
+            </div>
+          </div>
+          <div style="margin-top:8px;padding:8px 12px;background:rgba(15,20,30,0.85);border-left:3px solid var(--gold);border-radius:6px;font-size:12.5px;line-height:1.55">
+            <b style="color:var(--gold)">🧭 散户反指对 M1 双向马丁 EA 的实盘指令：</b> ${sent.eaAdvice}
+          </div>
+        </div>
+        <div class="tfidx-grid">
+          <div class="tfcard" style="cursor:default">
+            <div class="vhead"><span><b>👥 全市场散户账户多空比</b></span><span class="pill ${sent.retailLongPct >= 72 || sent.retailShortPct >= 68 ? 'TREND' : 'MIXED'}">反指核心基准</span></div>
+            <div style="margin:4px 0"><span class="fcscore">${sent.retailLongPct}% 多</span> <span class="mut sm">/ ${sent.retailShortPct}% 空 (${sent.retailRatio}:1)</span></div>
+            <div style="display:flex;gap:3px;align-items:flex-end;margin-top:6px">${histBars}</div>
+            <div class="xs mut" style="margin-top:4px">近3小时(12根15M)散户做多人数占比走势 · 散户越一致单边死扛，反指胜率越高</div>
+          </div>
+          <div class="tfcard" style="cursor:default">
+            <div class="vhead"><span><b>🐋 顶级大户/机构持仓量多空比</b></span><span class="pill NEUT">聪明钱对照</span></div>
+            <div style="margin:4px 0"><span class="fcscore">${sent.whaleLongPct}% 多</span> <span class="mut sm">/ ${sent.whaleShortPct}% 空 (${sent.whaleRatio}:1)</span></div>
+            <div class="sm" style="margin-top:6px">散户-大户看多差值: <b style="color:${Math.abs(sent.retailWhaleDiff) >= 5 ? 'var(--gold)' : 'var(--tx)'}">${sent.retailWhaleDiff >= 0 ? '+' : ''}${sent.retailWhaleDiff}%</b></div>
+            <div class="xs mut" style="margin-top:4px">对比散户人数比与大户真金白银持仓量比，识别散户是否在逆势接飞刀</div>
+          </div>
+          <div class="tfcard" style="cursor:default">
+            <div class="vhead"><span><b>⚡ 15M 主动吃单买卖比 (Taker)</b></span><span class="pill ${sent.takerBuyPct >= 55 || sent.takerBuyPct <= 45 ? 'MIXED' : 'RANGE'}">真金白银方向</span></div>
+            <div style="margin:4px 0"><span class="fcscore">${sent.takerBuyPct}%</span> <span class="mut sm">市价主动买盘占比 (买卖比 <b>${sent.takerBuyRatio}</b>)</span></div>
+            <div class="sm" style="margin-top:6px">近1小时平均主动买卖比: <b>${sent.takerAvg1hRatio}</b> | 沪金外盘主动买盘: <b>${sent.shfeActiveBuyPct}%</b></div>
+            <div class="xs mut" style="margin-top:4px">若散户75%重仓做多，但主动吃单买盘 &lt;45%（全在市价砸盘），说明主力正在砸盘逼多！</div>
+          </div>
+        </div>`;
+    } else {
+      $('sentimentSec').innerHTML = `<h2>📊 黄金散户反指效应指标</h2><span class="mut">正在加载全球散户多空持仓比与主动吃单数据...</span>`;
+    }
+  }
+
   // 渲染「🔥 黄金受关注度综合指数」：汇总 COMEX期货量比 + 国内沪金主连量比/成交额 + 7x24快讯黄金密度 + SPDR GLD机构量比 + 全球百科搜索 & 链上黄金热度
   const attn = d.attention;
   if ($('attentionSec')) {
@@ -2226,7 +2853,22 @@ function render() {
     const z3 = curMin >= 900 && curMin < 1200 ? 'z-active' : '';
     const z4 = curMin >= 1200 ? 'z-active' : '';
 
-    $('topSessionSec').innerHTML = `
+    // 将用户手动添加的「重磅数据前30分~后15分红灯锁」直接绘制在最开头的 24h 时间轴上！
+    const lkInfo = evalCustomLockState();
+    const lockZonesHtml = (lkInfo.items || []).filter((ev) => ev.enabled).map((ev) => {
+      const sPct = Math.max(0, Math.min(100, +(ev.startMin / 1440 * 100).toFixed(2)));
+      const ePct = Math.max(0, Math.min(100, +(ev.endMin / 1440 * 100).toFixed(2)));
+      const evPct = Math.max(0, Math.min(100, +(ev.evMin / 1440 * 100).toFixed(2)));
+      const wPct = Math.max(0.6, +(ePct >= sPct ? (ePct - sPct) : (100 - sPct)).toFixed(2));
+      const isNowLock = ev.isLocked;
+      return `
+        <div style="position:absolute;left:${sPct}%;width:${wPct}%;top:-2px;bottom:-2px;background:${isNowLock ? 'rgba(244,63,94,0.88)' : 'rgba(244,63,94,0.52)'};border:1px solid #fff;border-radius:3px;z-index:3;pointer-events:auto" title="🚨 红灯锁窗口 [${ev.time} ${ev.title}]：前${ev.pre}分 ~ 后${ev.post}分"></div>
+        <div style="position:absolute;left:${evPct}%;top:-19px;transform:translateX(-50%);background:${isNowLock ? '#f43f5e' : '#1e293b'};color:#fff;border:1px solid #f43f5e;border-radius:4px;padding:0px 5px;font-size:10px;font-weight:800;white-space:nowrap;z-index:4;box-shadow:0 2px 6px rgba(0,0,0,0.5)" title="${ev.time} ${ev.title} (${ev.badge})">🚨${ev.time} ${ev.title.slice(0, 8)}</div>
+      `;
+    }).join('');
+
+    const topDynEl = $('topSessionDynamic') || $('topSessionSec');
+    topDynEl.innerHTML = `
       <div class="vhead" style="margin-bottom:8px">
         <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px">
           <h2 style="margin:0"><span class="live-dot"></span>🕒 当前交易时段 (北京 <b style="color:var(--gold)">${s.bjTime}</b>)</h2>
@@ -2235,16 +2877,17 @@ function render() {
         </div>
         <span class="mut sm">全天进度 <b>${curPct}%</b></span>
       </div>
-      <div style="margin-bottom:12px;padding:8px 12px;background:var(--card2);border:1px solid var(--bd);border-radius:8px">
-        <div class="bar" style="height:10px">
-          <div class="${z0}" style="width:20.83%;background:#f59e0b" title="00:00-05:00 美洲下半场"></div>
+      <div style="margin-bottom:12px;padding:20px 12px 8px;background:var(--card2);border:1px solid var(--bd);border-radius:8px">
+        <div class="bar" style="height:12px;overflow:visible">
+          <div class="${z0}" style="width:20.83%;background:#f59e0b;border-radius:6px 0 0 6px" title="00:00-05:00 美洲下半场"></div>
           <div class="${z1}" style="width:8.34%;background:#10b981" title="05:00-07:00 休整期"></div>
           <div class="${z2}" style="width:33.33%;background:#10b981" title="07:00-15:00 亚洲时段 (较低)"></div>
           <div class="${z3}" style="width:20.83%;background:#f59e0b" title="15:00-20:00 欧洲时段 (逐渐升高)"></div>
-          <div class="${z4}" style="width:16.67%;background:#f43f5e" title="20:00-24:00 欧美重叠+美盘 (峰值/最高)"></div>
-          <div class="mk" style="left:${curPct}%" title="当前北京时间 ${s.bjTime}"></div>
+          <div class="${z4}" style="width:16.67%;background:#f43f5e;border-radius:0 6px 6px 0" title="20:00-24:00 欧美重叠+美盘 (峰值/最高)"></div>
+          ${lockZonesHtml}
+          <div class="mk" style="left:${curPct}%;z-index:5" title="当前北京时间 ${s.bjTime}"></div>
         </div>
-        <div class="ticks" style="height:14px;margin-top:4px">
+        <div class="ticks" style="height:14px;margin-top:5px">
           <span style="left:0%">00:00</span>
           <span style="left:20.83%">05:00</span>
           <span style="left:29.17%">07:00(亚洲)</span>
@@ -2256,6 +2899,7 @@ function render() {
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:10px">
         ${sessCardsHtml}
       </div>`;
+    renderCustomEventBar();
 
     $('session').innerHTML = `<h2>当前时段(北京 ${s.bjTime})</h2><p><b>${s.active.join(' + ')}</b><br>波动性:<b>${s.volatility}</b><br><span class="mut">${s.tip}</span></p>
       <table><tr><th>时段</th><th>北京时间</th><th>波动</th></tr><tr><td>亚洲</td><td>07-15</td><td>较低</td></tr><tr><td>欧洲</td><td>15-24</td><td>逐渐升高</td></tr><tr><td>美洲</td><td>21-05</td><td>最高</td></tr><tr><td>欧美重叠</td><td>20-24</td><td>峰值</td></tr></table>`;
@@ -2523,6 +3167,20 @@ function buildText() {
     L.push(`  - 现货白银(XAGUSD): ${f2(xag.last)}$ (${xag.chgPct >= 0 ? '+' : ''}${f2(xag.chgPct)}%) | 实时金银比 ${f2(mc.gsr)} | 白银-黄金日内强弱差 ${f2(mc.agLead)}%`);
     L.push(`  - VIX恐慌指数: ${f2(vix.last)} (${vix.chgPct >= 0 ? '+' : ''}${f2(vix.chgPct)}%) | 上海黄金TD(AUTD): ${f2(autd.last)}元/克 (${autd.chgPct >= 0 ? '+' : ''}${f2(autd.chgPct)}%)`);
   }
+  if (d.keyLevels && Array.isArray(d.keyLevels.levels)) {
+    L.push(`\n■ 关键清算位与整数关口「插针雷区」地图 (当前现价 $${f2(d.keyLevels.curPrice)}):`);
+    L.push(`  - 状态: ${d.keyLevels.headline}`);
+    (d.keyLevels.nearest || []).slice(0, 6).forEach((lv) => {
+      L.push(`  - [${lv.dir === 'UP' ? '上方阻力/止损池' : '下方支撑/止损池'}] ${lv.name} $${f2(lv.price)} (距现价 ${lv.diff >= 0 ? '+' : ''}${f2(lv.diff)}$ / ${lv.pts}点 | ${lv.danger})`);
+    });
+  }
+  if (d.sentiment && d.sentiment.retailLongPct != null) {
+    const st = d.sentiment;
+    L.push(`\n■ 黄金散户反指效应指标 (Retail Sentiment Contrarian Index):`);
+    L.push(`  - 全市场散户多空人数比: 多头 ${st.retailLongPct}% vs 空头 ${st.retailShortPct}% (${st.retailRatio}:1, 近3h变化 ${st.retailChg3h >= 0 ? '+' : ''}${st.retailChg3h}%) | 顶级大户持仓多空比: 多头 ${st.whaleLongPct}% vs 空头 ${st.whaleShortPct}%`);
+    L.push(`  - 15M市价主动吃单买盘占比: ${st.takerBuyPct}% (买卖比 ${st.takerBuyRatio}) | 沪金外盘主动买盘: ${st.shfeActiveBuyPct}%`);
+    L.push(`  - 反指信号(${st.riskScore}/100): ${st.signal} | 实盘指令: ${st.eaAdvice}`);
+  }
   if (d.attention && d.attention.score != null) {
     const at = d.attention, cmx = at.comex || {}, sh = at.shfe || {}, nw = at.news || {}, gld = at.gld || {}, cr = at.globalHeat || at.crowd || {};
     L.push(`\n■ 黄金受关注度综合指数 (Gold Attention Index): ${at.score}/100 [${at.level}]`);
@@ -2579,6 +3237,8 @@ function syncEaInputs() {
   if ($('tolSlider')) $('tolSlider').value = TOL;
   if ($('tolInput')) $('tolInput').value = TOL;
   if ($('tolValTxt')) $('tolValTxt').textContent = f2(TOL);
+  syncVoiceUi();
+  renderCustomEventBar();
 }
 
 // 根据当前输入的账户金额 + 可亏线 + 买卖手数(净敞口N) + 已用预付款 + EA参数，自动按 D = L / (N * 100) 反推抗单跨度 TOL 并重算全站
@@ -2725,6 +3385,8 @@ function applyTol(v) {
   if ($('tolSlider')) $('tolSlider').value = TOL;
   if ($('tolInput')) $('tolInput').value = TOL;
   if ($('tolValTxt')) $('tolValTxt').textContent = f2(TOL);
+  syncVoiceUi();
+  renderCustomEventBar();
   render();
   triggerFlash();
   toast(`已手动微调安全震荡区间为 ${f2(TOL)} 美元并重新计算全部指数`);

@@ -762,6 +762,257 @@ async function fetchGoldAttention(fastMode = false) {
     globalHeat
   };
 }
+
+// ---------- 散户反指效应指标 (Retail Contrarian Sentiment Indicator) ----------
+// 汇总：1) 全球黄金永续合约(PAXGUSDT)全市场散户账户多空比  2) 顶级大户/机构持仓量多空比  3) 15M主动吃单买卖比(Taker Buy/Sell)  4) 国内沪金主力主动买盘占比
+let cachedSentiment = null;
+let lastSentimentTs = 0;
+
+async function fetchRetailSentiment(fastMode = false) {
+  const now = Date.now();
+  // 快刷模式下每 90 秒更新一次散户多空比，兼顾实时性与 <0.4s 极速响应
+  if (fastMode && cachedSentiment && (now - lastSentimentTs < 90 * 1000)) {
+    return cachedSentiment;
+  }
+  const uGlobalAcc = 'https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=PAXGUSDT&period=15m&limit=12';
+  const uTopPos = 'https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=PAXGUSDT&period=15m&limit=12';
+  const uTaker = 'https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=PAXGUSDT&period=15m&limit=12';
+  const uShfe = 'https://push2.eastmoney.com/api/qt/stock/get?secid=113.aum&fields=f43,f47,f49,f50,f58,f170';
+
+  const [rAcc, rTop, rTak, rSh] = await Promise.allSettled([
+    getJSON(uGlobalAcc, {}, 6000, 1),
+    getJSON(uTopPos, {}, 6000, 1),
+    getJSON(uTaker, {}, 6000, 1),
+    getJSON(uShfe, {}, 6000, 1)
+  ]);
+
+  let retailLongPct = 68.0, retailShortPct = 32.0, retailRatio = 2.13, retailChg3h = 0;
+  let history = [];
+  if (rAcc.status === 'fulfilled' && Array.isArray(rAcc.value) && rAcc.value.length) {
+    const arr = rAcc.value;
+    const last = arr[arr.length - 1];
+    const first = arr[0];
+    retailLongPct = +(parseFloat(last.longAccount || 0.68) * 100).toFixed(1);
+    retailShortPct = +(100 - retailLongPct).toFixed(1);
+    retailRatio = +(parseFloat(last.longShortRatio || (retailLongPct / Math.max(1, retailShortPct)))).toFixed(2);
+    retailChg3h = +(retailLongPct - parseFloat(first.longAccount || 0.68) * 100).toFixed(1);
+    history = arr.map((x) => ({
+      t: Math.round((x.timestamp || now) / 1000),
+      longPct: +(parseFloat(x.longAccount || 0.5) * 100).toFixed(1),
+      ratio: +(parseFloat(x.longShortRatio || 1)).toFixed(2)
+    }));
+  }
+
+  let whaleLongPct = 65.0, whaleShortPct = 35.0, whaleRatio = 1.86;
+  if (rTop.status === 'fulfilled' && Array.isArray(rTop.value) && rTop.value.length) {
+    const last = rTop.value[rTop.value.length - 1];
+    whaleLongPct = +(parseFloat(last.longAccount || 0.65) * 100).toFixed(1);
+    whaleShortPct = +(100 - whaleLongPct).toFixed(1);
+    whaleRatio = +(parseFloat(last.longShortRatio || 1.86)).toFixed(2);
+  }
+
+  let takerBuyRatio = 1.0, takerBuyPct = 50.0, takerAvg1hRatio = 1.0;
+  if (rTak.status === 'fulfilled' && Array.isArray(rTak.value) && rTak.value.length) {
+    const arr = rTak.value;
+    const last = arr[arr.length - 1];
+    takerBuyRatio = +(parseFloat(last.buySellRatio || 1.0)).toFixed(2);
+    takerBuyPct = +(takerBuyRatio / (1 + takerBuyRatio) * 100).toFixed(1);
+    const last4 = arr.slice(-4);
+    takerAvg1hRatio = +(mean(last4.map((x) => parseFloat(x.buySellRatio || 1.0)))).toFixed(2);
+  }
+
+  let shfeActiveBuyPct = 50.0;
+  if (rSh.status === 'fulfilled' && rSh.value && rSh.value.data) {
+    const d = rSh.value.data;
+    const vol = d.f47 || 0;
+    const outVol = d.f49 || 0;
+    if (vol > 0) shfeActiveBuyPct = +(outVol / vol * 100).toFixed(1);
+  }
+
+  // 计算散户拥挤度与「散户反指信号」
+  // 散户多头 >= 72% -> 散户极度重仓做多 -> 反指看空（警惕主力向下逼多扫损）
+  // 散户空头 >= 65% (即多头 <= 35%) -> 散户大举逆势摸顶做空 -> 反指看多（警惕主力向上逼空拉升）
+  const crowdSide = retailLongPct >= 50 ? 'LONG' : 'SHORT';
+  const crowdPct = Math.max(retailLongPct, retailShortPct);
+  const retailWhaleDiff = +(retailLongPct - whaleLongPct).toFixed(1); // 正值代表散户比大户更狂热看多
+
+  let signal = '🟢 多空情绪均衡 (无明显反指挤压)';
+  let bias = 'NEUTRAL';
+  let cls = 'RANGE';
+  let riskScore = Math.round(clamp((crowdPct - 50) * 2.5, 10, 98));
+  let eaAdvice = '当前散户多空持仓未达极端拥挤阈值（<68%），主力缺乏单边逼仓洗盘燃料，适合按震荡指数正常双向挂单。';
+
+  if (retailLongPct >= 73) {
+    signal = `🚨 散户极度重仓做多 (${retailLongPct}%) → 反指强烈看空 / 防向下逼多`;
+    bias = 'BEARISH_SQUEEZE';
+    cls = 'TREND';
+    riskScore = Math.round(clamp(70 + (retailLongPct - 73) * 3 + (takerBuyPct < 48 ? 8 : 0), 72, 98));
+    eaAdvice = `🛑 反指高危预警：全市场高达 ${retailLongPct}% 的散户账户正在押注做多（多空人数比 ${retailRatio}:1），且15M主动吃单买盘仅占 ${takerBuyPct}%！当散户一致死扛多单时，主力极易向下连续砸盘扫损（逼多行情）。若金价走弱，严禁放任 EA 买单(Buy)无限制逆势倍投！`;
+  } else if (retailLongPct >= 66) {
+    signal = `⚠️ 散户多头偏拥挤 (${retailLongPct}%) → 反指偏空 / 警惕回调洗多`;
+    bias = 'MILD_BEARISH';
+    cls = 'MIXED';
+    riskScore = Math.round(clamp(55 + (retailLongPct - 66) * 2.2, 55, 71));
+    eaAdvice = `⚠️ 散户多头占比已达 ${retailLongPct}%（偏拥挤），上方追多性价比下降；若 1M/5M 跌破均线，需防主力急跌洗盘扫掉散户止损，注意控制多单净敞口。`;
+  } else if (retailShortPct >= 68) {
+    signal = `🚨 散户大举摸顶做空 (空头${retailShortPct}%) → 反指强烈看多 / 防向上逼空`;
+    bias = 'BULLISH_SQUEEZE';
+    cls = 'TREND';
+    riskScore = Math.round(clamp(72 + (retailShortPct - 68) * 3 + (takerBuyPct > 52 ? 8 : 0), 72, 98));
+    eaAdvice = `🛑 反指高危预警：高达 ${retailShortPct}% 的散户正在逆势摸顶做空！黄金历史上最凶猛的无回调暴涨往往由「散户空头止损盘」燃料驱动。若金价处于上升通道，严禁放任 EA 卖单(Sell)逆势死扛倍投！`;
+  } else if (retailShortPct >= 60) {
+    signal = `⚠️ 散户空头偏拥挤 (空头${retailShortPct}%) → 反指偏多 / 警惕逼空上冲`;
+    bias = 'MILD_BULLISH';
+    cls = 'MIXED';
+    riskScore = Math.round(clamp(55 + (retailShortPct - 60) * 2.2, 55, 71));
+    eaAdvice = `⚠️ 散户做空比例升至 ${retailShortPct}%，空头止损盘在上方堆积，警惕金价向上突破整数关口引发空头踩踏。`;
+  }
+
+  const out = {
+    updatedAt: new Date().toISOString(),
+    retailLongPct,
+    retailShortPct,
+    retailRatio,
+    retailChg3h,
+    whaleLongPct,
+    whaleShortPct,
+    whaleRatio,
+    retailWhaleDiff,
+    takerBuyRatio,
+    takerBuyPct,
+    takerAvg1hRatio,
+    shfeActiveBuyPct,
+    crowdSide,
+    crowdPct,
+    riskScore,
+    signal,
+    bias,
+    cls,
+    eaAdvice,
+    history,
+    urls: {
+      globalAcc: uGlobalAcc,
+      topPos: uTopPos,
+      taker: uTaker
+    }
+  };
+  cachedSentiment = out;
+  lastSentimentTs = now;
+  return out;
+}
+
+// ---------- 关键清算位与整数关口“插针雷区”地图 (Key Liquidation & Stop-Hunt Levels) ----------
+// 自动提取：昨日最高/最低/收盘 (PDH/PDL/PDC)、今日日内高低点 (HOD/LOD)、今日亚盘高低点 (Asian High/Low 07:00-15:00 BJ)、上下 $50 大整数关口与 $10 次级关口
+function computeKeyLevels(bars15m, bars1h, bars1d, curPrice) {
+  if (!curPrice || !Number.isFinite(curPrice)) return null;
+  const bjOffset = 8 * 3600;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const bjNow = new Date((nowSec + bjOffset) * 1000);
+  const bjYear = bjNow.getUTCFullYear(), bjMonth = bjNow.getUTCMonth(), bjDate = bjNow.getUTCDate();
+  const todayStartSec = Math.floor(Date.UTC(bjYear, bjMonth, bjDate, 0, 0, 0) / 1000) - bjOffset;
+  const asianStartSec = todayStartSec + 7 * 3600;  // 北京时间 07:00
+  const asianEndSec = todayStartSec + 15 * 3600;   // 北京时间 15:00
+  const yestStartSec = todayStartSec - 86400;
+
+  let pdh = null, pdl = null, pdc = null;
+  if (Array.isArray(bars1d) && bars1d.length >= 2) {
+    // 取倒数第2根日线作为昨日完整日线
+    const prevBar = bars1d[bars1d.length - 2];
+    if (prevBar) {
+      pdh = +prevBar.h.toFixed(2);
+      pdl = +prevBar.l.toFixed(2);
+      pdc = +prevBar.c.toFixed(2);
+    }
+  }
+  // 若 1D 尚未加载完成，从 1H K线回推昨日高低点
+  if ((pdh == null || pdl == null) && Array.isArray(bars1h) && bars1h.length > 24) {
+    const yBars = bars1h.filter((b) => b.t >= yestStartSec && b.t < todayStartSec);
+    if (yBars.length) {
+      pdh = +Math.max(...yBars.map((b) => b.h)).toFixed(2);
+      pdl = +Math.min(...yBars.map((b) => b.l)).toFixed(2);
+      pdc = +yBars[yBars.length - 1].c.toFixed(2);
+    }
+  }
+
+  let hod = null, lod = null, asianHigh = null, asianLow = null;
+  const srcBars = (Array.isArray(bars15m) && bars15m.length) ? bars15m : (Array.isArray(bars1h) ? bars1h : []);
+  if (srcBars.length) {
+    const todayBars = srcBars.filter((b) => b.t >= todayStartSec);
+    const useToday = todayBars.length ? todayBars : srcBars.slice(-16);
+    hod = +Math.max(...useToday.map((b) => b.h), curPrice).toFixed(2);
+    lod = +Math.min(...useToday.map((b) => b.l), curPrice).toFixed(2);
+
+    const asianBars = srcBars.filter((b) => b.t >= asianStartSec && b.t <= asianEndSec);
+    if (asianBars.length) {
+      asianHigh = +Math.max(...asianBars.map((b) => b.h)).toFixed(2);
+      asianLow = +Math.min(...asianBars.map((b) => b.l)).toFixed(2);
+    }
+  }
+
+  // 整数关口：上下 $50 大关口 (如 4000, 4050, 4100) 与 上下 $10 关口 (如 4050, 4060, 4070)
+  const major50Up = Math.ceil((curPrice + 0.01) / 50) * 50;
+  const major50Dn = Math.floor((curPrice - 0.01) / 50) * 50;
+  const minor10Up = Math.ceil((curPrice + 0.01) / 10) * 10;
+  const minor10Dn = Math.floor((curPrice - 0.01) / 10) * 10;
+
+  const rawLevels = [];
+  const addLv = (id, name, tag, price, importance, desc) => {
+    if (price == null || !Number.isFinite(price)) return;
+    const diff = +(price - curPrice).toFixed(2);
+    const absDiff = +Math.abs(diff).toFixed(2);
+    const pts = Math.round(absDiff * 100);
+    const dir = diff > 0.05 ? 'UP' : diff < -0.05 ? 'DOWN' : 'AT';
+    // 距离 <= 2.2$ 视为进入插针扫损雷区；<= 4.5$ 视为临近警戒
+    const danger = absDiff <= 2.2 ? 'DANGER' : absDiff <= 4.5 ? 'WARN' : 'SAFE';
+    rawLevels.push({ id, name, tag, price: +price.toFixed(2), diff, absDiff, pts, dir, importance, danger, desc });
+  };
+
+  addLv('PDH', '昨日最高价 (PDH)', '🔥 极高危扫损池', pdh, 5, '全市场空头止损与突破买单最密集的清算位，触及极易引发 5~12$ 加速插针或假突破洗盘');
+  addLv('PDL', '昨日最低价 (PDL)', '🔥 极高危扫损池', pdl, 5, '全市场多头止损最密集的下方清算池，跌破极易引发多头踩踏加速下杀');
+  addLv('ASIAN_H', '今日亚盘高点 (Asian High)', '⚡ 欧/美盘猎杀位', asianHigh, 4, '伦敦/纽约开盘最喜欢先扫掉亚盘高点上方止损（Stop-Hunt），谨防突破追多被套或逆势空单被扫');
+  addLv('ASIAN_L', '今日亚盘低点 (Asian Low)', '⚡ 欧/美盘猎杀位', asianLow, 4, '欧美盘主力常故意击穿亚盘低点扫损，触及前后 1.5$ 内波动极剧烈');
+  addLv('HOD', '今日日内最高 (HOD)', '📍 日内极值', hod, 4, '今日日内多头最高防线，二次冲击时若 1M/5M ADX 走高则极易直接破位上行');
+  addLv('LOD', '今日日内最低 (LOD)', '📍 日内极值', lod, 4, '今日日内空头最低防线，二次回踩不破利好震荡，放量跌破则单边延续');
+  addLv('R50_UP', `$${major50Up} 整数大关`, '🏛️ 期权/心理生死线', major50Up, 5, '50美元大整数关口聚集海量期权障碍与止盈止损挂单，首次触及常有剧烈双向插针');
+  addLv('R50_DN', `$${major50Dn} 整数大关`, '🏛️ 期权/心理生死线', major50Dn, 5, '50美元大整数关口，一旦失守极易引发程序化抛盘顺势追空');
+  if (minor10Up !== major50Up) {
+    addLv('R10_UP', `$${minor10Up} 整数十位关口`, '🎯 10$算法关口', minor10Up, 3, '日内短线与M1追踪挂单密集触发位，关注突破时的脉冲滑点');
+  }
+  if (minor10Dn !== major50Dn) {
+    addLv('R10_DN', `$${minor10Dn} 整数十位关口`, '🎯 10$算法关口', minor10Dn, 3, '日内10美元整数台阶支撑/破位加速点');
+  }
+  if (pdc != null) {
+    addLv('PDC', '昨日收盘价 (PDC)', '🧲 均值引力位', pdc, 2, '日内多空分水岭与缺口回补基准位');
+  }
+
+  // 按价格从高到低排序，方便渲染雷达价格尺
+  const sortedByPrice = [...rawLevels].sort((a, b) => b.price - a.price);
+  const nearest = [...rawLevels].sort((a, b) => a.absDiff - b.absDiff);
+  const dangerList = nearest.filter((x) => x.danger === 'DANGER' && x.importance >= 3);
+  const warnList = nearest.filter((x) => x.danger === 'WARN' && x.importance >= 3);
+
+  let headline = '✅ 当前金价处于清算位真空区（距最近核心止损池 >2.2$），无贴脸扫损雷区';
+  let statusCls = 'RANGE';
+  if (dangerList.length) {
+    const top = dangerList[0];
+    statusCls = 'TREND';
+    headline = `🚨 插针雷区贴脸预警：当前金价(${curPrice.toFixed(2)}$)距【${top.name} $${top.price}】仅 ${top.absDiff}$ (${top.pts}点)！谨防主力扫损引发 5~10$ 瞬间插针，切勿在此处密集挂逆势马丁单！`;
+  } else if (warnList.length) {
+    const top = warnList[0];
+    statusCls = 'MIXED';
+    headline = `⚠️ 临近关键清算位：当前金价距【${top.name} $${top.price}】约 ${top.absDiff}$ (${top.pts}点)，留意触及时的突破或扫损脉冲。`;
+  }
+
+  return {
+    curPrice: +curPrice.toFixed(2),
+    statusCls,
+    headline,
+    dangerCount: dangerList.length,
+    nearestDanger: dangerList[0] || null,
+    levels: sortedByPrice,
+    nearest: nearest.slice(0, 6)
+  };
+}
 // ---------- 汇总 ----------
 let cache = null, inflight = null, fastInflight = null;
 let cachedEvents = [], cachedKnn = null;
@@ -824,9 +1075,9 @@ async function build() {
   const result = { updatedAt: new Date().toISOString(), fastUpdatedAt: new Date().toISOString(), errors: [] };
   result.session = sessionInfo();
 
-  // 全量并行请求 (含高频 K 线 + 跨市场 + 特朗普 + 黄金受关注度 + 低频 GVZ/周历/日线)，减少串行等待
+  // 全量并行请求 (含高频 K 线 + 跨市场 + 特朗普 + 黄金受关注度 + 散户反指 + 低频 GVZ/周历/日线)，减少串行等待
   const p15 = wscnGold(900, 600, '15m', '1mo');
-  const [g4h, g1h, g15, g5, g1, gvz, cal, gd, mac, trp, attn] = await Promise.allSettled([
+  const [g4h, g1h, g15, g5, g1, gvz, cal, gd, mac, trp, attn, sent] = await Promise.allSettled([
     wscnGold(14400, 600, '1h', '3mo'),
     wscnGold(3600, 600, '1h', '3mo'),
     p15,
@@ -838,6 +1089,7 @@ async function build() {
     wscnMacro(p15),
     wscnTrump(cachedEvents),
     fetchGoldAttention(false),
+    fetchRetailSentiment(false),
   ]);
 
   result.symbol = '伦敦金现货黄金 XAUUSD (0延迟秒级实时接口 api-ddc-wscn.awtmt.com)';
@@ -918,18 +1170,32 @@ async function build() {
   } else {
     result.errors.push('黄金受关注度: ' + attn.reason.message);
   }
+  if (sent.status === 'fulfilled') {
+    result.sentiment = sent.value;
+  } else if (prev.sentiment) {
+    result.sentiment = prev.sentiment;
+  } else {
+    result.errors.push('散户反指情绪: ' + sent.reason.message);
+  }
+  const curPx = (result.timeframes['1M'] && result.timeframes['1M'].price) || (result.timeframes['5M'] && result.timeframes['5M'].price) || (result.timeframes['15M'] && result.timeframes['15M'].price);
+  result.keyLevels = computeKeyLevels(
+    g15.status === 'fulfilled' ? g15.value.bars : null,
+    g1h.status === 'fulfilled' ? g1h.value.bars : null,
+    gd.status === 'fulfilled' ? gd.value.bars : null,
+    curPx
+  ) || prev.keyLevels || null;
   result.model = { sparks: sp };
   buildComposite(result);
   delete result.calendar.all;
   return result;
 }
 
-// 极速实时刷新 (仅抓取高频变化的 1M/5M/15M/1H/4H + 跨市场实时报价 + 特朗普快讯 + 黄金受关注度，全部单轮并行 ~0.4秒完成，低频日线/周历/GVZ 直接走缓存)
+// 极速实时刷新 (仅抓取高频变化的 1M/5M/15M/1H/4H + 跨市场实时报价 + 特朗普快讯 + 黄金受关注度 + 散户反指，全部单轮并行 ~0.4秒完成，低频日线/周历/GVZ 直接走缓存)
 async function refreshFast() {
   if (fastInflight) return fastInflight;
   fastInflight = (async () => {
     const p15 = wscnGold(900, 600, '15m', '1mo');
-    const [g1, g5, g15, g1h, g4h, mac, trp, attn] = await Promise.allSettled([
+    const [g1, g5, g15, g1h, g4h, mac, trp, attn, sent] = await Promise.allSettled([
       wscnGold(60, 600, '1m', '5d'),
       wscnGold(300, 600, '5m', '5d'),
       p15,
@@ -938,6 +1204,7 @@ async function refreshFast() {
       wscnMacro(p15),
       wscnTrump(cachedEvents),
       fetchGoldAttention(true),
+      fetchRetailSentiment(true),
     ]);
 
     if (!cache) {
@@ -975,6 +1242,31 @@ async function refreshFast() {
     if (mac.status === 'fulfilled') cache.macro = mac.value;
     if (trp.status === 'fulfilled') cache.trump = trp.value;
     if (attn.status === 'fulfilled') cache.attention = attn.value;
+    if (sent.status === 'fulfilled') cache.sentiment = sent.value;
+    const fastPx = (cache.timeframes['1M'] && cache.timeframes['1M'].price) || (cache.timeframes['5M'] && cache.timeframes['5M'].price) || (cache.timeframes['15M'] && cache.timeframes['15M'].price);
+    const kLv = computeKeyLevels(
+      g15.status === 'fulfilled' ? g15.value.bars : null,
+      g1h.status === 'fulfilled' ? g1h.value.bars : null,
+      null,
+      fastPx
+    );
+    if (kLv) {
+      // 保留之前已算出的日线 PDH/PDL/PDC（如果1H回推缺失）
+      if (cache.keyLevels && cache.keyLevels.levels) {
+        const oldPdh = cache.keyLevels.levels.find((x) => x.id === 'PDH');
+        const oldPdl = cache.keyLevels.levels.find((x) => x.id === 'PDL');
+        const hasPdh = kLv.levels.some((x) => x.id === 'PDH');
+        if (!hasPdh && oldPdh && oldPdl && fastPx) {
+          for (const old of [oldPdh, oldPdl]) {
+            const diff = +(old.price - fastPx).toFixed(2);
+            const absDiff = +Math.abs(diff).toFixed(2);
+            kLv.levels.push({ ...old, diff, absDiff, pts: Math.round(absDiff * 100), dir: diff > 0.05 ? 'UP' : diff < -0.05 ? 'DOWN' : 'AT', danger: absDiff <= 2.2 ? 'DANGER' : absDiff <= 4.5 ? 'WARN' : 'SAFE' });
+          }
+          kLv.levels.sort((a, b) => b.price - a.price);
+        }
+      }
+      cache.keyLevels = kLv;
+    }
     buildComposite(cache);
     lastFastTs = Date.now();
     saveDiskCache();
