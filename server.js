@@ -818,7 +818,7 @@ async function fetchRetailSentiment(fastMode = false) {
     takerBuyRatio = +(parseFloat(last.buySellRatio || 1.0)).toFixed(2);
     takerBuyPct = +(takerBuyRatio / (1 + takerBuyRatio) * 100).toFixed(1);
     const last4 = arr.slice(-4);
-    takerAvg1hRatio = +(mean(last4.map((x) => parseFloat(x.buySellRatio || 1.0)))).toFixed(2);
+    takerAvg1hRatio = +(last4.reduce((s, x) => s + parseFloat(x.buySellRatio || 1.0), 0) / Math.max(1, last4.length)).toFixed(2);
   }
 
   let shfeActiveBuyPct = 50.0;
