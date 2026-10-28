@@ -4425,10 +4425,16 @@ function getMergedMt4History(mt4) {
   const srvArr = Array.isArray(mt4.history) ? mt4.history : [];
   const map = new Map();
   for (const pt of localArr) {
-    if (pt && pt.t) map.set(Math.floor(pt.t / 5000), pt);
+    if (pt && pt.t) {
+      const tMs = pt.t < 1e11 ? pt.t * 1000 : pt.t;
+      map.set(Math.floor(tMs / 5000), { ...pt, t: tMs });
+    }
   }
   for (const pt of srvArr) {
-    if (pt && pt.t) map.set(Math.floor(pt.t / 5000), pt);
+    if (pt && pt.t) {
+      const tMs = pt.t < 1e11 ? pt.t * 1000 : pt.t;
+      map.set(Math.floor(tMs / 5000), { ...pt, t: tMs });
+    }
   }
   // 把当前最新点加入
   const curPx = (mt4.buyLots > 0 && mt4.buyAvgPrice > 0)
