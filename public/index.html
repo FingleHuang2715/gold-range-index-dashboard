@@ -4539,6 +4539,12 @@ function getMergedMt4History(mt4) {
   const accLongKey = `gold_mt4_long_v1_${acc}`;
   const accStatsKey = `gold_mt4_stats_v1_${acc}`;
   const baseKey = `gold_mt4_base_v1_${acc}`;
+  const resetTsKey = `gold_mt4_reset_ts_${acc}`;
+
+  const resetTs = Math.max(
+    Number(mt4.initBalTs) || 0,
+    Number(localStorage.getItem(resetTsKey)) || 0
+  );
 
   // 1) 合并高频 30 秒序列 (history)
   let localFast = [];
@@ -4547,6 +4553,8 @@ function getMergedMt4History(mt4) {
   const fastMap = new Map();
   const addFastPt = (pt) => {
     if (!pt || !pt.t) return;
+    const tSec = pt.t < 1e11 ? pt.t : Math.floor(pt.t / 1000);
+    if (resetTs > 0 && tSec < resetTs) return;
     const tMs = pt.t < 1e11 ? pt.t * 1000 : pt.t;
     const bKey = Math.floor(tMs / 30000);
     const dd = pt.dd != null ? pt.dd : r2(Math.max(0, -(pt.pnl || 0)));
@@ -4599,6 +4607,8 @@ function getMergedMt4History(mt4) {
   const longMap = new Map();
   const addLongPt = (pt) => {
     if (!pt || !pt.t) return;
+    const tSec = pt.t < 1e11 ? pt.t : Math.floor(pt.t / 1000);
+    if (resetTs > 0 && tSec < (resetTs - 900)) return;
     const tMs = pt.t < 1e11 ? pt.t * 1000 : pt.t;
     const bKey = Math.floor(tMs / 900000) * 900000;
     const ddMax = r2(pt.ddMax != null ? pt.ddMax : (pt.dd != null ? pt.dd : Math.max(0, -(pt.pnl || 0))));
@@ -4632,6 +4642,10 @@ function getMergedMt4History(mt4) {
   // 3) 合并与兜底历史峰值 & 浮亏阶梯统计 stats（结合云端 Redis 与本地浏览器缓存取最大值，绝不丢失任何一次历史峰值！）
   let localStats = null;
   try { localStats = JSON.parse(localStorage.getItem(accStatsKey) || 'null'); } catch (e) {}
+  if (localStats && resetTs > 0 && (localStats.sinceTs || 0) < resetTs) {
+    localStats = null;
+    try { localStorage.removeItem(accStatsKey); } catch (e) {}
+  }
   let stats = mt4.stats && mt4.stats.peaks ? JSON.parse(JSON.stringify(mt4.stats)) : (localStats || {
     sinceTs: Math.floor(Date.now() / 1000),
     totalSamples: mergedFast.length,
@@ -4769,47 +4783,69 @@ function getMergedMt4History(mt4) {
   return { history: mergedFast, historyLong: mergedLong, stats, initBal };
 }
 
-window.resetMt4CurveBase = function() {
+window.resetMt4AfterDeposit = async function() {
   if (!D || !D.mt4) return;
+  const curBal = Number(D.mt4.balance) || 0;
+  const msg = `💰 检测到您入金/修改了测试金额 (当前实盘余额: $${curBal.toFixed(2)})。\n\n点击【确定】将执行一键规整：\n1. 消除图表上的垂直跳空断层，恢复平滑美观；\n2. 将当前 $${curBal.toFixed(2)} 设为新收益基准（收益率归零重新起算，避免误计为交易盈利）；\n3. 历史曲线与峰值以当前余额全新平稳起跑。\n\n是否立即重置？`;
+  if (!confirm(msg)) return;
   const acc = D.mt4.account || 'default';
-  const curPx = (D.mt4.buyLots > 0 && D.mt4.buyAvgPrice > 0)
-    ? r2(D.mt4.buyAvgPrice + (D.mt4.buyPnl || 0) / (D.mt4.buyLots * 100))
-    : r2(D.mt4.bid || 0);
-  const nowPt = {
-    t: Date.now(),
-    bal: r2(D.mt4.balance || 0),
-    eq: r2(D.mt4.equity || 0),
-    pnl: r2(D.mt4.totalPnl || 0),
-    dd: r2(Math.max(0, -(D.mt4.totalPnl || 0))),
-    mar: r2(D.mt4.margin || 0),
-    buyLots: r2(D.mt4.buyLots || 0),
-    sellLots: r2(D.mt4.sellLots || 0),
-    netLots: r2((D.mt4.buyLots || 0) - (D.mt4.sellLots || 0)),
-    ml: r1(D.mt4.marginLevel || 0),
-    px: curPx
-  };
+  const nowSec = Math.floor(Date.now() / 1000);
   try {
-    localStorage.setItem(`gold_mt4_base_v1_${acc}`, String(r2(D.mt4.balance || 0)));
-    localStorage.setItem(`gold_mt4_hist_v1_${acc}`, JSON.stringify([nowPt]));
-  } catch (e) {}
-  if (D.mt4.history) D.mt4.history = [nowPt];
-  render();
-  toast('✅ 已将当前余额设为收益曲线新起点！（历史峰值与浮亏阶梯统计依然保留）');
-};
-
-window.resetMt4AllStats = async function() {
-  if (!D || !D.mt4) return;
-  if (!confirm('确定要清空所有历史浮亏峰值、预付款峰值及分阶段次数统计，从当前时刻重新开始统计吗？')) return;
-  const acc = D.mt4.account || 'default';
-  try {
-    localStorage.removeItem(`gold_mt4_stats_v1_${acc}`);
+    localStorage.setItem(`gold_mt4_reset_ts_${acc}`, String(nowSec));
+    localStorage.setItem(`gold_mt4_base_v1_${acc}`, String(curBal));
+    localStorage.removeItem(`gold_mt4_hist_v1_${acc}`);
     localStorage.removeItem(`gold_mt4_long_v1_${acc}`);
-    await fetch('/api/mt4?resetStats=1');
+    localStorage.removeItem(`gold_mt4_stats_v1_${acc}`);
+    await fetch('/api/mt4?reset=1');
     const r = await fetch('/api/mt4');
     const j = await r.json();
     if (j && j.mt4) D.mt4 = j.mt4;
     render();
-    toast('🗑️ 已重置历史峰值与阶梯统计档案！');
+    toast('✅ 实盘图表已成功重置！已抹平跳空断层，收益曲线以 $' + curBal.toFixed(2) + ' 重新开始绘制！');
+  } catch (e) {
+    toast('重置失败: ' + e.message);
+  }
+};
+
+window.resetMt4CurveBase = async function() {
+  if (!D || !D.mt4) return;
+  const acc = D.mt4.account || 'default';
+  const curBal = Number(D.mt4.balance) || 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  try {
+    localStorage.setItem(`gold_mt4_reset_ts_${acc}`, String(nowSec));
+    localStorage.setItem(`gold_mt4_base_v1_${acc}`, String(curBal));
+    localStorage.removeItem(`gold_mt4_hist_v1_${acc}`);
+    localStorage.removeItem(`gold_mt4_long_v1_${acc}`);
+    await fetch('/api/mt4?resetCurve=1');
+    const r = await fetch('/api/mt4');
+    const j = await r.json();
+    if (j && j.mt4) D.mt4 = j.mt4;
+    render();
+    toast('✅ 已将当前余额设为收益曲线新起点！（历史峰值依然保留）');
+  } catch (e) {
+    toast('重置失败: ' + e.message);
+  }
+};
+
+window.resetMt4AllStats = async function() {
+  if (!D || !D.mt4) return;
+  if (!confirm('确定要清空所有历史浮亏峰值、预付款峰值及分阶段次数统计，彻底从当前时刻重新开始统计吗？')) return;
+  const acc = D.mt4.account || 'default';
+  const curBal = Number(D.mt4.balance) || 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  try {
+    localStorage.setItem(`gold_mt4_reset_ts_${acc}`, String(nowSec));
+    localStorage.setItem(`gold_mt4_base_v1_${acc}`, String(curBal));
+    localStorage.removeItem(`gold_mt4_hist_v1_${acc}`);
+    localStorage.removeItem(`gold_mt4_long_v1_${acc}`);
+    localStorage.removeItem(`gold_mt4_stats_v1_${acc}`);
+    await fetch('/api/mt4?reset=1');
+    const r = await fetch('/api/mt4');
+    const j = await r.json();
+    if (j && j.mt4) D.mt4 = j.mt4;
+    render();
+    toast('🗑️ 已彻底重置实盘全部历史峰值与图表！');
   } catch (e) {
     toast('重置失败: ' + e.message);
   }
@@ -5521,10 +5557,10 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
         <span class="xs mut">📦 云端 Redis 永久归档 + 本地双备份 · 已累计监测 <b>${stats ? (stats.totalSamples || 1) : 1}</b> 次实盘切片 (自 ${stats ? fmtSecTime(stats.sinceTs) : '今日'} 起)</span>
       </div>
       <div class="btns">
-        <button class="sm ${mode === 'fast' ? 'on' : ''}" onclick="setMt4CurveMode('fast')">⚡ 高频曲线 (近2小时·30s极值)</button>
-        <button class="sm ${mode === 'long' ? 'on' : ''}" onclick="setMt4CurveMode('long')">📅 长周期历史归档 (7~30天·15m极值包络)</button>
-        <button class="sm" onclick="resetMt4CurveBase()" title="以当前余额 $${f2(mt4.balance)} 作为新的零点基准重算累计收益曲线">🎯 重置收益起点</button>
-        <button class="sm" onclick="resetMt4AllStats()" style="color:#94a3b8" title="清空历史峰值与阶梯次数，重新开始统计">🧹 清零峰值统计</button>
+        <button class="sm ${mode === 'fast' ? 'on' : ''}" onclick="setMt4CurveMode('fast')">⚡ 高频曲线 (近2小时)</button>
+        <button class="sm ${mode === 'long' ? 'on' : ''}" onclick="setMt4CurveMode('long')">📅 长周期历史归档 (7~30天)</button>
+        <button class="sm pri" onclick="resetMt4AfterDeposit()" title="入金/出金/调整测试金额后点击：抹平跳空断层，收益从当前余额平稳起算">🔄 入金/加资金一键规整图表</button>
+        <button class="sm" onclick="resetMt4AllStats()" style="color:#94a3b8" title="清空历史峰值与阶梯次数，重新开始统计">🧹 完全清零峰值档案</button>
       </div>
     </div>
 

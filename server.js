@@ -2013,18 +2013,64 @@ async function handleApiMt4(req, res) {
       res.writeHead(200, corsHeaders);
       return res.end(JSON.stringify({ ok: true, connected: false, mt4: null }));
     }
-    if (u.searchParams.get('resetStats') === '1') {
+    const isResetAll = u.searchParams.get('reset') === '1' || u.searchParams.get('resetAll') === '1';
+    const isResetCurve = u.searchParams.get('resetCurve') === '1';
+    const isResetStats = u.searchParams.get('resetStats') === '1';
+
+    if (isResetAll || isResetCurve || isResetStats) {
       if (!latestMt4State && MT4_REDIS_URL && MT4_REDIS_TOKEN) {
         try { latestMt4State = await mt4RemoteGet(); } catch (e) {}
       }
       if (latestMt4State) {
         const nowSec = Math.floor(Date.now() / 1000);
-        latestMt4State.stats = createEmptyMt4Stats(nowSec, latestMt4State.balance, latestMt4State.equity);
-        latestMt4State.initBal = latestMt4State.balance;
+        const curBal = Number(latestMt4State.balance) || 0;
+        const curEq = Number(latestMt4State.equity) || curBal;
+        const curPnl = Number(latestMt4State.totalPnl) || 0;
+        const curMar = Number(latestMt4State.margin) || 0;
+        const curMl = Number(latestMt4State.marginLevel) || 0;
+        const curPx = Number(latestMt4State.bid) || 0;
+        const bLots = Number(latestMt4State.buyLots) || 0;
+        const sLots = Number(latestMt4State.sellLots) || 0;
+        const nLots = Number(latestMt4State.netLots) || Math.abs(bLots - sLots);
+
+        const freshPt = {
+          t: nowSec,
+          bal: curBal,
+          eq: curEq,
+          pnl: curPnl,
+          dd: Math.max(0, -curPnl),
+          mar: curMar,
+          ml: curMl,
+          buyLots: bLots,
+          sellLots: sLots,
+          netLots: nLots,
+          px: curPx
+        };
+
+        latestMt4State.initBal = curBal;
+        latestMt4State.initBalTs = nowSec;
+
+        if (isResetAll || isResetCurve) {
+          latestMt4State.history = [freshPt];
+          latestMt4State.historyLong = [{
+            t: Math.floor(nowSec / 900) * 900,
+            balMin: curBal, balMax: curBal,
+            eqMin: curEq, eqMax: curEq,
+            ddMax: Math.max(0, -curPnl),
+            marMax: curMar,
+            pnlEnd: curPnl,
+            cnt: 1
+          }];
+        }
+
+        if (isResetAll || isResetStats) {
+          latestMt4State.stats = createEmptyMt4Stats(nowSec, curBal, curEq);
+        }
+
         await mt4RemoteSet(latestMt4State, true);
       }
       res.writeHead(200, corsHeaders);
-      return res.end(JSON.stringify({ ok: true, connected: !!latestMt4State, mt4: latestMt4State }));
+      return res.end(JSON.stringify({ ok: true, reset: true, connected: !!latestMt4State, mt4: latestMt4State }));
     }
     if (u.searchParams.has('bal') || u.searchParams.has('balance')) {
       if (MT4_PUSH_TOKEN && u.searchParams.get('token') !== MT4_PUSH_TOKEN) {
