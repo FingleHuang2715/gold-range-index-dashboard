@@ -2503,7 +2503,7 @@ function render() {
         </div>`;
 
       // 渲染「📈 MT4 实盘账户：余额 · 净值 · 实时收益曲线图 & 持仓生死线沙盘」
-      renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc);
+      renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore);
     }
 
     // 渲染 #eaActionBox：实时手动操作指令台 + 账户风控推演卡片
@@ -5498,14 +5498,321 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
     + '</div>';
 }
 
-function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
+// ========== 全站唯一总分：马丁可做指数 · 多周期 (1M/5M/15M/1H) K线蜡烛图连续记录与渲染引擎 ==========
+let MSCORE_CHART_TF = '1M';
+let MSCORE_CHART_CONFIG = null;
+
+window.setMScoreChartTf = function(tf) {
+  MSCORE_CHART_TF = tf;
+  const score = (window.D && window.D._lastMartingaleScore != null) ? window.D._lastMartingaleScore : 60;
+  recordAndRenderMScoreKline(window.D, score);
+};
+
+function getMScoreCandles(d, tf, curScore) {
+  const key = `gold_mscore_kline_v2_${tf}`;
+  let candles = [];
+  try { candles = JSON.parse(localStorage.getItem(key) || '[]') || []; } catch (e) {}
+  const nowSec = Math.floor(Date.now() / 1000);
+  const tfSecMap = { '1M': 60, '5M': 300, '15M': 900, '1H': 3600 };
+  const stepSec = tfSecMap[tf] || 60;
+  const curBarTs = Math.floor(nowSec / stepSec) * stepSec;
+
+  // 如果本地历史少于 30 根，结合 sparks 行情自动合成真实 K 线历史底噪，绝不空白
+  if (candles.length < 30 && d && d.model && d.model.sparks && d.model.sparks[tf]) {
+    const sp = d.model.sparks[tf];
+    const n = sp.length;
+    const synth = sp.slice(-100).map((p, i, arr) => {
+      const v = Math.round(p.v || 60);
+      const prevV = i > 0 ? Math.round(arr[i - 1].v || v) : v;
+      const bTs = Math.floor((p.t || (nowSec - (n - i) * stepSec)) / stepSec) * stepSec;
+      const o = prevV;
+      const c = v;
+      const spread = Math.min(5, Math.max(1, Math.round(Math.abs(c - o) * 0.4)));
+      const h = Math.max(o, c) + (c >= o ? spread : Math.floor(spread / 2));
+      const l = Math.min(o, c) - (c <= o ? spread : Math.floor(spread / 2));
+      return {
+        t: bTs,
+        o: Math.max(5, Math.min(99, o)),
+        h: Math.max(5, Math.min(99, h)),
+        l: Math.max(5, Math.min(99, l)),
+        c: Math.max(5, Math.min(99, c)),
+        cnt: 1
+      };
+    });
+    const cMap = new Map();
+    synth.forEach((c) => cMap.set(c.t, c));
+    candles.forEach((c) => cMap.set(c.t, c));
+    candles = Array.from(cMap.values()).sort((a, b) => a.t - b.t);
+  }
+
+  // 记录/更新当前实盘正在走动中的这一根最新蜡烛
+  if (curScore != null) {
+    const last = candles[candles.length - 1];
+    if (last && last.t === curBarTs) {
+      last.c = curScore;
+      last.h = Math.max(last.h, curScore);
+      last.l = Math.min(last.l, curScore);
+      last.cnt = (last.cnt || 0) + 1;
+    } else {
+      const prevC = last ? last.c : curScore;
+      candles.push({
+        t: curBarTs,
+        o: prevC,
+        h: Math.max(prevC, curScore),
+        l: Math.min(prevC, curScore),
+        c: curScore,
+        cnt: 1
+      });
+    }
+  }
+
+  candles = candles.slice(-140);
+  try { localStorage.setItem(key, JSON.stringify(candles)); } catch (e) {}
+  return candles;
+}
+
+function buildMScoreKlineSvg(candles, tf, curScore) {
+  if (!candles || !candles.length) {
+    return '<div class="mut sm" style="padding:40px;text-align:center">正在采集并合成 ' + tf + ' 马丁可做指数蜡烛图数据...</div>';
+  }
+  // 核心：严格对齐上方 MT4 收益/浮亏极值图的绘制坐标轴 (W=1200, L=68, R=156)，确保时间轴上下完全像素级对齐！
+  const W = 1200, H = 290, L = 68, R = 156, T = 22, B = 35;
+  const cw = W - L - R, ch = H - T - B;
+  const n = candles.length;
+  const xOf = (i) => L + (i / Math.max(1, n - 1)) * cw;
+
+  const vMin = 0, vMax = 100;
+  const yOf = (v) => T + (1 - (v - vMin) / (vMax - vMin)) * ch;
+
+  const y100 = yOf(100), y60 = yOf(60), y46 = yOf(46), y0 = yOf(0);
+  const zoneBgs = `
+    <rect x="${L}" y="${y100}" width="${cw}" height="${y60 - y100}" fill="rgba(16,185,129,0.06)"/>
+    <rect x="${L}" y="${y60}" width="${cw}" height="${y46 - y60}" fill="rgba(245,158,11,0.05)"/>
+    <rect x="${L}" y="${y46}" width="${cw}" height="${y0 - y46}" fill="rgba(244,63,94,0.07)"/>
+  `;
+
+  const gridLines = [100, 80, 60, 46, 20, 0].map((val) => {
+    const y = yOf(val).toFixed(1);
+    const is60 = val === 60, is46 = val === 46;
+    const stroke = is60 ? '#10b981' : is46 ? '#f59e0b' : '#262d3b';
+    const strokeWidth = (is60 || is46) ? 1.4 : 1;
+    const dash = (is60 || is46) ? '5,4' : '3,3';
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-dasharray="${dash}"/>
+      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="${is60 ? '#34d399' : is46 ? '#fbbf24' : '#64748b'}" font-size="11" font-weight="${(is60 || is46) ? 700 : 400}">${val}分</text>`;
+  }).join('');
+
+  // 10 周期均线 (SMA10)
+  const maPeriod = 10;
+  const maPtsArr = [];
+  candles.forEach((c, i) => {
+    if (i < maPeriod - 1) return;
+    const subset = candles.slice(i - maPeriod + 1, i + 1);
+    const avg = subset.reduce((acc, cur) => acc + cur.c, 0) / maPeriod;
+    maPtsArr.push(`${xOf(i).toFixed(1)},${yOf(avg).toFixed(1)}`);
+  });
+  const maSvg = maPtsArr.length ? `<polyline points="${maPtsArr.join(' ')}" fill="none" stroke="#eab308" stroke-width="1.8" stroke-linecap="round"/>` : '';
+
+  // 蜡烛实体
+  const bw = Math.max(3, Math.min(11, (cw / n) * 0.68));
+  const candleSvg = candles.map((c, i) => {
+    const x = xOf(i);
+    const isBull = c.c >= c.o;
+    const col = isBull ? '#10b981' : '#f43f5e';
+    const yh = yOf(c.h).toFixed(1);
+    const yl = yOf(c.l).toFixed(1);
+    const yo = yOf(c.o);
+    const yc = yOf(c.c);
+    const topY = Math.min(yo, yc).toFixed(1);
+    const botY = Math.max(yo, yc).toFixed(1);
+    const bh = Math.max(2, Math.abs(yo - yc)).toFixed(1);
+    return `
+      <line x1="${x.toFixed(1)}" y1="${yh}" x2="${x.toFixed(1)}" y2="${topY}" stroke="${col}" stroke-width="1.3"/>
+      <line x1="${x.toFixed(1)}" y1="${botY}" x2="${x.toFixed(1)}" y2="${yl}" stroke="${col}" stroke-width="1.3"/>
+      <rect x="${(x - bw / 2).toFixed(1)}" y="${topY}" width="${bw.toFixed(1)}" height="${bh}" fill="${col}" stroke="${col}" stroke-width="0.8" rx="1"/>
+    `;
+  }).join('');
+
+  // X 轴时间刻度
+  const xStep = Math.max(1, Math.floor((n - 1) / 7));
+  let xTicks = '';
+  for (let i = 0; i < n; i += xStep) {
+    const x = xOf(i).toFixed(1);
+    const dObj = new Date(candles[i].t < 1e11 ? candles[i].t * 1000 : candles[i].t);
+    const tm = tf === '1H'
+      ? dObj.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-')
+      : dObj.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit' });
+    xTicks += `<line x1="${x}" y1="${T}" x2="${x}" y2="${H - B}" stroke="#262d3b" stroke-width="1" opacity="0.35"/>
+      <text x="${x}" y="${H - 12}" text-anchor="middle" fill="#94a3b8" font-size="11">${tm}</text>`;
+  }
+
+  // 右侧标注
+  const last = candles[n - 1];
+  const lastY = yOf(last.c).toFixed(1);
+  const lastCol = last.c >= 60 ? '#10b981' : last.c >= 46 ? '#f59e0b' : '#f43f5e';
+  const lastTxt = last.c >= 60 ? '适合做' : last.c >= 46 ? '谨慎观望' : '禁做单边';
+  const rightTagSvg = `
+    <line x1="${L}" y1="${lastY}" x2="${W - R}" y2="${lastY}" stroke="${lastCol}" stroke-width="1.4" stroke-dasharray="3,2" opacity="0.8"/>
+    <rect x="${W - R + 6}" y="${+lastY - 11}" width="98" height="22" rx="4" fill="${lastCol}"/>
+    <text x="${W - R + 55}" y="${+lastY + 4}" text-anchor="middle" fill="#0b0e14" font-size="12" font-weight="900">${last.c}分 ${lastTxt}</text>
+  `;
+
+  MSCORE_CHART_CONFIG = { candles, W, H, L, R, T, B, cw, ch, tf, vMin, vMax };
+
+  return `
+    <svg class="big-svg" id="svg-mscore-kline" style="height:350px;min-height:300px;max-height:400px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onMScoreChartMove(event)" onmouseleave="onMScoreChartLeave()">
+      ${zoneBgs}
+      ${gridLines}
+      ${xTicks}
+      ${candleSvg}
+      ${maSvg}
+      ${rightTagSvg}
+
+      <!-- 准星浮窗 -->
+      <g id="xh-mscore" style="display:none;pointer-events:none">
+        <line id="xh-mscore-v" x1="0" y1="${T}" x2="0" y2="${H - B}" stroke="#ffffff" stroke-width="1.2" stroke-dasharray="3,3" opacity="0.9"/>
+        <circle id="xh-mscore-c" cx="0" cy="0" r="5" fill="#eab308" stroke="#ffffff" stroke-width="1.6"/>
+        <rect id="xh-mscore-box" x="0" y="0" width="380" height="66" rx="6" fill="rgba(15,20,30,0.96)" stroke="#eab308" stroke-width="1.2"/>
+        <text id="xh-mscore-t1" x="0" y="0" fill="#eab308" font-size="12" font-weight="bold"></text>
+        <text id="xh-mscore-t2" x="0" y="0" fill="#ffffff" font-size="12.5" font-weight="bold"></text>
+        <text id="xh-mscore-t3" x="0" y="0" fill="#94a3b8" font-size="11.5"></text>
+      </g>
+    </svg>
+  `;
+}
+
+function buildMScoreKlineCardHtml(d, curScore, tf) {
+  tf = tf || MSCORE_CHART_TF || '1M';
+  curScore = curScore != null ? curScore : (d && d._lastMartingaleScore != null ? d._lastMartingaleScore : 60);
+  const candles = getMScoreCandles(d, tf, curScore);
+
+  if (curScore != null) {
+    ['1M', '5M', '15M', '1H'].forEach((k) => {
+      if (k !== tf) getMScoreCandles(d, k, curScore);
+    });
+  }
+
+  const last = candles[candles.length - 1] || { o: curScore, h: curScore, l: curScore, c: curScore, t: Date.now() };
+  const prev = candles[candles.length - 2] || last;
+  const chg = last.c - prev.c;
+  const isUp = chg >= 0;
+  const statusCls = curScore >= 60 ? 'RANGE' : curScore >= 46 ? 'MIXED' : 'TREND';
+  const statusTxt = curScore >= 60 ? '🟢 适合做马丁' : curScore >= 46 ? '🟡 谨慎观望' : '🔴 高危禁做';
+
+  if ($('nav-mkline')) {
+    $('nav-mkline').textContent = `${curScore}分(${tf})`;
+    $('nav-mkline').className = 'pill ' + statusCls + ' fast-num';
+    navDelta('nav-mkline', curScore, 2, `${curScore}分`);
+  }
+
+  const svgHtml = buildMScoreKlineSvg(candles, tf, curScore);
+
+  return `
+    <div class="vhead" style="margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0;display:flex;align-items:center;gap:6px">
+          <span class="live-dot"></span>
+          <span>🕯️ 全站唯一总分：马丁可做指数 · 多周期 K 线蜡烛图</span>
+        </h2>
+        <span class="pill ${statusCls}">当前最新: <b>${curScore}分</b> (${statusTxt})</span>
+        <span class="xs mut">本根 ${tf} 蜡烛: 开盘 <b style="color:#cbd5e1">${last.o}</b> · 最高 <b style="color:#34d399">${last.h}</b> · 最低 <b style="color:#fb7185">${last.l}</b> · 收盘 <b style="color:var(--gold)">${last.c}</b> (${isUp ? '+' : ''}${chg}分) · 已累计归档 <b>${candles.length}</b> 根蜡烛</span>
+      </div>
+      <div class="btns">
+        <span class="xs mut" style="font-weight:700">切换周期:</span>
+        <button class="sm ${tf === '1M' ? 'pri on' : ''}" onclick="setMScoreChartTf('1M')">⚡ 1M (1分钟超短)</button>
+        <button class="sm ${tf === '5M' ? 'pri on' : ''}" onclick="setMScoreChartTf('5M')">⏱️ 5M (5分钟短线)</button>
+        <button class="sm ${tf === '15M' ? 'pri on' : ''}" onclick="setMScoreChartTf('15M')">📊 15M (15分钟波段)</button>
+        <button class="sm ${tf === '1H' ? 'pri on' : ''}" onclick="setMScoreChartTf('1H')">📅 1H (1小时主力)</button>
+      </div>
+    </div>
+    <div class="chart-wrap" style="min-height:350px">${svgHtml}</div>
+    <div class="legend" style="justify-content:space-between;margin-top:6px">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <span><i style="background:#10b981"></i>绿色阳线: 马丁指数上升/转安全</span>
+        <span><i style="background:#f43f5e"></i>红色阴线: 马丁指数下滑/单边风险加剧</span>
+        <span><i style="background:#eab308"></i>金色实线: MA10 指数趋势均线</span>
+        <span><i style="border:1px dashed #10b981;background:rgba(16,185,129,0.2)"></i>≥60分: 推荐做马丁绿区</span>
+        <span><i style="border:1px dashed #f59e0b;background:rgba(245,158,11,0.2)"></i>46~59分: 谨慎观望黄区</span>
+        <span><i style="background:rgba(244,63,94,0.3)"></i>&lt;46分: 单边推土机禁做红区</span>
+      </div>
+      <span class="xs mut">💡 提示：鼠标移入蜡烛图显示十字准星与开高低收明细 · 全周期实时持久化记录</span>
+    </div>
+  `;
+}
+
+function recordAndRenderMScoreKline(d, curScore) {
+  let sec = $('martingaleScoreKlineSec');
+  const standalone = $('standaloneMScoreKlineSec');
+  if (!sec && standalone) {
+    standalone.style.display = 'block';
+    sec = standalone;
+  } else if (standalone) {
+    standalone.style.display = 'none';
+  }
+  const tf = MSCORE_CHART_TF || '1M';
+  const html = buildMScoreKlineCardHtml(d, curScore, tf);
+  if (sec) {
+    sec.innerHTML = html;
+  }
+}
+
+window.onMScoreChartMove = function(ev) {
+  const cfg = MSCORE_CHART_CONFIG;
+  const svg = $('svg-mscore-kline'), g = $('xh-mscore');
+  if (!cfg || !svg || !g) return;
+  const rect = svg.getBoundingClientRect();
+  const mx = (ev.clientX - rect.left) / rect.width * cfg.W;
+  const n = cfg.candles.length;
+  const idx = Math.max(0, Math.min(n - 1, Math.round((mx - cfg.L) / cfg.cw * Math.max(1, n - 1))));
+  const c = cfg.candles[idx];
+  const x = cfg.L + (idx / Math.max(1, n - 1)) * cfg.cw;
+  const yC = cfg.T + (1 - (c.c - cfg.vMin) / (cfg.vMax - cfg.vMin)) * cfg.ch;
+
+  g.style.display = 'block';
+  $('xh-mscore-v').setAttribute('x1', x);
+  $('xh-mscore-v').setAttribute('x2', x);
+  $('xh-mscore-c').setAttribute('cx', x);
+  $('xh-mscore-c').setAttribute('cy', yC);
+
+  const boxW = 380, boxH = 66;
+  const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
+  const by = cfg.T + 6;
+  const box = $('xh-mscore-box'), t1 = $('xh-mscore-t1'), t2 = $('xh-mscore-t2'), t3 = $('xh-mscore-t3');
+  box.setAttribute('x', bx); box.setAttribute('y', by);
+  t1.setAttribute('x', bx + 12); t1.setAttribute('y', by + 19);
+  t2.setAttribute('x', bx + 12); t2.setAttribute('y', by + 39);
+  t3.setAttribute('x', bx + 12); t3.setAttribute('y', by + 57);
+
+  const dObj = new Date(c.t < 1e11 ? c.t * 1000 : c.t);
+  const tmStr = dObj.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  const isBull = c.c >= c.o;
+  const statusStr = c.c >= 60 ? '🟢 适合做马丁' : c.c >= 46 ? '🟡 谨慎观望' : '🔴 高危禁做';
+
+  t1.textContent = `⏱️ ${cfg.tf} 蜡烛时间: ${tmStr}`;
+  t2.textContent = `开: ${c.o} | 高: ${c.h} | 低: ${c.l} | 收: ${c.c} (${isBull ? '▲阳线' : '▼阴线'})`;
+  t3.textContent = `马丁判定: ${statusStr} (柱内采样: ${c.cnt || 1}次)`;
+};
+
+window.onMScoreChartLeave = function() {
+  const g = $('xh-mscore');
+  if (g) g.style.display = 'none';
+};
+
+function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
   const sec = $('mt4CurveSec');
   if (!sec) return;
+  const curMScore = martingaleScore != null ? martingaleScore : (d && d._lastMartingaleScore != null ? d._lastMartingaleScore : 60);
   if (!mt4 || !mt4Dec) {
     sec.style.display = 'none';
+    const standalone = $('standaloneMScoreKlineSec');
+    if (standalone) {
+      standalone.style.display = 'block';
+      standalone.innerHTML = buildMScoreKlineCardHtml(d, curMScore, MSCORE_CHART_TF);
+    }
     return;
   }
   sec.style.display = 'block';
+  const standalone = $('standaloneMScoreKlineSec');
+  if (standalone) standalone.style.display = 'none';
   const { history, historyLong, stats, initBal } = getMergedMt4History(mt4);
   const closedProfit = r2((mt4.balance || 0) - initBal);
   const netTotalProfit = r2((mt4.equity || 0) - initBal);
@@ -5737,7 +6044,9 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
     ${chartSvg}
 
     <!-- 紧跟在收益与浮亏极值图正下方：全站唯一总分·马丁可做指数多周期蜡烛图（时间轴与上方双面板像素级绝对对齐，方便上下垂直对比） -->
-    <div id="martingaleScoreKlineSec" style="margin-top:14px;background:#0d1118;border:1px solid var(--bd);border-radius:10px;padding:14px"></div>
+    <div id="martingaleScoreKlineSec" style="margin-top:14px;background:#0d1118;border:1px solid var(--bd);border-radius:10px;padding:14px">
+      ${buildMScoreKlineCardHtml(d, curMScore, MSCORE_CHART_TF)}
+    </div>
 
     <!-- 第三排半：24小时浮亏高危时段热力表 -->
     ${buildMt4HourHeatmap(stats, mt4Dec)}
@@ -5823,300 +6132,6 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
     </div>
   `;
 }
-
-// ========== 全站唯一总分：马丁可做指数 · 多周期 (1M/5M/15M/1H) K线蜡烛图连续记录与渲染引擎 ==========
-let MSCORE_CHART_TF = '1M';
-let MSCORE_CHART_CONFIG = null;
-
-window.setMScoreChartTf = function(tf) {
-  MSCORE_CHART_TF = tf;
-  if (window.D && window.D._lastMartingaleScore != null) {
-    recordAndRenderMScoreKline(window.D, window.D._lastMartingaleScore);
-  } else if (window.D) {
-    render();
-  }
-};
-
-function getMScoreCandles(d, tf, curScore) {
-  const key = `gold_mscore_kline_v2_${tf}`;
-  let candles = [];
-  try { candles = JSON.parse(localStorage.getItem(key) || '[]') || []; } catch (e) {}
-  const nowSec = Math.floor(Date.now() / 1000);
-  const tfSecMap = { '1M': 60, '5M': 300, '15M': 900, '1H': 3600 };
-  const stepSec = tfSecMap[tf] || 60;
-  const curBarTs = Math.floor(nowSec / stepSec) * stepSec;
-
-  // 如果本地历史少于 30 根，结合 sparks 行情自动合成真实 K 线历史底噪，绝不空白
-  if (candles.length < 30 && d && d.model && d.model.sparks && d.model.sparks[tf]) {
-    const sp = d.model.sparks[tf];
-    const n = sp.length;
-    const synth = sp.slice(-100).map((p, i, arr) => {
-      const v = Math.round(p.v || 60);
-      const prevV = i > 0 ? Math.round(arr[i - 1].v || v) : v;
-      const bTs = Math.floor((p.t || (nowSec - (n - i) * stepSec)) / stepSec) * stepSec;
-      const o = prevV;
-      const c = v;
-      const spread = Math.min(5, Math.max(1, Math.round(Math.abs(c - o) * 0.4)));
-      const h = Math.max(o, c) + (c >= o ? spread : Math.floor(spread / 2));
-      const l = Math.min(o, c) - (c <= o ? spread : Math.floor(spread / 2));
-      return {
-        t: bTs,
-        o: Math.max(5, Math.min(99, o)),
-        h: Math.max(5, Math.min(99, h)),
-        l: Math.max(5, Math.min(99, l)),
-        c: Math.max(5, Math.min(99, c)),
-        cnt: 1
-      };
-    });
-    const cMap = new Map();
-    synth.forEach((c) => cMap.set(c.t, c));
-    candles.forEach((c) => cMap.set(c.t, c));
-    candles = Array.from(cMap.values()).sort((a, b) => a.t - b.t);
-  }
-
-  // 记录/更新当前实盘正在走动中的这一根最新蜡烛
-  if (curScore != null) {
-    const last = candles[candles.length - 1];
-    if (last && last.t === curBarTs) {
-      last.c = curScore;
-      last.h = Math.max(last.h, curScore);
-      last.l = Math.min(last.l, curScore);
-      last.cnt = (last.cnt || 0) + 1;
-    } else {
-      const prevC = last ? last.c : curScore;
-      candles.push({
-        t: curBarTs,
-        o: prevC,
-        h: Math.max(prevC, curScore),
-        l: Math.min(prevC, curScore),
-        c: curScore,
-        cnt: 1
-      });
-    }
-  }
-
-  candles = candles.slice(-140);
-  try { localStorage.setItem(key, JSON.stringify(candles)); } catch (e) {}
-  return candles;
-}
-
-function buildMScoreKlineSvg(candles, tf, curScore) {
-  if (!candles || !candles.length) {
-    return '<div class="mut sm" style="padding:40px;text-align:center">正在采集并合成 ' + tf + ' 马丁可做指数蜡烛图数据...</div>';
-  }
-  // 核心：严格对齐上方 MT4 收益/浮亏极值图的绘制坐标轴 (W=1200, L=68, R=156)，确保时间轴上下完全像素级对齐！
-  const W = 1200, H = 290, L = 68, R = 156, T = 22, B = 35;
-  const cw = W - L - R, ch = H - T - B;
-  const n = candles.length;
-  const xOf = (i) => L + (i / Math.max(1, n - 1)) * cw;
-
-  const vMin = 0, vMax = 100;
-  const yOf = (v) => T + (1 - (v - vMin) / (vMax - vMin)) * ch;
-
-  const y100 = yOf(100), y60 = yOf(60), y46 = yOf(46), y0 = yOf(0);
-  const zoneBgs = `
-    <rect x="${L}" y="${y100}" width="${cw}" height="${y60 - y100}" fill="rgba(16,185,129,0.06)"/>
-    <rect x="${L}" y="${y60}" width="${cw}" height="${y46 - y60}" fill="rgba(245,158,11,0.05)"/>
-    <rect x="${L}" y="${y46}" width="${cw}" height="${y0 - y46}" fill="rgba(244,63,94,0.07)"/>
-  `;
-
-  const gridLines = [100, 80, 60, 46, 20, 0].map((val) => {
-    const y = yOf(val).toFixed(1);
-    const is60 = val === 60, is46 = val === 46;
-    const stroke = is60 ? '#10b981' : is46 ? '#f59e0b' : '#262d3b';
-    const strokeWidth = (is60 || is46) ? 1.4 : 1;
-    const dash = (is60 || is46) ? '5,4' : '3,3';
-    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-dasharray="${dash}"/>
-      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="${is60 ? '#34d399' : is46 ? '#fbbf24' : '#64748b'}" font-size="11" font-weight="${(is60 || is46) ? 700 : 400}">${val}分</text>`;
-  }).join('');
-
-  // 10 周期均线 (SMA10)
-  const maPeriod = 10;
-  const maPtsArr = [];
-  candles.forEach((c, i) => {
-    if (i < maPeriod - 1) return;
-    const subset = candles.slice(i - maPeriod + 1, i + 1);
-    const avg = subset.reduce((acc, cur) => acc + cur.c, 0) / maPeriod;
-    maPtsArr.push(`${xOf(i).toFixed(1)},${yOf(avg).toFixed(1)}`);
-  });
-  const maSvg = maPtsArr.length ? `<polyline points="${maPtsArr.join(' ')}" fill="none" stroke="#eab308" stroke-width="1.8" stroke-linecap="round"/>` : '';
-
-  // 蜡烛实体
-  const bw = Math.max(3, Math.min(11, (cw / n) * 0.68));
-  const candleSvg = candles.map((c, i) => {
-    const x = xOf(i);
-    const isBull = c.c >= c.o;
-    const col = isBull ? '#10b981' : '#f43f5e';
-    const yh = yOf(c.h).toFixed(1);
-    const yl = yOf(c.l).toFixed(1);
-    const yo = yOf(c.o);
-    const yc = yOf(c.c);
-    const topY = Math.min(yo, yc).toFixed(1);
-    const botY = Math.max(yo, yc).toFixed(1);
-    const bh = Math.max(2, Math.abs(yo - yc)).toFixed(1);
-    return `
-      <line x1="${x.toFixed(1)}" y1="${yh}" x2="${x.toFixed(1)}" y2="${topY}" stroke="${col}" stroke-width="1.3"/>
-      <line x1="${x.toFixed(1)}" y1="${botY}" x2="${x.toFixed(1)}" y2="${yl}" stroke="${col}" stroke-width="1.3"/>
-      <rect x="${(x - bw / 2).toFixed(1)}" y="${topY}" width="${bw.toFixed(1)}" height="${bh}" fill="${col}" stroke="${col}" stroke-width="0.8" rx="1"/>
-    `;
-  }).join('');
-
-  // X 轴时间刻度
-  const xStep = Math.max(1, Math.floor((n - 1) / 7));
-  let xTicks = '';
-  for (let i = 0; i < n; i += xStep) {
-    const x = xOf(i).toFixed(1);
-    const dObj = new Date(candles[i].t < 1e11 ? candles[i].t * 1000 : candles[i].t);
-    const tm = tf === '1H'
-      ? dObj.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-')
-      : dObj.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, hour: '2-digit', minute: '2-digit' });
-    xTicks += `<line x1="${x}" y1="${T}" x2="${x}" y2="${H - B}" stroke="#262d3b" stroke-width="1" opacity="0.35"/>
-      <text x="${x}" y="${H - 12}" text-anchor="middle" fill="#94a3b8" font-size="11">${tm}</text>`;
-  }
-
-  // 右侧标注
-  const last = candles[n - 1];
-  const lastY = yOf(last.c).toFixed(1);
-  const lastCol = last.c >= 60 ? '#10b981' : last.c >= 46 ? '#f59e0b' : '#f43f5e';
-  const lastTxt = last.c >= 60 ? '适合做' : last.c >= 46 ? '谨慎观望' : '禁做单边';
-  const rightTagSvg = `
-    <line x1="${L}" y1="${lastY}" x2="${W - R}" y2="${lastY}" stroke="${lastCol}" stroke-width="1.4" stroke-dasharray="3,2" opacity="0.8"/>
-    <rect x="${W - R + 6}" y="${+lastY - 11}" width="98" height="22" rx="4" fill="${lastCol}"/>
-    <text x="${W - R + 55}" y="${+lastY + 4}" text-anchor="middle" fill="#0b0e14" font-size="12" font-weight="900">${last.c}分 ${lastTxt}</text>
-  `;
-
-  MSCORE_CHART_CONFIG = { candles, W, H, L, R, T, B, cw, ch, tf, vMin, vMax };
-
-  return `
-    <svg class="big-svg" id="svg-mscore-kline" style="height:350px;min-height:300px;max-height:400px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onMScoreChartMove(event)" onmouseleave="onMScoreChartLeave()">
-      ${zoneBgs}
-      ${gridLines}
-      ${xTicks}
-      ${candleSvg}
-      ${maSvg}
-      ${rightTagSvg}
-
-      <!-- 准星浮窗 -->
-      <g id="xh-mscore" style="display:none;pointer-events:none">
-        <line id="xh-mscore-v" x1="0" y1="${T}" x2="0" y2="${H - B}" stroke="#ffffff" stroke-width="1.2" stroke-dasharray="3,3" opacity="0.9"/>
-        <circle id="xh-mscore-c" cx="0" cy="0" r="5" fill="#eab308" stroke="#ffffff" stroke-width="1.6"/>
-        <rect id="xh-mscore-box" x="0" y="0" width="380" height="66" rx="6" fill="rgba(15,20,30,0.96)" stroke="#eab308" stroke-width="1.2"/>
-        <text id="xh-mscore-t1" x="0" y="0" fill="#eab308" font-size="12" font-weight="bold"></text>
-        <text id="xh-mscore-t2" x="0" y="0" fill="#ffffff" font-size="12.5" font-weight="bold"></text>
-        <text id="xh-mscore-t3" x="0" y="0" fill="#94a3b8" font-size="11.5"></text>
-      </g>
-    </svg>
-  `;
-}
-
-function recordAndRenderMScoreKline(d, curScore) {
-  let sec = $('martingaleScoreKlineSec');
-  const standalone = $('standaloneMScoreKlineSec');
-  if (!sec && standalone) {
-    standalone.style.display = 'block';
-    sec = standalone;
-  } else if (standalone) {
-    standalone.style.display = 'none';
-  }
-  if (!sec) return;
-  const tf = MSCORE_CHART_TF || '1M';
-  const candles = getMScoreCandles(d, tf, curScore);
-
-  if (curScore != null) {
-    ['1M', '5M', '15M', '1H'].forEach((k) => {
-      if (k !== tf) getMScoreCandles(d, k, curScore);
-    });
-  }
-
-  const last = candles[candles.length - 1] || { o: curScore, h: curScore, l: curScore, c: curScore, t: Date.now() };
-  const prev = candles[candles.length - 2] || last;
-  const chg = last.c - prev.c;
-  const isUp = chg >= 0;
-  const statusCls = curScore >= 60 ? 'RANGE' : curScore >= 46 ? 'MIXED' : 'TREND';
-  const statusTxt = curScore >= 60 ? '🟢 适合做马丁' : curScore >= 46 ? '🟡 谨慎观望' : '🔴 高危禁做';
-
-  if ($('nav-mkline')) {
-    $('nav-mkline').textContent = `${curScore}分(${tf})`;
-    $('nav-mkline').className = 'pill ' + statusCls + ' fast-num';
-    navDelta('nav-mkline', curScore, 2, `${curScore}分`);
-  }
-
-  const svgHtml = buildMScoreKlineSvg(candles, tf, curScore);
-
-  sec.innerHTML = `
-    <div class="vhead" style="margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <h2 style="margin:0;display:flex;align-items:center;gap:6px">
-          <span class="live-dot"></span>
-          <span>🕯️ 全站唯一总分：马丁可做指数 · 多周期 K 线蜡烛图</span>
-        </h2>
-        <span class="pill ${statusCls}">当前最新: <b>${curScore}分</b> (${statusTxt})</span>
-        <span class="xs mut">本根 ${tf} 蜡烛: 开盘 <b style="color:#cbd5e1">${last.o}</b> · 最高 <b style="color:#34d399">${last.h}</b> · 最低 <b style="color:#fb7185">${last.l}</b> · 收盘 <b style="color:var(--gold)">${last.c}</b> (${isUp ? '+' : ''}${chg}分) · 已累计归档 <b>${candles.length}</b> 根蜡烛</span>
-      </div>
-      <div class="btns">
-        <span class="xs mut" style="font-weight:700">切换周期:</span>
-        <button class="sm ${tf === '1M' ? 'pri on' : ''}" onclick="setMScoreChartTf('1M')">⚡ 1M (1分钟超短)</button>
-        <button class="sm ${tf === '5M' ? 'pri on' : ''}" onclick="setMScoreChartTf('5M')">⏱️ 5M (5分钟短线)</button>
-        <button class="sm ${tf === '15M' ? 'pri on' : ''}" onclick="setMScoreChartTf('15M')">📊 15M (15分钟波段)</button>
-        <button class="sm ${tf === '1H' ? 'pri on' : ''}" onclick="setMScoreChartTf('1H')">📅 1H (1小时主力)</button>
-      </div>
-    </div>
-    <div class="chart-wrap" style="min-height:350px">${svgHtml}</div>
-    <div class="legend" style="justify-content:space-between;margin-top:6px">
-      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-        <span><i style="background:#10b981"></i>绿色阳线: 马丁指数上升/转安全</span>
-        <span><i style="background:#f43f5e"></i>红色阴线: 马丁指数下滑/单边风险加剧</span>
-        <span><i style="background:#eab308"></i>金色实线: MA10 指数趋势均线</span>
-        <span><i style="border:1px dashed #10b981;background:rgba(16,185,129,0.2)"></i>≥60分: 推荐做马丁绿区</span>
-        <span><i style="border:1px dashed #f59e0b;background:rgba(245,158,11,0.2)"></i>46~59分: 谨慎观望黄区</span>
-        <span><i style="background:rgba(244,63,94,0.3)"></i>&lt;46分: 单边推土机禁做红区</span>
-      </div>
-      <span class="xs mut">💡 提示：鼠标移入蜡烛图显示十字准星与开高低收明细 · 全周期实时持久化记录</span>
-    </div>
-  `;
-}
-
-window.onMScoreChartMove = function(ev) {
-  const cfg = MSCORE_CHART_CONFIG;
-  const svg = $('svg-mscore-kline'), g = $('xh-mscore');
-  if (!cfg || !svg || !g) return;
-  const rect = svg.getBoundingClientRect();
-  const mx = (ev.clientX - rect.left) / rect.width * cfg.W;
-  const n = cfg.candles.length;
-  const idx = Math.max(0, Math.min(n - 1, Math.round((mx - cfg.L) / cfg.cw * Math.max(1, n - 1))));
-  const c = cfg.candles[idx];
-  const x = cfg.L + (idx / Math.max(1, n - 1)) * cfg.cw;
-  const yC = cfg.T + (1 - (c.c - cfg.vMin) / (cfg.vMax - cfg.vMin)) * cfg.ch;
-
-  g.style.display = 'block';
-  $('xh-mscore-v').setAttribute('x1', x);
-  $('xh-mscore-v').setAttribute('x2', x);
-  $('xh-mscore-c').setAttribute('cx', x);
-  $('xh-mscore-c').setAttribute('cy', yC);
-
-  const boxW = 380, boxH = 66;
-  const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
-  const by = cfg.T + 6;
-  const box = $('xh-mscore-box'), t1 = $('xh-mscore-t1'), t2 = $('xh-mscore-t2'), t3 = $('xh-mscore-t3');
-  box.setAttribute('x', bx); box.setAttribute('y', by);
-  t1.setAttribute('x', bx + 12); t1.setAttribute('y', by + 19);
-  t2.setAttribute('x', bx + 12); t2.setAttribute('y', by + 39);
-  t3.setAttribute('x', bx + 12); t3.setAttribute('y', by + 57);
-
-  const dObj = new Date(c.t < 1e11 ? c.t * 1000 : c.t);
-  const tmStr = dObj.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-  const isBull = c.c >= c.o;
-  const statusStr = c.c >= 60 ? '🟢 适合做马丁' : c.c >= 46 ? '🟡 谨慎观望' : '🔴 高危禁做';
-
-  t1.textContent = `⏱️ ${cfg.tf} 蜡烛时间: ${tmStr}`;
-  t2.textContent = `开: ${c.o} | 高: ${c.h} | 低: ${c.l} | 收: ${c.c} (${isBull ? '▲阳线' : '▼阴线'})`;
-  t3.textContent = `马丁判定: ${statusStr} (柱内采样: ${c.cnt || 1}次)`;
-};
-
-window.onMScoreChartLeave = function() {
-  const g = $('xh-mscore');
-  if (g) g.style.display = 'none';
-};
 
 // 每 8 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (配合服务端 8s 内存缓存与页面后台休眠，极致节省 Redis 额度)
 setInterval(async () => {
