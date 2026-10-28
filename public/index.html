@@ -4567,6 +4567,17 @@ function getMergedMt4History(mt4) {
     if ((localStats.peaks.maxLayers && localStats.peaks.maxLayers.val || 0) > (stats.peaks.maxLayers.val || 0)) {
       stats.peaks.maxLayers = localStats.peaks.maxLayers;
     }
+    if (Array.isArray(localStats.hourly) && localStats.hourly.length === 24) {
+      if (!Array.isArray(stats.hourly) || stats.hourly.length !== 24) {
+        stats.hourly = localStats.hourly;
+      } else {
+        stats.hourly = stats.hourly.map((h, i) => {
+          const l = localStats.hourly[i] || {};
+          const mx = (a, b) => (a || []).map((v, k) => Math.max(v || 0, (b || [])[k] || 0));
+          return { s: Math.max(h.s || 0, l.s || 0), dd: Math.max(h.dd || 0, l.dd || 0), mar: Math.max(h.mar || 0, l.mar || 0), w: mx(h.w, l.w), d: mx(h.d, l.d) };
+        });
+      }
+    }
     if (Array.isArray(localStats.tiers) && Array.isArray(stats.tiers)) {
       const lMap = new Map(localStats.tiers.map((x) => [x.th, x]));
       stats.tiers = stats.tiers.map((t) => {
@@ -5192,6 +5203,97 @@ window.onMt4ChartLeave = function() {
   if (g) g.style.display = 'none';
 };
 
+// ========== 24 小时 (北京时间) 浮亏高危时段热力表：行=浮亏阶梯，列=小时，一眼看出哪些时段容易被深套 ==========
+function buildMt4HourHeatmap(stats, mt4Dec) {
+  const hourly = (stats && Array.isArray(stats.hourly) && stats.hourly.length === 24) ? stats.hourly : null;
+  if (!hourly) return '<div class="xs mut">时段档案正在建立中，下一次实盘推送后即开始按小时累计…</div>';
+  const TH = MT4_DD_TIERS_DEF;
+  const bjNowH = new Date(Date.now() + 8 * 3600000).getUTCHours();
+  const bjNowM = new Date(Date.now() + 8 * 3600000).getUTCMinutes();
+  const sessOf = (h) => h >= 8 && h < 15 ? ['亚盘', '#38bdf8'] : h >= 15 && h < 20 ? ['欧盘', '#a78bfa'] : h >= 20 || h < 4 ? ['美盘', '#fb923c'] : ['清淡', '#64748b'];
+
+  // 每小时风险分：阶梯越深权重越高 (独立发生次数×th/50) + 峰值浮亏/50 + 深套停留分钟/10
+  const rows = hourly.map((h, i) => {
+    const w = h.w || [], dd = h.d || [];
+    let score = 0, w100 = 0, w200 = 0, dur100 = 0;
+    TH.forEach((th, k) => {
+      score += (w[k] || 0) * (th / 50) + (dd[k] || 0) / 600 * (th / 100);
+      if (th >= 100) { w100 += (w[k] || 0); dur100 += (dd[k] || 0); }
+      if (th >= 200) w200 += (w[k] || 0);
+    });
+    score += (h.dd || 0) / 50;
+    return { hour: i, s: h.s || 0, dd: h.dd || 0, mar: h.mar || 0, w, d: dd, score: +score.toFixed(1), w100, w200, dur100 };
+  });
+  const monitored = rows.filter((r) => r.s >= 60);
+  const maxScore = Math.max(1, ...rows.map((r) => r.score));
+  const level = (r) => {
+    if (r.s < 60) return { t: '无数据', c: '#475569', e: '⚪' };
+    if (r.score >= maxScore * 0.66 && r.score >= 3) return { t: '高危', c: '#f43f5e', e: '⛔' };
+    if (r.score >= maxScore * 0.33 && r.score >= 1.5) return { t: '警惕', c: '#f59e0b', e: '🟠' };
+    if (r.score > 0.3) return { t: '轻微', c: '#fbbf24', e: '🟡' };
+    return { t: '安全', c: '#34d399', e: '🟢' };
+  };
+  const rank = monitored.filter((r) => r.score > 0.3).sort((a, b) => b.score - a.score).slice(0, 6);
+  const fmtRange = (h) => String(h).padStart(2, '0') + ':00-' + String((h + 1) % 24).padStart(2, '0') + ':00';
+
+  const head = rows.map((r) => {
+    const [sn, sc] = sessOf(r.hour);
+    return '<th style="padding:3px 2px;text-align:center;min-width:34px;border-bottom:2px solid ' + sc + ';' + (r.hour === bjNowH ? 'background:rgba(56,189,248,0.25);' : '') + '"><div style="font-size:11px">' + String(r.hour).padStart(2, '0') + '</div><div style="font-size:9px;color:' + sc + '">' + sn + '</div></th>';
+  }).join('');
+
+  const tierRows = TH.map((th, k) => {
+    const cells = rows.map((r) => {
+      const wv = r.w[k] || 0, dv = r.d[k] || 0;
+      let bg, txt, col = '#e2e8f0';
+      if (r.s < 60) { bg = 'rgba(71,85,105,0.12)'; txt = '·'; col = '#475569'; }
+      else if (wv === 0 && dv === 0) { bg = 'rgba(16,185,129,0.08)'; txt = '0'; col = '#4b5d52'; }
+      else {
+        const inten = Math.min(1, 0.25 + wv * 0.18 + dv / 3600);
+        bg = (th >= 400 ? 'rgba(244,63,94,' : th >= 200 ? 'rgba(249,115,22,' : 'rgba(245,158,11,') + inten.toFixed(2) + ')';
+        txt = wv > 0 ? String(wv) : '~'; col = '#fff';
+      }
+      const tip = r.s < 60 ? '该小时尚无持仓监测数据' : (String(r.hour).padStart(2, '0') + '时 浮亏≥$' + th + ': 独立发生' + wv + '次, 累计停留' + fmtDuration(dv));
+      return '<td title="' + tip + '" style="text-align:center;padding:3px 0;font-size:12px;font-weight:800;background:' + bg + ';color:' + col + ';' + (r.hour === bjNowH ? 'outline:1px solid #38bdf8;' : '') + '">' + txt + '</td>';
+    }).join('');
+    return '<tr><td style="padding:3px 8px;white-space:nowrap;font-weight:800;color:' + (th >= 400 ? '#fb7185' : th >= 200 ? '#fb923c' : '#fbbf24') + '">浮亏 ≥ $' + th + '</td>' + cells + '</tr>';
+  }).join('');
+
+  const numRow = (label, fn, colFn) => '<tr><td style="padding:3px 8px;white-space:nowrap;font-size:11.5px;color:#94a3b8">' + label + '</td>' + rows.map((r) => '<td style="text-align:center;font-size:11px;padding:3px 0;' + (r.hour === bjNowH ? 'outline:1px solid #38bdf8;' : '') + 'color:' + colFn(r) + '">' + fn(r) + '</td>').join('') + '</tr>';
+  const ddRow = numRow('时段最大浮亏 $', (r) => r.s < 60 ? '·' : (r.dd > 0 ? Math.round(r.dd) : '0'), (r) => r.dd >= 200 ? '#fb7185' : r.dd >= 100 ? '#fb923c' : r.dd > 0 ? '#fbbf24' : '#64748b');
+  const marRow = numRow('时段最高预付款 $', (r) => r.s < 60 ? '·' : (r.mar > 0 ? Math.round(r.mar) : '0'), () => '#94a3b8');
+  const monRow = numRow('累计监测(分钟)', (r) => r.s < 60 ? '·' : Math.round(r.s / 60), () => '#64748b');
+  const lvRow = '<tr><td style="padding:4px 8px;white-space:nowrap;font-weight:800;color:#fff">综合风险评级</td>' + rows.map((r) => { const L = level(r); return '<td title="风险分 ' + r.score + '" style="text-align:center;font-size:13px;padding:4px 0;' + (r.hour === bjNowH ? 'outline:1px solid #38bdf8;' : '') + '">' + L.e + '</td>'; }).join('') + '</tr>';
+
+  // 时段汇总 (亚盘/欧盘/美盘/清淡)
+  const sessDefs = [['🌏 亚盘', 8, 15, '#38bdf8'], ['🌍 欧盘', 15, 20, '#a78bfa'], ['🗽 美盘(20-24点)', 20, 24, '#fb923c'], ['🌙 美盘后半/夜盘(0-4点)', 0, 4, '#f97316'], ['😴 清淡期(4-8点)', 4, 8, '#64748b']];
+  const sessCards = sessDefs.map(([nm, a, b, col]) => {
+    const rs = rows.filter((r) => r.hour >= a && r.hour < b);
+    const mon = rs.reduce((x, r) => x + r.s, 0);
+    const w100 = rs.reduce((x, r) => x + r.w100, 0), w200 = rs.reduce((x, r) => x + r.w200, 0);
+    const mdd = Math.max(0, ...rs.map((r) => r.dd));
+    const sc = rs.reduce((x, r) => x + r.score, 0);
+    return '<div style="flex:1;min-width:150px;background:rgba(15,19,28,0.9);border:1px solid ' + col + '66;border-radius:8px;padding:7px 9px"><div style="font-weight:800;color:' + col + ';font-size:12.5px">' + nm + '</div><div class="xs" style="line-height:1.55;color:#cbd5e1">' + (mon < 60 ? '<span class="mut">暂无监测数据</span>' : '深套≥$100: <b>' + w100 + '</b>次 · ≥$200: <b style="color:#fb923c">' + w200 + '</b>次<br>最大浮亏 <b style="color:#fb7185">-$' + Math.round(mdd) + '</b> · 风险分 <b>' + sc.toFixed(1) + '</b>') + '</div></div>';
+  }).join('');
+
+  const cur = rows[bjNowH], curLv = level(cur);
+  const curMsg = curLv.t === '高危' || curLv.t === '警惕'
+    ? '<span style="color:#fb7185;font-weight:800">⚠️ 现在北京时间 ' + String(bjNowH).padStart(2, '0') + ':' + String(bjNowM).padStart(2, '0') + ' 正处于历史【' + curLv.t + '】时段，建议减少新开仓、控制层数</span>'
+    : curLv.t === '无数据' ? '<span class="mut">当前时段(' + fmtRange(bjNowH) + ')尚无历史数据，持续监测中</span>'
+    : '<span style="color:#34d399;font-weight:800">✅ 现在是历史【' + curLv.t + '】时段(' + fmtRange(bjNowH) + ')</span>';
+
+  const rankHtml = rank.length
+    ? rank.map((r, i) => { const L = level(r); return '<span class="pill ' + (L.t === '高危' ? 'TREND' : 'MIXED') + '" style="font-size:11.5px;padding:3px 9px">' + (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)) + ' <b>' + fmtRange(r.hour) + '</b> ' + sessOf(r.hour)[0] + ' · 最大浮亏-$' + Math.round(r.dd) + ' · 深套' + r.w100 + '次</span>'; }).join(' ')
+    : '<span class="xs mut">目前各时段尚未出现明显深套 (浮亏≥$50)，数据积累越久越准</span>';
+
+  return '<div style="margin-top:12px;background:linear-gradient(135deg,rgba(244,63,94,0.08),rgba(15,20,30,0.95));border:1.5px solid rgba(244,63,94,0.4);border-radius:10px;padding:11px 13px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><b style="color:#fff;font-size:13.5px">🕒 浮亏高危时段热力表 (北京时间 24 小时 × 浮亏阶梯 · 格内数字=该小时独立深套发生次数，颜色越红越危险)</b><span class="xs">' + curMsg + '</span></div>'
+    + '<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center"><b class="xs" style="color:#fbbf24">🚫 建议避开开仓的高危时段榜：</b>' + rankHtml + '</div>'
+    + '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr><th style="text-align:left;padding:3px 8px;color:#94a3b8;font-size:11px">阶梯 \ 时(北京)</th>' + head + '</tr></thead><tbody>' + tierRows + ddRow + marRow + monRow + lvRow + '</tbody></table></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:9px">' + sessCards + '</div>'
+    + '<div class="xs mut" style="margin-top:6px">说明：以持仓期间每 5 秒采样累计；「·」=该小时尚无持仓数据，「~」=该级曾停留但未新增波次；蓝框=当前小时。风险分 = 深套次数×阶梯权重 + 深套停留时长 + 峰值浮亏，已统计 ' + monitored.length + '/24 个小时。数据随运行天数增加越来越有参考价值。</div>'
+    + '</div>';
+}
+
 function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
   const sec = $('mt4CurveSec');
   if (!sec) return;
@@ -5415,6 +5517,9 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
 
     <!-- 第三排：实时余额/净值/预付款/收益双面板交互曲线图 -->
     ${chartSvg}
+
+    <!-- 第三排半：24小时浮亏高危时段热力表 -->
+    ${buildMt4HourHeatmap(stats, mt4Dec)}
 
     <!-- 第四排：📊 浮亏分阶段突破次数统计表 ($50 ~ $2000) & 💰 后期账户放多少钱决策测算器 -->
     <div style="display:grid;grid-template-columns:1.45fr 1fr;gap:12px;margin-top:12px">

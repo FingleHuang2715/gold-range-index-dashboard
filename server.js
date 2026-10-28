@@ -1720,7 +1720,33 @@ function updateMt4StatsAndHistory(prevState, snap) {
     }
   }
 
+  // ===== 24小时(北京时间)分时段风险热力档案 stats.hourly：每小时记录 监测秒数/最大浮亏/最高预付款/各浮亏阶梯独立发生次数w[]/停留秒数d[] =====
+  const bjHour = new Date((nowSec + 8 * 3600) * 1000).getUTCHours();
+  const mkHour = () => ({ s: 0, dd: 0, mar: 0, w: MT4_DD_TIERS.map(() => 0), d: MT4_DD_TIERS.map(() => 0) });
+  if (!Array.isArray(stats.hourly) || stats.hourly.length !== 24) {
+    stats.hourly = Array.from({ length: 24 }, mkHour);
+    // 用已有长周期归档回填(15分钟桶近似)
+    if (sameAcc && Array.isArray(prevState.historyLong)) {
+      for (const b of prevState.historyLong) {
+        const bt = (b.t || 0) < 1e11 ? (b.t || 0) : Math.floor((b.t || 0) / 1000);
+        const hh = new Date((bt + 8 * 3600) * 1000).getUTCHours();
+        const H = stats.hourly[hh];
+        H.s += 900;
+        H.dd = Math.max(H.dd, b.ddMax || 0);
+        H.mar = Math.max(H.mar, b.marMax || 0);
+        MT4_DD_TIERS.forEach((th, i) => { if ((b.ddMax || 0) >= th) H.d[i] += 900; });
+      }
+    }
+  }
+  const HR = stats.hourly[bjHour];
+  if (HR.w.length !== MT4_DD_TIERS.length) { HR.w = MT4_DD_TIERS.map((_, i) => HR.w[i] || 0); HR.d = MT4_DD_TIERS.map((_, i) => HR.d[i] || 0); }
   const dtSec = Math.max(1, Math.min(60, nowSec - (stats.lastTickTs || (nowSec - 5))));
+  if (buyCount + sellCount > 0) {
+    HR.s += dtSec;
+    if (ddUsd > HR.dd) HR.dd = ddUsd;
+    if (marVal > HR.mar) HR.mar = marVal;
+    MT4_DD_TIERS.forEach((th, i) => { if (ddUsd >= th) HR.d[i] += dtSec; });
+  }
   stats.lastTickTs = nowSec;
   stats.totalSamples = (stats.totalSamples || 0) + 1;
 
@@ -1838,6 +1864,7 @@ function updateMt4StatsAndHistory(prevState, snap) {
         if (!tier.active) {
           tier.active = true;
           tier.waves = (tier.waves || 0) + 1;
+          HR.w[MT4_DD_TIERS.indexOf(tier.th)] += 1;
           brokenPeakOrTier = true;
           if (stats.activeWave && !stats.activeWave.tiersHit.includes(tier.th)) {
             stats.activeWave.tiersHit.push(tier.th);
