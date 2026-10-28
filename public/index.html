@@ -162,6 +162,7 @@
       </select>
       <button class="sm" onclick="testVoiceAlert()" style="padding:2px 7px" title="测试浏览器中文语音播报是否正常">🔈 试听</button>
     </div>
+    <button id="btnMt4Guide" onclick="toggleMt4Guide()" style="border-color:rgba(56,189,248,0.55);color:#38bdf8;font-weight:800" title="点击打开 MT4 实盘数据实时同步接入指南与下载脚本">🔌 MT4实盘同步(点击接入)</button>
     <button id="btnFast">⚡ 立即刷新实时数据</button>
     <button class="pri" id="btnFetch">🔄 全量刷新</button>
     <button class="pri" id="btnCopy">📋 一键复制(发给AI)</button>
@@ -226,6 +227,52 @@
             <button class="sm" onclick="quickAddLockEvent('02:00','美联储02:00利率决议/纪要')">+02:00美联储</button>
             <button class="sm" onclick="importJin10TodayLocks()" title="自动把今日金十周历中★★★以上美国/重磅数据一键加入红灯锁">📥 导入今日金十★★★</button>
             <button class="sm" onclick="clearCustomLockEvents()" style="color:#fb7185">🗑️ 清空</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="card" id="mt4GuideSec" style="display:none;border:1.5px solid rgba(56,189,248,0.55);background:linear-gradient(135deg,rgba(14,116,144,0.14),rgba(15,20,30,0.97))">
+      <div class="vhead" style="margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0;color:#38bdf8">🔌 MT4 实盘账户 & 马丁持仓实时同步接入中心 (每 3 秒自动推送 · 100%只读零交易干预)</h2>
+          <span id="mt4StatusPill" class="pill NEUT">等待 MT4 脚本推送数据...</span>
+        </div>
+        <div class="btns">
+          <button class="pri sm" onclick="downloadMt4Script()" style="background:#0284c7;border-color:#38bdf8;color:#fff;font-weight:800">📥 一键下载 GoldDashboardSync.mq4 脚本文件</button>
+          <button class="sm" onclick="copyMt4ScriptCode()" style="border-color:#38bdf8;color:#38bdf8;font-weight:700">📋 一键复制 MQL4 源码</button>
+          <button class="sm" onclick="simulateMt4Push()" title="模拟推送一笔 MT4 实盘持仓数据，测试网站实时联动效果">🧪 模拟MT4推送测试</button>
+          <button class="sm" onclick="toggleMt4Guide()">✖ 收起面板</button>
+        </div>
+      </div>
+      <div id="mt4LiveDetailBar" style="margin-bottom:10px;padding:9px 12px;background:rgba(12,16,24,0.88);border:1px solid rgba(56,189,248,0.35);border-radius:8px;font-size:12.5px;color:#cbd5e1">
+        ⚪ 当前尚未收到 MT4 终端推送。按下方 <b>3 步极简配置（仅需 1 分钟）</b> 挂上只读同步脚本后，您的 <b>账户余额、净值、Buy/Sell 各几层、各多少手、多空持仓均价、实时浮盈亏、回本止盈目标价</b> 将每 3 秒自动同步到本网站全部决策模块！
+      </div>
+      <div class="grid3" style="gap:10px;font-size:12px;line-height:1.6">
+        <div style="background:rgba(15,20,30,0.9);border:1px solid var(--bd);border-radius:8px;padding:10px 12px">
+          <b style="color:var(--gold);font-size:13px">第一步：添加 MT4 WebRequest 白名单</b>
+          <div style="margin-top:5px;color:#cbd5e1">
+            1. 打开您的 MT4 顶部菜单：<b>工具(T) → 选项(O) → EA交易</b><br>
+            2. 勾选 <b style="color:#34d399">☑ 允许 WebRequest 用于所列 URL</b><br>
+            3. 双击下方空白行，粘贴本网站地址并回车：<br>
+            <code id="mt4WhitelistUrl" style="display:inline-block;margin-top:4px;padding:2px 7px;background:#090d14;border:1px solid #38bdf8;border-radius:4px;color:#38bdf8;font-weight:800;user-select:all">http://localhost:3000</code>
+            <button class="sm" onclick="copyMt4WhitelistUrl()" style="padding:1px 6px;margin-left:4px;font-size:11px">复制地址</button>
+          </div>
+        </div>
+        <div style="background:rgba(15,20,30,0.9);border:1px solid var(--bd);border-radius:8px;padding:10px 12px">
+          <b style="color:var(--gold);font-size:13px">第二步：放入只读同步脚本并编译</b>
+          <div style="margin-top:5px;color:#cbd5e1">
+            1. 点击右上角 <b style="color:#38bdf8">「📥 一键下载 GoldDashboardSync.mq4」</b>（项目目录 <code style="color:#93c5fd">mt4/GoldDashboardSync.mq4</code> 也已为您生成好）<br>
+            2. 在 MT4 点击 <b>文件(F) → 打开数据文件夹 → MQL4 → Experts</b>，把文件放进去<br>
+            3. 在 MT4 左侧「导航器 → EA交易」右键点击 <b>刷新</b>（或双击用 MetaEditor 按 F7 编译）
+          </div>
+        </div>
+        <div style="background:rgba(15,20,30,0.9);border:1px solid var(--bd);border-radius:8px;padding:10px 12px">
+          <b style="color:var(--gold);font-size:13px">第三步：新开一张空白 XAUUSD 图表挂载（不顶替原马丁EA！）</b>
+          <div style="margin-top:5px;color:#cbd5e1">
+            💡 <b>关键技巧</b>：MT4 单张图表只能挂 1 个 EA。为了<b>完全不影响您正在跑的马丁 EA</b>：<br>
+            1. 在 MT4 新打开<b>第 2 张空白的 XAUUSD 图表窗口</b>（周期任意）<br>
+            2. 把 <b style="color:#34d399">GoldDashboardSync</b> 拖到这张新图表上点确定！<br>
+            3. 脚本通过 <code style="color:#93c5fd">OrdersTotal()</code> 跨图表读取全账户黄金持仓，<b>100%只读（绝不下单/改单/平仓）</b>！
           </div>
         </div>
       </div>
@@ -2040,9 +2087,27 @@ window.toggleCandle = function(tf) {
 
 function render() {
   if (!D) return;
-  saveUiState();
   const d = D;
+  const mt4 = d.mt4 && d.mt4.balance > 0 && (Date.now() - d.mt4.ts < 120000) ? d.mt4 : null;
+  if (mt4) {
+    ACC_BAL = Math.round(mt4.balance);
+    BUY_LOTS = r2(mt4.buyLots);
+    SELL_LOTS = r2(mt4.sellLots);
+    BUY_AVG_PX = r2(mt4.buyAvgPrice || 0);
+    SELL_AVG_PX = r2(mt4.sellAvgPrice || 0);
+    USED_MARGIN = Math.max(1, Math.round(mt4.margin || 14));
+    CUR_LAYERS = Math.max(1, mt4.buyCount || 0, mt4.sellCount || 0);
+    syncEaInputs();
+  }
+  saveUiState();
   const ea = calcEaModel(ACC_BAL, EA_CFG, CUR_LAYERS, USED_MARGIN);
+  if (mt4) {
+    TOL = ea.recommendedTol;
+    if ($('tolSlider')) $('tolSlider').value = TOL;
+    if ($('tolInput')) $('tolInput').value = TOL;
+    if ($('tolValTxt')) $('tolValTxt').textContent = f2(TOL);
+  }
+  updateMt4UiStatus(mt4, ea);
   const fTime = new Date(d.fastUpdatedAt || d.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
   const sTime = new Date(d.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
   $('meta').innerHTML = `<span class="live-dot"></span><b>全周期+跨市场实时(每15秒·0延迟): ${fTime}</b> · 日线/周历(每3分钟): ${sTime} · 账户: <b style="color:var(--gold)">$${ACC_BAL}</b>(可亏线:$${ea.riskLossUsd}) · <b>净敞口 N=${f2(ea.netLots)}手</b>($${ea.netLossPerUsd}/$) · 预付款比例: <b style="color:var(--green)">${ea.marginLevelBal}%</b>(${ea.usedMargin}$) · 可抗单边: <b style="color:var(--gold)">${f2(TOL)}$ (${Math.round(TOL * 100)}点)</b> · 账户极限: <b style="color:var(--red)">${f2(ea.hard.span)}$ (${ea.hard.pts}点)</b>` +
@@ -2177,6 +2242,35 @@ function render() {
         entryBoxCls = 'TREND';
       }
 
+      // 如果已连接 MT4 实盘，计算多空回本价与精确解套距离
+      let mt4StripHtml = '';
+      if (mt4) {
+        const ageSec = Math.max(0, Math.round((Date.now() - mt4.ts) / 1000));
+        const netLotsSigned = r2(mt4.buyLots - mt4.sellLots);
+        const curPx = mt4.bid || (d.gold && d.gold.price) || 0;
+        // 计算净敞口回本目标价：当前总浮盈亏 mt4.totalPnl (美元)，每波动1美元净盈亏变化 = netLotsSigned * 100 美元
+        let breakEvenNote = '当前无净敞口或已处于浮盈状态';
+        if (Math.abs(netLotsSigned) >= 0.01 && mt4.totalPnl < 0 && curPx > 0) {
+          const needMove = Math.abs(mt4.totalPnl) / (Math.abs(netLotsSigned) * 100);
+          const targetPx = netLotsSigned > 0 ? (curPx + needMove) : (curPx - needMove);
+          const dirWord = netLotsSigned > 0 ? '上涨反抽' : '下跌回调';
+          breakEvenNote = `重仓侧需<b>${dirWord} $${f2(needMove)}</b> 至 <b style="color:var(--gold)">$${f2(targetPx)}</b> 即可全篮子回本清仓`;
+        } else if (mt4.totalPnl >= 0) {
+          breakEvenNote = `<b style="color:#34d399">当前实盘篮子整体净浮盈 +$${f2(mt4.totalPnl)}，处于安全盈利区</b>`;
+        }
+        mt4StripHtml = `
+          <div style="margin-bottom:10px;padding:8px 12px;background:rgba(14,116,144,0.18);border:1px solid rgba(56,189,248,0.5);border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span class="pill RANGE" style="background:rgba(56,189,248,0.2);color:#38bdf8;border:1px solid #38bdf8">🟢 MT4 实盘实时同步中 (${ageSec}秒前)</span>
+              <span>账户 <b>#${mt4.account || '-'}</b>: 余额 <b style="color:var(--gold)">$${f2(mt4.balance)}</b> / 净值 <b>$${f2(mt4.equity)}</b></span>
+              <span>| 多单(Buy): <b>${mt4.buyCount}层 / ${f2(mt4.buyLots)}手</b> ${mt4.buyAvgPrice ? `(均价$${f2(mt4.buyAvgPrice)} · 浮盈<b style="color:${mt4.buyPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.buyPnl)}</b>)` : ''}</span>
+              <span>| 空单(Sell): <b>${mt4.sellCount}层 / ${f2(mt4.sellLots)}手</b> ${mt4.sellAvgPrice ? `(均价$${f2(mt4.sellAvgPrice)} · 浮盈<b style="color:${mt4.sellPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.sellPnl)}</b>)` : ''}</span>
+              <span>| 净浮盈亏: <b style="font-size:13.5px;color:${mt4.totalPnl >= 0 ? '#34d399' : '#fb7185'}">${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)}</b></span>
+            </div>
+            <div style="color:#e2e8f0">🎯 ${breakEvenNote}</div>
+          </div>`;
+      }
+
       $('masterDecisionSec').innerHTML = `
         <div class="vhead" style="margin-bottom:10px">
           <div>
@@ -2184,6 +2278,7 @@ function render() {
           </div>
           <span class="pill ${pb.patternCls}" style="font-size:12.5px;padding:4px 10px">${pb.patternBadge}</span>
         </div>
+        ${mt4StripHtml}
 
         <div class="grid3" style="gap:12px">
           <!-- 卡片 1：唯一总指数（含单边10$但回调3$平仓赚钱的锯齿修正） -->
@@ -3932,6 +4027,262 @@ $('btnCopy').onclick = async () => {
   catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
   toast('已复制全部实时信息');
 };
+
+// ========== MT4 实盘实时同步接入逻辑 (3秒极速联动 + 一键生成/下载只读 MQL4 脚本) ==========
+window.toggleMt4Guide = function() {
+  const sec = $('mt4GuideSec');
+  if (!sec) return;
+  const isHidden = sec.style.display === 'none';
+  sec.style.display = isHidden ? 'block' : 'none';
+  if ($('mt4WhitelistUrl')) $('mt4WhitelistUrl').textContent = window.location.origin;
+  if (isHidden) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+function updateMt4UiStatus(mt4, ea) {
+  if ($('mt4WhitelistUrl')) $('mt4WhitelistUrl').textContent = window.location.origin;
+  const btn = $('btnMt4Guide');
+  const pill = $('mt4StatusPill');
+  const bar = $('mt4LiveDetailBar');
+  if (mt4) {
+    const ageSec = Math.max(0, Math.round((Date.now() - mt4.ts) / 1000));
+    const pnlStr = `${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)}`;
+    if (btn) {
+      btn.innerHTML = `🟢 MT4已同步 (买${mt4.buyCount}层/${f2(mt4.buyLots)}手 · 卖${mt4.sellCount}层/${f2(mt4.sellLots)}手 · ${pnlStr})`;
+      btn.style.borderColor = '#10b981';
+      btn.style.color = '#34d399';
+    }
+    if (pill) {
+      pill.textContent = `🟢 实时在线 (${ageSec}秒前更新 · #${mt4.account || '-'})`;
+      pill.className = 'pill RANGE';
+    }
+    if (bar) {
+      bar.innerHTML = `🟢 <b>MT4 实盘已连接</b> (账户 <b>#${mt4.account || '-'}</b> · ${mt4.server || 'Live'} · 品种 <b>${mt4.symbol || 'XAUUSD'}</b> 现价 <b>$${f2(mt4.bid)}</b> · 点差 <b>${mt4.spread || '-'}</b>) — ` +
+        `余额: <b style="color:var(--gold)">$${f2(mt4.balance)}</b> | 净值: <b>$${f2(mt4.equity)}</b> | 已用预付款: <b>$${f2(mt4.margin)}</b> (${f2(mt4.marginLevel)}%) | ` +
+        `多单 Buy: <b>${mt4.buyCount}层 / ${f2(mt4.buyLots)}手</b> (均价 $${f2(mt4.buyAvgPrice)} · 浮盈 <b style="color:${mt4.buyPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.buyPnl)}</b>) | ` +
+        `空单 Sell: <b>${mt4.sellCount}层 / ${f2(mt4.sellLots)}手</b> (均价 $${f2(mt4.sellAvgPrice)} · 浮盈 <b style="color:${mt4.sellPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.sellPnl)}</b>) | ` +
+        `挂单: BuyStop ${mt4.buyStopCount || 0}笔 / SellStop ${mt4.sellStopCount || 0}笔`;
+    }
+  } else {
+    if (btn) {
+      btn.innerHTML = `🔌 MT4实盘同步(点击接入)`;
+      btn.style.borderColor = 'rgba(56,189,248,0.55)';
+      btn.style.color = '#38bdf8';
+    }
+    if (pill) {
+      pill.textContent = '等待 MT4 脚本推送数据...';
+      pill.className = 'pill NEUT';
+    }
+  }
+}
+
+function buildMql4Source() {
+  const apiUrl = window.location.origin + '/api/mt4';
+  return [
+    '//+------------------------------------------------------------------+',
+    '//|                                            GoldDashboardSync.mq4 |',
+    '//|        黄金震荡指数 & 马丁EA风控台 — MT4 实盘数据实时同步脚本     |',
+    '//|   100%只读安全保证：绝不调用任何下单/改单/平仓函数，零交易干预！  |',
+    '//+------------------------------------------------------------------+',
+    '#property copyright "Gold Range Index Dashboard"',
+    '#property version   "1.00"',
+    '#property strict',
+    '',
+    'input string DashboardUrl   = "' + apiUrl + '"; // 网站接收接口地址(若本地运行则为 http://localhost:3000/api/mt4)',
+    'input int    SyncIntervalSec = 3;               // 同步间隔秒数 (建议 2~5 秒)',
+    'input string GoldSymbolKey  = "XAU";            // 黄金品种匹配关键字 (自动兼容 XAUUSD / GOLD)',
+    'input int    MagicFilter    = 0;                // EA魔术号过滤 (0 = 统计账户内所有黄金订单)',
+    '',
+    'int OnInit() {',
+    '   EventSetTimer(MathMax(1, SyncIntervalSec));',
+    '   PushAccountDataToWeb();',
+    '   return(INIT_SUCCEEDED);',
+    '}',
+    '',
+    'void OnDeinit(const int reason) {',
+    '   EventKillTimer();',
+    '}',
+    '',
+    'void OnTick() {',
+    '   // 由 OnTimer 定时触发，避免 Tick 洪峰卡顿',
+    '}',
+    '',
+    'void OnTimer() {',
+    '   PushAccountDataToWeb();',
+    '}',
+    '',
+    'bool IsGoldSymbol(string sym) {',
+    '   if(sym == Symbol()) return true;',
+    '   if(StringFind(sym, GoldSymbolKey) >= 0) return true;',
+    '   if(StringFind(sym, "GOLD") >= 0 || StringFind(sym, "Gold") >= 0) return true;',
+    '   return false;',
+    '}',
+    '',
+    'void PushAccountDataToWeb() {',
+    '   int    buyCount = 0, sellCount = 0, buyStopCount = 0, sellStopCount = 0;',
+    '   double buyLots = 0.0, sellLots = 0.0;',
+    '   double buyWeightedPx = 0.0, sellWeightedPx = 0.0;',
+    '   double buyPnl = 0.0, sellPnl = 0.0;',
+    '',
+    '   int total = OrdersTotal();',
+    '   for(int i = 0; i < total; i++) {',
+    '      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;',
+    '      if(MagicFilter > 0 && OrderMagicNumber() != MagicFilter) continue;',
+    '      if(!IsGoldSymbol(OrderSymbol())) continue;',
+    '',
+    '      int    type = OrderType();',
+    '      double lots = OrderLots();',
+    '      double oPx  = OrderOpenPrice();',
+    '      double pnl  = OrderProfit() + OrderSwap() + OrderCommission();',
+    '',
+    '      if(type == OP_BUY) {',
+    '         buyCount++;',
+    '         buyLots += lots;',
+    '         buyWeightedPx += lots * oPx;',
+    '         buyPnl += pnl;',
+    '      } else if(type == OP_SELL) {',
+    '         sellCount++;',
+    '         sellLots += lots;',
+    '         sellWeightedPx += lots * oPx;',
+    '         sellPnl += pnl;',
+    '      } else if(type == OP_BUYSTOP || type == OP_BUYLIMIT) {',
+    '         buyStopCount++;',
+    '      } else if(type == OP_SELLSTOP || type == OP_SELLLIMIT) {',
+    '         sellStopCount++;',
+    '      }',
+    '   }',
+    '',
+    '   double buyAvg  = (buyLots > 0.0)  ? (buyWeightedPx / buyLots)   : 0.0;',
+    '   double sellAvg = (sellLots > 0.0) ? (sellWeightedPx / sellLots) : 0.0;',
+    '   double totalPnl = buyPnl + sellPnl;',
+    '',
+    '   double bal    = AccountBalance();',
+    '   double eq     = AccountEquity();',
+    '   double mar    = AccountMargin();',
+    '   double freeM  = AccountFreeMargin();',
+    '   double mLevel = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);',
+    '   long   accNum = AccountInfoInteger(ACCOUNT_LOGIN);',
+    '   int    sprd   = (int)MarketInfo(Symbol(), MODE_SPREAD);',
+    '',
+    '   string qs = StringConcatenate(',
+    '      "?account=", accNum,',
+    '      "&symbol=", Symbol(),',
+    '      "&bid=", DoubleToString(Bid, 2),',
+    '      "&ask=", DoubleToString(Ask, 2),',
+    '      "&spread=", sprd,',
+    '      "&balance=", DoubleToString(bal, 2),',
+    '      "&equity=", DoubleToString(eq, 2),',
+    '      "&margin=", DoubleToString(mar, 2),',
+    '      "&freeMargin=", DoubleToString(freeM, 2),',
+    '      "&marginLevel=", DoubleToString(mLevel, 2),',
+    '      "&buyCount=", buyCount,',
+    '      "&buyLots=", DoubleToString(buyLots, 2),',
+    '      "&buyAvgPrice=", DoubleToString(buyAvg, 2),',
+    '      "&buyPnl=", DoubleToString(buyPnl, 2),',
+    '      "&sellCount=", sellCount,',
+    '      "&sellLots=", DoubleToString(sellLots, 2),',
+    '      "&sellAvgPrice=", DoubleToString(sellAvg, 2),',
+    '      "&sellPnl=", DoubleToString(sellPnl, 2),',
+    '      "&totalPnl=", DoubleToString(totalPnl, 2),',
+    '      "&buyStopCount=", buyStopCount,',
+    '      "&sellStopCount=", sellStopCount',
+    '   );',
+    '',
+    '   char postData[];',
+    '   char resultData[];',
+    '   string resultHeaders;',
+    '   ResetLastError();',
+    '   int res = WebRequest("GET", DashboardUrl + qs, NULL, NULL, 2000, postData, 0, resultData, resultHeaders);',
+    '   if(res == -1) {',
+    '      int err = GetLastError();',
+    '      if(err == 4060) {',
+    '         Comment("⚠️ 请在 MT4 [工具 -> 选项 -> EA交易] 勾选 [允许WebRequest] 并添加: ", DashboardUrl);',
+    '      }',
+    '   }',
+    '}'
+  ].join('\r\n');
+}
+
+window.downloadMt4Script = function() {
+  const code = buildMql4Source();
+  const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'GoldDashboardSync.mq4';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast('已下载 GoldDashboardSync.mq4！请放入 MT4 的 MQL4/Experts 文件夹');
+};
+
+window.copyMt4ScriptCode = async function() {
+  const code = buildMql4Source();
+  try { await navigator.clipboard.writeText(code); }
+  catch { const ta = document.createElement('textarea'); ta.value = code; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+  toast('已复制完整 MQL4 源码！可在 MetaEditor 新建 EA 粘贴编译');
+};
+
+window.copyMt4WhitelistUrl = async function() {
+  const url = window.location.origin;
+  try { await navigator.clipboard.writeText(url); }
+  catch { const ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+  toast('已复制白名单地址: ' + url);
+};
+
+window.simulateMt4Push = async function() {
+  const curPx = (D && D.gold && D.gold.price) ? D.gold.price : 3320.50;
+  const qs = new URLSearchParams({
+    account: '8861092',
+    server: 'MT4-Live',
+    symbol: 'XAUUSD',
+    bid: f2(curPx),
+    ask: f2(curPx + 0.22),
+    spread: '22',
+    balance: String(ACC_BAL || 2700),
+    equity: String((ACC_BAL || 2700) - 96.4),
+    margin: '16.80',
+    freeMargin: String((ACC_BAL || 2700) - 113.2),
+    marginLevel: '15497.6',
+    buyCount: '7',
+    buyLots: '0.45',
+    buyAvgPrice: f2(curPx + 2.25),
+    buyPnl: '-101.25',
+    sellCount: '1',
+    sellLots: '0.02',
+    sellAvgPrice: f2(curPx + 2.42),
+    sellPnl: '4.85',
+    totalPnl: '-96.40',
+    buyStopCount: '0',
+    sellStopCount: '1'
+  }).toString();
+  try {
+    const r = await fetch('/api/mt4?' + qs);
+    const j = await r.json();
+    if (j && j.mt4 && D) {
+      D.mt4 = j.mt4;
+      render();
+      toast('🟢 已模拟 MT4 实盘推送并实时联动全站指标与决策台！');
+    }
+  } catch (e) {
+    toast('模拟推送失败: ' + e.message);
+  }
+};
+
+// 每 3 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (实现 3 秒级持仓浮盈联动)
+setInterval(async () => {
+  if (!D) return;
+  try {
+    const r = await fetch('/api/mt4');
+    if (!r.ok) return;
+    const j = await r.json();
+    if (j && j.connected && j.mt4) {
+      const prevTs = D.mt4 ? D.mt4.ts : 0;
+      if (j.mt4.ts !== prevTs) {
+        D.mt4 = j.mt4;
+        render();
+      }
+    }
+  } catch (e) {}
+}, 3000);
 // 1) 打开网页瞬间(0ms)：立即从浏览器 localStorage 恢复上次缓存秒开渲染，杜绝白屏等待
 try {
   const cachedStr = localStorage.getItem(LOCAL_DATA_CACHE_KEY);

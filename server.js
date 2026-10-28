@@ -1575,6 +1575,76 @@ async function refresh() {
   return inflight;
 }
 
+// ---------- MT4 实盘持仓与账户实时同步接收器 (/api/mt4) ----------
+const MT4_STATE_FILE = path.join(os.tmpdir(), 'gold_mt4_live_v1.json');
+let latestMt4State = null;
+try {
+  if (fs.existsSync(MT4_STATE_FILE)) {
+    latestMt4State = JSON.parse(fs.readFileSync(MT4_STATE_FILE, 'utf8'));
+  }
+} catch (e) {}
+
+function handleApiMt4(req, res) {
+  const corsHeaders = {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET, POST, OPTIONS'
+  };
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders);
+    return res.end();
+  }
+  try {
+    const u = new URL(req.url || '/api/mt4', 'http://localhost');
+    // 若包含 bal 参数，说明是 MT4 EA WebRequest 推送过来的实时实盘状态
+    if (u.searchParams.has('bal')) {
+      const num = (k, def = 0) => {
+        const v = parseFloat(u.searchParams.get(k));
+        return Number.isFinite(v) ? v : def;
+      };
+      const buyLots = +num('buyLots').toFixed(2);
+      const sellLots = +num('sellLots').toFixed(2);
+      const netLots = +Math.abs(buyLots - sellLots).toFixed(2);
+      latestMt4State = {
+        updatedAt: new Date().toISOString(),
+        ts: Date.now(),
+        symbol: u.searchParams.get('sym') || 'XAUUSD',
+        balance: +num('bal').toFixed(2),
+        equity: +num('eq').toFixed(2),
+        margin: +num('margin').toFixed(2),
+        freeMargin: +num('freeMargin').toFixed(2),
+        marginLevel: +num('marginLvl').toFixed(1),
+        leverage: Math.round(num('lev', 1000)),
+        buyCount: Math.round(num('buyCnt')),
+        buyLots,
+        buyAvgPrice: +num('buyAvg').toFixed(2),
+        buyPnl: +num('buyPnl').toFixed(2),
+        sellCount: Math.round(num('sellCnt')),
+        sellLots,
+        sellAvgPrice: +num('sellAvg').toFixed(2),
+        sellPnl: +num('sellPnl').toFixed(2),
+        totalPnl: +num('totalPnl').toFixed(2),
+        netLots,
+        buyStopCount: Math.round(num('buyStopCnt')),
+        sellStopCount: Math.round(num('sellStopCnt')),
+        buyStopPx: +num('buyStopPx').toFixed(2),
+        sellStopPx: +num('sellStopPx').toFixed(2),
+        bid: +num('bid').toFixed(2),
+        ask: +num('ask').toFixed(2),
+        spreadPts: +num('spread').toFixed(1)
+      };
+      if (cache) cache.mt4 = latestMt4State;
+      fs.promises.writeFile(MT4_STATE_FILE, JSON.stringify(latestMt4State), 'utf8').catch(() => {});
+    }
+    res.writeHead(200, corsHeaders);
+    return res.end(JSON.stringify({ ok: true, mt4: latestMt4State }));
+  } catch (e) {
+    res.writeHead(500, corsHeaders);
+    return res.end(JSON.stringify({ ok: false, error: e.message }));
+  }
+}
+
 // 统一 /api/data 请求处理器：
 // 1) 低频数据(1D kNN / GVZ / 金十周历)优先使用服务端缓存，过期后在后台异步静默更新，绝不阻塞打开网页！
 // 2) 高频数据(1M~4H价格与震荡指数 / 跨市场指数 / 特朗普言论)实时并行拉取(~0.4秒内返回)。
@@ -1611,6 +1681,7 @@ async function handleApiData(req, res) {
       }
     }
 
+    if (latestMt4State) data.mt4 = latestMt4State;
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(data));
   } catch (e) {
@@ -1627,6 +1698,9 @@ const INDEX_HTML_PATH = path.join(__dirname, 'public', 'index.html');
 
 const appHandler = async (req, res) => {
   const u = new URL(req.url || '/', 'http://localhost');
+  if (u.pathname === '/api/mt4' || u.pathname.startsWith('/api/mt4')) {
+    return handleApiMt4(req, res);
+  }
   if (u.pathname === '/api/data' || u.pathname.startsWith('/api/data')) {
     return handleApiData(req, res);
   }
