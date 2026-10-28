@@ -1584,7 +1584,34 @@ try {
   }
 } catch (e) {}
 
-function handleApiMt4(req, res) {
+// Vercel 无状态：多个函数实例之间不共享内存/磁盘，需借助外部 Redis(Upstash REST) 在 MT4 推送与网页读取间共享数据。
+// 配置 UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN (或 Vercel KV 的 KV_REST_API_URL / KV_REST_API_TOKEN) 即自动启用。
+const MT4_REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '';
+const MT4_REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
+const MT4_PUSH_TOKEN = process.env.MT4_TOKEN || '';
+async function mt4Redis(cmd) {
+  if (!MT4_REDIS_URL || !MT4_REDIS_TOKEN) return null;
+  try {
+    const r = await fetch(MT4_REDIS_URL, {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + MT4_REDIS_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify(cmd),
+      signal: AbortSignal.timeout(3000)
+    });
+    const j = await r.json();
+    return j && j.result !== undefined ? j.result : null;
+  } catch (e) { return null; }
+}
+async function mt4RemoteSet(state) {
+  await mt4Redis(['SET', 'gold_mt4_live_v1', JSON.stringify(state), 'EX', 3600]);
+}
+async function mt4RemoteGet() {
+  const raw = await mt4Redis(['GET', 'gold_mt4_live_v1']);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) { return null; }
+}
+
+async function handleApiMt4(req, res) {
   const corsHeaders = {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
@@ -1598,6 +1625,10 @@ function handleApiMt4(req, res) {
   try {
     const u = new URL(req.url || '/api/mt4', 'http://localhost');
     if (u.searchParams.has('bal') || u.searchParams.has('balance')) {
+      if (MT4_PUSH_TOKEN && u.searchParams.get('token') !== MT4_PUSH_TOKEN) {
+        res.writeHead(403, corsHeaders);
+        return res.end(JSON.stringify({ ok: false, error: 'bad token' }));
+      }
       console.log(`[MT4] ${new Date().toLocaleTimeString()} 收到推送 from ${req.socket && req.socket.remoteAddress} · ${u.searchParams.get('bal') || u.searchParams.get('balance')} / buy ${u.searchParams.get('buyCnt') || u.searchParams.get('buyCount')}`);
     }
     // 若包含 bal 参数，说明是 MT4 EA WebRequest 推送过来的实时实盘状态
@@ -1644,6 +1675,10 @@ function handleApiMt4(req, res) {
       };
       if (cache) cache.mt4 = latestMt4State;
       fs.promises.writeFile(MT4_STATE_FILE, JSON.stringify(latestMt4State), 'utf8').catch(() => {});
+      await mt4RemoteSet(latestMt4State);
+    } else {
+      const live = await mt4RemoteGet();
+      if (live) latestMt4State = live;
     }
     res.writeHead(200, corsHeaders);
     return res.end(JSON.stringify({ ok: true, connected: !!latestMt4State, mt4: latestMt4State }));
@@ -1689,6 +1724,8 @@ async function handleApiData(req, res) {
       }
     }
 
+    const mt4Live = await mt4RemoteGet();
+    if (mt4Live) latestMt4State = mt4Live;
     if (latestMt4State) data.mt4 = latestMt4State;
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(data));

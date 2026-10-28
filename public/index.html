@@ -278,6 +278,12 @@
           </div>
         </div>
       </div>
+      <div style="margin-top:10px;padding:9px 12px;background:rgba(124,58,237,0.12);border:1px solid rgba(167,139,250,0.5);border-radius:8px;font-size:12px;line-height:1.7;color:#cbd5e1">
+        <b style="color:#c4b5fd">☁️ 想让 Vercel 线上网址也同步？</b>（Vercel 无状态，需一个免费 Redis 做中转）<br>
+        ① Vercel 项目 → <b>Storage → Create → Upstash for Redis</b>（免费档）并 Connect 到本项目，会自动注入 <code>KV_REST_API_URL</code> / <code>KV_REST_API_TOKEN</code>；<br>
+        ② （推荐）Settings → Environment Variables 新增 <code>MT4_TOKEN</code> = 自定义口令，并在 MT4 脚本参数 <code>SyncToken</code> 填同样口令，防止别人乱推数据；<br>
+        ③ Redeploy 后，MT4 白名单与脚本 <code>DashboardUrl</code> 都填您的 Vercel 域名（脚本由 Vercel 页面下载则已自动填好）。
+      </div>
     </section>
     <section class="card" id="masterDecisionSec"></section>
     <section class="card" id="tolSec">
@@ -4123,6 +4129,7 @@ function buildMql4Source(kind) {
     'input int    SyncIntervalSec = 3;               // 同步间隔秒数 (建议 2~5 秒)',
     'input string GoldSymbolKey  = "XAU";            // 黄金品种匹配关键字 (自动兼容 XAUUSD / GOLD)',
     'input int    MagicFilter    = 0;                // EA魔术号过滤 (0 = 统计账户内所有黄金订单)',
+    'input string SyncToken      = "";               // 推送口令 (与 Vercel 环境变量 MT4_TOKEN 一致；未设置则留空)',
     '',
     ...entryLines,
     '',
@@ -4200,7 +4207,8 @@ function buildMql4Source(kind) {
     '      "&sellPnl=", DoubleToString(sellPnl, 2),',
     '      "&totalPnl=", DoubleToString(totalPnl, 2),',
     '      "&buyStopCount=", buyStopCount,',
-    '      "&sellStopCount=", sellStopCount',
+    '      "&sellStopCount=", sellStopCount,',
+    '      "&token=", SyncToken',
     '   );',
     '',
     '   char postData[];',
