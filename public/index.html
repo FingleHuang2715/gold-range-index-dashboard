@@ -4126,7 +4126,7 @@ function buildMql4Source(kind) {
     isScript ? '#property show_inputs' : '',
     '',
     'input string DashboardUrl   = "' + apiUrl + '"; // 网站接收接口地址(若本地运行则为 http://localhost:3000/api/mt4)',
-    'input int    SyncIntervalSec = 3;               // 同步间隔秒数 (建议 2~5 秒)',
+    'input int    SyncIntervalSec = 5;               // 同步间隔秒数 (建议 3~10 秒；线上Vercel建议≥5以省额度)',
     'input string GoldSymbolKey  = "XAU";            // 黄金品种匹配关键字 (自动兼容 XAUUSD / GOLD)',
     'input int    MagicFilter    = 0;                // EA魔术号过滤 (0 = 统计账户内所有黄金订单)',
     'input string SyncToken      = "";               // 推送口令 (与 Vercel 环境变量 MT4_TOKEN 一致；未设置则留空)',
@@ -4293,9 +4293,9 @@ window.simulateMt4Push = async function() {
   }
 };
 
-// 每 3 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (实现 3 秒级持仓浮盈联动)
+// 每 5 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (页面在后台时暂停)
 setInterval(async () => {
-  if (!D) return;
+  if (!D || document.hidden) return; // 页面在后台时暂停轮询，节省 Redis 额度
   try {
     const r = await fetch('/api/mt4');
     if (!r.ok) return;
@@ -4308,7 +4308,7 @@ setInterval(async () => {
       }
     }
   } catch (e) {}
-}, 3000);
+}, 5000);
 // 1) 打开网页瞬间(0ms)：立即从浏览器 localStorage 恢复上次缓存秒开渲染，杜绝白屏等待
 try {
   const cachedStr = localStorage.getItem(LOCAL_DATA_CACHE_KEY);

@@ -1609,13 +1609,24 @@ async function mt4Redis(cmd) {
     return j && j.result !== undefined ? j.result : null;
   } catch (e) { return null; }
 }
+// Upstash 免费档每月仅 50 万条命令：写入节流(持仓结构变化立即写，仅浮盈变动则 ≥15 秒才写一次) + 读取 4 秒内存缓存，大幅省额度
+let _mt4LastWriteTs = 0, _mt4LastSig = '', _mt4ReadTs = 0, _mt4ReadVal = null;
 async function mt4RemoteSet(state) {
+  const sig = [state.buyCount, state.sellCount, state.buyLots, state.sellLots, state.buyStopCount, state.sellStopCount].join('|');
+  const now = Date.now();
+  if (sig === _mt4LastSig && now - _mt4LastWriteTs < 15000) return;
+  _mt4LastSig = sig; _mt4LastWriteTs = now;
   await mt4Redis(['SET', 'gold_mt4_live_v1', JSON.stringify(state), 'EX', 3600]);
 }
 async function mt4RemoteGet() {
+  if (!MT4_REDIS_URL || !MT4_REDIS_TOKEN) return null;
+  const now = Date.now();
+  if (now - _mt4ReadTs < 4000) return _mt4ReadVal;
   const raw = await mt4Redis(['GET', 'gold_mt4_live_v1']);
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch (e) { return null; }
+  _mt4ReadTs = Date.now();
+  if (!raw) { _mt4ReadVal = null; return null; }
+  try { _mt4ReadVal = JSON.parse(raw); } catch (e) { _mt4ReadVal = null; }
+  return _mt4ReadVal;
 }
 
 async function handleApiMt4(req, res) {
