@@ -1621,15 +1621,22 @@ async function mt4Redis(cmd) {
     return j && j.result !== undefined ? j.result : null;
   } catch (e) { return null; }
 }
-// Upstash 免费档每月仅 50 万条命令：写入节流(持仓结构变化立即写，仅浮盈变动则 ≥15 秒才写一次) + 读取 4 秒内存缓存，大幅省额度
+// Upstash 免费档每月 50 万条命令保护策略：
+// 1) 单键聚合存储：实时状态 + 2小时高频曲线(history) + 7~10天长周期极值归档(historyLong) + 历史峰值与浮亏阶梯统计(stats) 全部封装在唯一键 gold_mt4_live_v1 中，零额外命令开销；
+// 2) 永久持久化（不设1小时短TTL过期），即使周末休市或关闭MT4，历史浮亏峰值、预付款峰值、各阶梯次数与历史曲线永久保留；
+// 3) 智能节流写入：服务端在内存中对每 5 秒一次的推送 100% 实时计算极值与阶梯；仅当【刷新历史峰值 / 突破新浮亏阶梯 / 开平仓层数或余额变化】时立即写 Redis，普通浮亏微动每 25 秒合并写一次 Redis（全天24h仅耗约 3400 条命令，不足免费额度的 12%）。
+const MT4_DD_TIERS = [50, 100, 150, 200, 300, 400, 600, 800, 1000, 1500, 2000];
 let _mt4LastWriteTs = 0, _mt4LastSig = '', _mt4ReadTs = 0, _mt4ReadVal = null;
-async function mt4RemoteSet(state) {
+
+async function mt4RemoteSet(state, forceImmediate = false) {
   const sig = [state.account, state.isMock ? 1 : 0, state.balance, state.buyCount, state.sellCount, state.buyLots, state.sellLots, state.buyStopCount, state.sellStopCount].join('|');
   const now = Date.now();
-  if (sig === _mt4LastSig && now - _mt4LastWriteTs < 15000) return;
-  _mt4LastSig = sig; _mt4LastWriteTs = now;
-  _mt4ReadVal = state; _mt4ReadTs = now;
-  await mt4Redis(['SET', 'gold_mt4_live_v1', JSON.stringify(state), 'EX', 3600]);
+  _mt4ReadVal = state;
+  _mt4ReadTs = now;
+  if (!forceImmediate && sig === _mt4LastSig && now - _mt4LastWriteTs < 25000) return;
+  _mt4LastSig = sig;
+  _mt4LastWriteTs = now;
+  await mt4Redis(['SET', 'gold_mt4_live_v1', JSON.stringify(state)]);
 }
 async function mt4RemoteClear() {
   _mt4LastSig = ''; _mt4LastWriteTs = 0; _mt4ReadVal = null; _mt4ReadTs = Date.now();
@@ -1638,12 +1645,324 @@ async function mt4RemoteClear() {
 async function mt4RemoteGet() {
   if (!MT4_REDIS_URL || !MT4_REDIS_TOKEN) return null;
   const now = Date.now();
-  if (now - _mt4ReadTs < 4000) return _mt4ReadVal;
+  if (_mt4ReadVal && now - _mt4ReadTs < 8000) return _mt4ReadVal;
   const raw = await mt4Redis(['GET', 'gold_mt4_live_v1']);
   _mt4ReadTs = Date.now();
   if (!raw) { _mt4ReadVal = null; return null; }
   try { _mt4ReadVal = JSON.parse(raw); } catch (e) { _mt4ReadVal = null; }
   return _mt4ReadVal;
+}
+
+function createEmptyMt4Stats(nowSec, balVal, eqVal) {
+  return {
+    sinceTs: nowSec,
+    lastTickTs: nowSec,
+    totalSamples: 0,
+    peaks: {
+      maxDd: { val: 0, pct: 0, ts: 0, px: 0, buyCount: 0, buyLots: 0, sellCount: 0, sellLots: 0, netLots: 0, margin: 0, ml: 0 },
+      maxMargin: { val: 0, ts: 0, px: 0, buyCount: 0, buyLots: 0, sellCount: 0, sellLots: 0, totalLots: 0, dd: 0, ml: 0 },
+      minMarginLevel: { val: 0, freeMargin: 0, ts: 0, px: 0, dd: 0, margin: 0, buyCount: 0, sellCount: 0 },
+      minEquity: { val: eqVal || balVal || 0, bal: balVal || 0, ts: nowSec, px: 0, dd: 0 },
+      maxBalance: { val: balVal || 0, ts: nowSec },
+      maxLayers: { val: 0, side: '-', lots: 0, netLots: 0, ts: 0, px: 0, dd: 0, margin: 0 }
+    },
+    tiers: MT4_DD_TIERS.map((th) => ({
+      th,
+      waves: 0,
+      recovered: 0,
+      active: false,
+      durSec: 0,
+      maxDd: 0,
+      maxMar: 0,
+      lastTs: 0,
+      lastPx: 0,
+      lastPos: '-'
+    })),
+    activeWave: null,
+    waveLog: []
+  };
+}
+
+function updateMt4StatsAndHistory(prevState, snap) {
+  const {
+    nowSec, accStr, balVal, eqVal, marVal, freeMVal, mlVal,
+    buyCount, buyLots, sellCount, sellLots, netLots, totalPnlVal, bid
+  } = snap;
+  const sameAcc = prevState && prevState.account === accStr;
+  const ddUsd = +(Math.max(0, -totalPnlVal)).toFixed(2);
+  const ddPct = balVal > 0 ? +((ddUsd / balVal) * 100).toFixed(1) : 0;
+  const totalLots = +(buyLots + sellLots).toFixed(2);
+  const maxSideLayers = Math.max(buyCount, sellCount);
+  const posSummary = `买${buyCount}层(${buyLots}手)/卖${sellCount}层(${sellLots}手)`;
+
+  let stats = (sameAcc && prevState.stats && prevState.stats.peaks)
+    ? JSON.parse(JSON.stringify(prevState.stats))
+    : createEmptyMt4Stats(nowSec, balVal, eqVal);
+
+  const existingTierMap = new Map((stats.tiers || []).map((t) => [t.th, t]));
+  stats.tiers = MT4_DD_TIERS.map((th) => existingTierMap.get(th) || {
+    th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-'
+  });
+
+  if (stats.totalSamples === 0 && sameAcc && Array.isArray(prevState.history) && prevState.history.length) {
+    for (const h of prevState.history) {
+      const hDd = +(Math.max(0, -(h.pnl || 0))).toFixed(2);
+      if (hDd > stats.peaks.maxDd.val) {
+        stats.peaks.maxDd = {
+          val: hDd,
+          pct: h.bal > 0 ? +((hDd / h.bal) * 100).toFixed(1) : 0,
+          ts: h.t || nowSec,
+          px: h.px || bid,
+          buyCount, buyLots: h.buyLots || buyLots, sellCount, sellLots: h.sellLots || sellLots, netLots: h.netLots || netLots,
+          margin: h.mar || marVal, ml: h.ml || mlVal
+        };
+      }
+    }
+  }
+
+  const dtSec = Math.max(1, Math.min(60, nowSec - (stats.lastTickTs || (nowSec - 5))));
+  stats.lastTickTs = nowSec;
+  stats.totalSamples = (stats.totalSamples || 0) + 1;
+
+  let brokenPeakOrTier = false;
+  const pk = stats.peaks;
+
+  if (ddUsd > (pk.maxDd.val || 0)) {
+    pk.maxDd = {
+      val: ddUsd, pct: ddPct, ts: nowSec, px: bid,
+      buyCount, buyLots, sellCount, sellLots, netLots, margin: marVal, ml: mlVal
+    };
+    brokenPeakOrTier = true;
+  }
+  if (marVal > (pk.maxMargin.val || 0)) {
+    pk.maxMargin = {
+      val: marVal, ts: nowSec, px: bid,
+      buyCount, buyLots, sellCount, sellLots, totalLots, dd: ddUsd, ml: mlVal
+    };
+    brokenPeakOrTier = true;
+  }
+  if (marVal > 0 && mlVal > 0 && (!pk.minMarginLevel.val || mlVal < pk.minMarginLevel.val)) {
+    pk.minMarginLevel = {
+      val: mlVal, freeMargin: freeMVal, ts: nowSec, px: bid,
+      dd: ddUsd, margin: marVal, buyCount, sellCount
+    };
+    brokenPeakOrTier = true;
+  }
+  if (eqVal > 0 && (!pk.minEquity.val || eqVal < pk.minEquity.val)) {
+    pk.minEquity = { val: eqVal, bal: balVal, ts: nowSec, px: bid, dd: ddUsd };
+  }
+  if (balVal > (pk.maxBalance.val || 0)) {
+    pk.maxBalance = { val: balVal, ts: nowSec };
+  }
+  if (maxSideLayers > (pk.maxLayers.val || 0) || (maxSideLayers === pk.maxLayers.val && totalLots > (pk.maxLayers.lots || 0))) {
+    pk.maxLayers = {
+      val: maxSideLayers,
+      side: buyCount >= sellCount ? `多单${buyCount}层` : `空单${sellCount}层`,
+      lots: totalLots,
+      netLots,
+      ts: nowSec,
+      px: bid,
+      dd: ddUsd,
+      margin: marVal
+    };
+    brokenPeakOrTier = true;
+  }
+
+  const isWaveCleared = ddUsd < 15 || (buyCount + sellCount === 0);
+  if (isWaveCleared) {
+    if (stats.activeWave && stats.activeWave.peakDd >= 35) {
+      const doneWave = {
+        ...stats.activeWave,
+        endTs: nowSec,
+        durSec: Math.max(5, nowSec - stats.activeWave.startTs),
+        status: 'RECOVERED',
+        endBal: balVal
+      };
+      stats.waveLog = [doneWave, ...(stats.waveLog || [])].slice(0, 40);
+      brokenPeakOrTier = true;
+    }
+    stats.activeWave = null;
+    for (const tier of stats.tiers) {
+      if (tier.active) {
+        tier.recovered = (tier.recovered || 0) + 1;
+        tier.active = false;
+      }
+    }
+  } else {
+    if (ddUsd >= 30) {
+      if (!stats.activeWave) {
+        stats.activeWave = {
+          id: 'w_' + nowSec,
+          startTs: nowSec,
+          peakTs: nowSec,
+          peakDd: ddUsd,
+          peakDdPct: ddPct,
+          peakMargin: marVal,
+          minMl: mlVal > 0 ? mlVal : 9999,
+          minFreeMargin: freeMVal,
+          maxLayers: maxSideLayers,
+          maxLots: totalLots,
+          maxNetLots: netLots,
+          peakPx: bid,
+          posAtPeak: posSummary,
+          tiersHit: []
+        };
+      } else {
+        const w = stats.activeWave;
+        if (ddUsd >= w.peakDd) {
+          w.peakDd = ddUsd;
+          w.peakDdPct = ddPct;
+          w.peakTs = nowSec;
+          w.peakPx = bid;
+          w.posAtPeak = posSummary;
+        }
+        if (marVal > w.peakMargin) w.peakMargin = marVal;
+        if (mlVal > 0 && mlVal < w.minMl) {
+          w.minMl = mlVal;
+          w.minFreeMargin = freeMVal;
+        }
+        if (maxSideLayers > w.maxLayers) w.maxLayers = maxSideLayers;
+        if (totalLots > w.maxLots) w.maxLots = totalLots;
+        if (netLots > w.maxNetLots) w.maxNetLots = netLots;
+      }
+    }
+
+    for (const tier of stats.tiers) {
+      if (ddUsd >= tier.th) {
+        tier.durSec = (tier.durSec || 0) + dtSec;
+        if (ddUsd > (tier.maxDd || 0)) tier.maxDd = ddUsd;
+        if (marVal > (tier.maxMar || 0)) tier.maxMar = marVal;
+        tier.lastTs = nowSec;
+        tier.lastPx = bid;
+        tier.lastPos = posSummary;
+        if (!tier.active) {
+          tier.active = true;
+          tier.waves = (tier.waves || 0) + 1;
+          brokenPeakOrTier = true;
+          if (stats.activeWave && !stats.activeWave.tiersHit.includes(tier.th)) {
+            stats.activeWave.tiersHit.push(tier.th);
+          }
+        }
+      } else if (tier.active && ddUsd < Math.min(20, tier.th * 0.30)) {
+        tier.recovered = (tier.recovered || 0) + 1;
+        tier.active = false;
+      }
+    }
+  }
+
+  const prevFast = (sameAcc && Array.isArray(prevState.history)) ? prevState.history.slice(-240) : [];
+  const fastBucketTs = Math.floor(nowSec / 30) * 30;
+  const newFastPt = {
+    t: nowSec,
+    bTs: fastBucketTs,
+    bal: balVal,
+    eq: eqVal,
+    pnl: totalPnlVal,
+    dd: ddUsd,
+    mar: marVal,
+    buyLots,
+    sellLots,
+    netLots,
+    ml: mlVal,
+    px: bid
+  };
+  if (!prevFast.length) {
+    prevFast.push({ ...newFastPt, t: nowSec - 30, bTs: fastBucketTs - 30 });
+    prevFast.push(newFastPt);
+  } else {
+    const lastF = prevFast[prevFast.length - 1];
+    const lastBTs = lastF.bTs || (Math.floor((lastF.t || nowSec) / 30) * 30);
+    if (fastBucketTs > lastBTs) {
+      prevFast.push(newFastPt);
+    } else {
+      const worstEq = Math.min(lastF.eq ?? eqVal, eqVal);
+      const worstPnl = Math.min(lastF.pnl ?? totalPnlVal, totalPnlVal);
+      const maxDdInB = Math.max(lastF.dd ?? ddUsd, ddUsd);
+      const maxMarInB = Math.max(lastF.mar ?? marVal, marVal);
+      const minMlInB = (lastF.ml > 0 && mlVal > 0) ? Math.min(lastF.ml, mlVal) : (mlVal || lastF.ml);
+      prevFast[prevFast.length - 1] = {
+        ...newFastPt,
+        eq: worstEq,
+        pnl: worstPnl,
+        dd: maxDdInB,
+        mar: maxMarInB,
+        ml: minMlInB
+      };
+    }
+  }
+  const history = prevFast.slice(-240);
+
+  const prevLong = (sameAcc && Array.isArray(prevState.historyLong)) ? prevState.historyLong.slice(-672) : [];
+  const longBucketTs = Math.floor(nowSec / 900) * 900;
+  if (!prevLong.length && history.length) {
+    for (const hp of history) {
+      const lb = Math.floor((hp.t || nowSec) / 900) * 900;
+      const hDd = hp.dd != null ? hp.dd : Math.max(0, -(hp.pnl || 0));
+      const hMar = hp.mar || marVal;
+      const lastL = prevLong[prevLong.length - 1];
+      if (!lastL || lastL.t !== lb) {
+        prevLong.push({
+          t: lb,
+          bal: hp.bal,
+          eq: hp.eq,
+          eqMin: hp.eq,
+          pnl: hp.pnl,
+          ddMax: hDd,
+          marMax: hMar,
+          mlMin: hp.ml || mlVal,
+          buyLots: hp.buyLots,
+          sellLots: hp.sellLots,
+          netLots: hp.netLots,
+          layersMax: maxSideLayers,
+          px: hp.px || bid
+        });
+      } else {
+        lastL.bal = hp.bal;
+        lastL.eq = Math.min(lastL.eq, hp.eq);
+        lastL.eqMin = Math.min(lastL.eqMin, hp.eq);
+        lastL.pnl = Math.min(lastL.pnl, hp.pnl);
+        lastL.ddMax = Math.max(lastL.ddMax, hDd);
+        lastL.marMax = Math.max(lastL.marMax, hMar);
+        if (hp.ml > 0) lastL.mlMin = lastL.mlMin > 0 ? Math.min(lastL.mlMin, hp.ml) : hp.ml;
+        lastL.px = hp.px || bid;
+      }
+    }
+  } else {
+    const lastL = prevLong[prevLong.length - 1];
+    if (!lastL || lastL.t !== longBucketTs) {
+      prevLong.push({
+        t: longBucketTs,
+        bal: balVal,
+        eq: eqVal,
+        eqMin: eqVal,
+        pnl: totalPnlVal,
+        ddMax: ddUsd,
+        marMax: marVal,
+        mlMin: mlVal,
+        buyLots,
+        sellLots,
+        netLots,
+        layersMax: maxSideLayers,
+        px: bid
+      });
+    } else {
+      lastL.bal = balVal;
+      lastL.eq = Math.min(lastL.eq, eqVal);
+      lastL.eqMin = Math.min(lastL.eqMin, eqVal);
+      lastL.pnl = Math.min(lastL.pnl, totalPnlVal);
+      lastL.ddMax = Math.max(lastL.ddMax, ddUsd);
+      lastL.marMax = Math.max(lastL.marMax, marVal);
+      if (mlVal > 0) lastL.mlMin = lastL.mlMin > 0 ? Math.min(lastL.mlMin, mlVal) : mlVal;
+      lastL.buyLots = buyLots;
+      lastL.sellLots = sellLots;
+      lastL.netLots = Math.max(lastL.netLots || 0, netLots);
+      lastL.layersMax = Math.max(lastL.layersMax || 0, maxSideLayers);
+      lastL.px = bid;
+    }
+  }
+  const historyLong = prevLong.slice(-672);
+
+  return { stats, history, historyLong, brokenPeakOrTier };
 }
 
 async function handleApiMt4(req, res) {
@@ -1666,6 +1985,19 @@ async function handleApiMt4(req, res) {
       await mt4RemoteClear();
       res.writeHead(200, corsHeaders);
       return res.end(JSON.stringify({ ok: true, connected: false, mt4: null }));
+    }
+    if (u.searchParams.get('resetStats') === '1') {
+      if (!latestMt4State && MT4_REDIS_URL && MT4_REDIS_TOKEN) {
+        try { latestMt4State = await mt4RemoteGet(); } catch (e) {}
+      }
+      if (latestMt4State) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        latestMt4State.stats = createEmptyMt4Stats(nowSec, latestMt4State.balance, latestMt4State.equity);
+        latestMt4State.initBal = latestMt4State.balance;
+        await mt4RemoteSet(latestMt4State, true);
+      }
+      res.writeHead(200, corsHeaders);
+      return res.end(JSON.stringify({ ok: true, connected: !!latestMt4State, mt4: latestMt4State }));
     }
     if (u.searchParams.has('bal') || u.searchParams.has('balance')) {
       if (MT4_PUSH_TOKEN && u.searchParams.get('token') !== MT4_PUSH_TOKEN) {
@@ -1710,44 +2042,34 @@ async function handleApiMt4(req, res) {
         }
       }
 
-      if (!latestMt4State && MT4_REDIS_URL && MT4_REDIS_TOKEN) {
-        try { latestMt4State = await mt4RemoteGet(); } catch (e) {}
+      // 若当前 Serverless 实例冷启动或超过 20 秒未同步 Redis，先拉取一次确保多实例间峰值与历史不丢失
+      if ((!latestMt4State || Date.now() - _mt4ReadTs > 20000) && MT4_REDIS_URL && MT4_REDIS_TOKEN) {
+        try {
+          const remoteState = await mt4RemoteGet();
+          if (remoteState && (!latestMt4State || (remoteState.ts || 0) >= (latestMt4State.ts || 0))) {
+            latestMt4State = remoteState;
+          }
+        } catch (e) {}
       }
-      const prevHist = (latestMt4State && latestMt4State.account === accStr && Array.isArray(latestMt4State.history))
-        ? latestMt4State.history.slice(-180)
-        : [];
+
       const nowSec = Math.floor(Date.now() / 1000);
       const balVal = +num('bal').toFixed(2);
       const eqVal = +num('eq').toFixed(2);
+      const marVal = +num('margin').toFixed(2);
+      const freeMVal = +num('freeMargin').toFixed(2);
       const totalPnlVal = +num('totalPnl').toFixed(2);
       const mlVal = +num('marginLvl').toFixed(1);
-      const newPt = {
-        t: nowSec,
-        bal: balVal,
-        eq: eqVal,
-        pnl: totalPnlVal,
-        buyLots,
-        sellLots,
-        netLots,
-        ml: mlVal,
-        px: bid
-      };
-      if (!prevHist.length) {
-        prevHist.push({ ...newPt, t: nowSec - 15 });
-        prevHist.push(newPt);
-      } else {
-        const lastPt = prevHist[prevHist.length - 1];
-        const structureChanged = lastPt.bal !== balVal || lastPt.buyLots !== buyLots || lastPt.sellLots !== sellLots;
-        if (structureChanged || (nowSec - lastPt.t >= 15)) {
-          prevHist.push(newPt);
-        } else {
-          prevHist[prevHist.length - 1] = newPt;
-        }
-      }
-      const history = prevHist.slice(-180);
+      const buyCount = Math.round(num('buyCnt'));
+      const sellCount = Math.round(num('sellCnt'));
+
+      const { stats, history, historyLong, brokenPeakOrTier } = updateMt4StatsAndHistory(latestMt4State, {
+        nowSec, accStr, balVal, eqVal, marVal, freeMVal, mlVal,
+        buyCount, buyLots, sellCount, sellLots, netLots, totalPnlVal, bid
+      });
+
       const initBal = (latestMt4State && latestMt4State.account === accStr && latestMt4State.initBal > 0)
         ? latestMt4State.initBal
-        : history[0].bal;
+        : (history[0] ? history[0].bal : balVal);
       const closedProfit = +(balVal - initBal).toFixed(2);
       const netTotalProfit = +(eqVal - initBal).toFixed(2);
 
@@ -1756,22 +2078,22 @@ async function handleApiMt4(req, res) {
         ts: Date.now(),
         isMock,
         symbol: u.searchParams.get('sym') || u.searchParams.get('symbol') || 'XAUUSD',
-        account: u.searchParams.get('account') || '',
+        account: accStr,
         server: u.searchParams.get('server') || '',
         balance: balVal,
         equity: eqVal,
         initBal,
         closedProfit,
         netTotalProfit,
-        margin: +num('margin').toFixed(2),
-        freeMargin: +num('freeMargin').toFixed(2),
+        margin: marVal,
+        freeMargin: freeMVal,
         marginLevel: mlVal,
         leverage: Math.round(num('lev', 1000)),
-        buyCount: Math.round(num('buyCnt')),
+        buyCount,
         buyLots,
         buyAvgPrice,
         buyPnl,
-        sellCount: Math.round(num('sellCnt')),
+        sellCount,
         sellLots,
         sellAvgPrice,
         sellPnl,
@@ -1784,14 +2106,39 @@ async function handleApiMt4(req, res) {
         bid,
         ask,
         spreadPts,
-        history
+        stats,
+        history,
+        historyLong
       };
       if (cache) cache.mt4 = latestMt4State;
       fs.promises.writeFile(MT4_STATE_FILE, JSON.stringify(latestMt4State), 'utf8').catch(() => {});
-      await mt4RemoteSet(latestMt4State);
+      await mt4RemoteSet(latestMt4State, brokenPeakOrTier);
     } else {
       const live = await mt4RemoteGet();
       if (live) latestMt4State = live;
+      if (latestMt4State && (!latestMt4State.stats || !latestMt4State.stats.peaks)) {
+        const s = latestMt4State;
+        const nowSec = Math.floor((s.ts || Date.now()) / 1000);
+        const { stats, history, historyLong } = updateMt4StatsAndHistory(s, {
+          nowSec,
+          accStr: s.account || '',
+          balVal: s.balance || 0,
+          eqVal: s.equity || 0,
+          marVal: s.margin || 0,
+          freeMVal: s.freeMargin || 0,
+          mlVal: s.marginLevel || 0,
+          buyCount: s.buyCount || 0,
+          buyLots: s.buyLots || 0,
+          sellCount: s.sellCount || 0,
+          sellLots: s.sellLots || 0,
+          netLots: s.netLots || 0,
+          totalPnlVal: s.totalPnl || 0,
+          bid: s.bid || 0
+        });
+        latestMt4State.stats = stats;
+        latestMt4State.history = history;
+        latestMt4State.historyLong = historyLong;
+      }
     }
     res.writeHead(200, corsHeaders);
     return res.end(JSON.stringify({ ok: true, redisOk: !!(MT4_REDIS_URL && MT4_REDIS_TOKEN), connected: !!latestMt4State, mt4: latestMt4State }));

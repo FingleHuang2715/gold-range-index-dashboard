@@ -4409,67 +4409,255 @@ window.clearMt4Data = async function() {
   }
 };
 
-// ========== MT4 实盘账户深度联动决策引擎 + 余额/净值/收益曲线图 & 生死价格尺 ==========
-const MT4_CHART_STATE = { pts: null };
+// ========== MT4 实盘账户深度联动决策引擎 + 长期历史归档/峰值纪念碑/浮亏阶梯统计/入金测算 ==========
+const MT4_CHART_STATE = { pts: null, mode: 'fast' }; // 'fast' (近2小时·30秒粒度) | 'long' (7~30天长周期·15分钟极值桶)
+const MT4_DD_TIERS_DEF = [50, 100, 150, 200, 300, 400, 600, 800, 1000, 1500, 2000];
+
+window.setMt4CurveMode = function(m) {
+  MT4_CHART_STATE.mode = m;
+  if (D) render();
+};
+
+function fmtDuration(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  if (s === 0) return '0秒';
+  if (s < 60) return `${s}秒`;
+  const m = Math.floor(s / 60), rs = s % 60;
+  if (m < 60) return `${m}分${rs > 0 ? rs + '秒' : ''}`;
+  const h = Math.floor(m / 60), rm = m % 60;
+  return `${h}小时${rm}分`;
+}
+
+function fmtSecTime(secOrMs) {
+  if (!secOrMs) return '-';
+  const ms = secOrMs < 1e11 ? secOrMs * 1000 : secOrMs;
+  return new Date(ms).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/\//g, '-');
+}
 
 function getMergedMt4History(mt4) {
-  if (!mt4) return [];
-  const accKey = `gold_mt4_hist_v1_${mt4.account || 'default'}`;
-  const baseKey = `gold_mt4_base_v1_${mt4.account || 'default'}`;
-  let localArr = [];
-  try {
-    const raw = localStorage.getItem(accKey);
-    if (raw) localArr = JSON.parse(raw) || [];
-  } catch (e) {}
+  if (!mt4) return { history: [], historyLong: [], stats: null, initBal: 0 };
+  const acc = mt4.account || 'default';
+  const accFastKey = `gold_mt4_hist_v1_${acc}`;
+  const accLongKey = `gold_mt4_long_v1_${acc}`;
+  const accStatsKey = `gold_mt4_stats_v1_${acc}`;
+  const baseKey = `gold_mt4_base_v1_${acc}`;
 
-  const srvArr = Array.isArray(mt4.history) ? mt4.history : [];
-  const map = new Map();
-  for (const pt of localArr) {
-    if (pt && pt.t) {
-      const tMs = pt.t < 1e11 ? pt.t * 1000 : pt.t;
-      map.set(Math.floor(tMs / 5000), { ...pt, t: tMs });
+  // 1) 合并高频 30 秒序列 (history)
+  let localFast = [];
+  try { localFast = JSON.parse(localStorage.getItem(accFastKey) || '[]') || []; } catch (e) {}
+  const srvFast = Array.isArray(mt4.history) ? mt4.history : [];
+  const fastMap = new Map();
+  const addFastPt = (pt) => {
+    if (!pt || !pt.t) return;
+    const tMs = pt.t < 1e11 ? pt.t * 1000 : pt.t;
+    const bKey = Math.floor(tMs / 30000);
+    const dd = pt.dd != null ? pt.dd : r2(Math.max(0, -(pt.pnl || 0)));
+    const mar = r2(pt.mar || mt4.margin || 0);
+    const prev = fastMap.get(bKey);
+    if (!prev) {
+      fastMap.set(bKey, { ...pt, t: tMs, dd, mar });
+    } else {
+      fastMap.set(bKey, {
+        ...pt,
+        t: Math.max(prev.t, tMs),
+        eq: Math.min(prev.eq ?? pt.eq, pt.eq ?? prev.eq),
+        pnl: Math.min(prev.pnl ?? pt.pnl, pt.pnl ?? prev.pnl),
+        dd: Math.max(prev.dd || 0, dd),
+        mar: Math.max(prev.mar || 0, mar),
+        ml: (prev.ml > 0 && pt.ml > 0) ? Math.min(prev.ml, pt.ml) : (pt.ml || prev.ml || 0)
+      });
     }
-  }
-  for (const pt of srvArr) {
-    if (pt && pt.t) {
-      const tMs = pt.t < 1e11 ? pt.t * 1000 : pt.t;
-      map.set(Math.floor(tMs / 5000), { ...pt, t: tMs });
-    }
-  }
-  // 把当前最新点加入
+  };
+  localFast.forEach(addFastPt);
+  srvFast.forEach(addFastPt);
+
   const curPx = (mt4.buyLots > 0 && mt4.buyAvgPrice > 0)
     ? r2(mt4.buyAvgPrice + (mt4.buyPnl || 0) / (mt4.buyLots * 100))
     : (mt4.sellLots > 0 && mt4.sellAvgPrice > 0)
     ? r2(mt4.sellAvgPrice - (mt4.sellPnl || 0) / (mt4.sellLots * 100))
     : r2(mt4.bid || 0);
+  const curDd = r2(Math.max(0, -(mt4.totalPnl || 0)));
   const nowPt = {
     t: mt4.ts || Date.now(),
     bal: r2(mt4.balance || 0),
     eq: r2(mt4.equity || 0),
     pnl: r2(mt4.totalPnl || 0),
+    dd: curDd,
+    mar: r2(mt4.margin || 0),
     buyLots: r2(mt4.buyLots || 0),
     sellLots: r2(mt4.sellLots || 0),
     netLots: r2((mt4.buyLots || 0) - (mt4.sellLots || 0)),
     ml: r1(mt4.marginLevel || 0),
     px: curPx
   };
-  map.set(Math.floor(nowPt.t / 5000), nowPt);
+  addFastPt(nowPt);
+  const mergedFast = Array.from(fastMap.values()).sort((a, b) => a.t - b.t).slice(-240);
+  try { localStorage.setItem(accFastKey, JSON.stringify(mergedFast)); } catch (e) {}
 
-  const merged = Array.from(map.values()).sort((a, b) => a.t - b.t).slice(-200);
-  try { localStorage.setItem(accKey, JSON.stringify(merged)); } catch (e) {}
+  // 2) 合并长周期 15 分钟极值归档序列 (historyLong，最多保存 720 个桶 = 7.5天 ~ 10个交易日)
+  let localLong = [];
+  try { localLong = JSON.parse(localStorage.getItem(accLongKey) || '[]') || []; } catch (e) {}
+  const srvLong = Array.isArray(mt4.historyLong) ? mt4.historyLong : [];
+  const longMap = new Map();
+  const addLongPt = (pt) => {
+    if (!pt || !pt.t) return;
+    const tMs = pt.t < 1e11 ? pt.t * 1000 : pt.t;
+    const bKey = Math.floor(tMs / 900000) * 900000;
+    const ddMax = r2(pt.ddMax != null ? pt.ddMax : (pt.dd != null ? pt.dd : Math.max(0, -(pt.pnl || 0))));
+    const marMax = r2(pt.marMax != null ? pt.marMax : (pt.mar || mt4.margin || 0));
+    const eqMin = r2(pt.eqMin != null ? pt.eqMin : (pt.eq || 0));
+    const prev = longMap.get(bKey);
+    if (!prev) {
+      longMap.set(bKey, { ...pt, t: bKey, eq: eqMin, eqMin, dd: ddMax, ddMax, mar: marMax, marMax });
+    } else {
+      longMap.set(bKey, {
+        ...prev,
+        ...pt,
+        t: bKey,
+        eq: Math.min(prev.eqMin, eqMin),
+        eqMin: Math.min(prev.eqMin, eqMin),
+        pnl: Math.min(prev.pnl || 0, pt.pnl || 0),
+        dd: Math.max(prev.ddMax || 0, ddMax),
+        ddMax: Math.max(prev.ddMax || 0, ddMax),
+        mar: Math.max(prev.marMax || 0, marMax),
+        marMax: Math.max(prev.marMax || 0, marMax),
+        ml: (prev.ml > 0 && pt.ml > 0) ? Math.min(prev.ml, pt.ml) : (pt.ml || prev.ml || 0)
+      });
+    }
+  };
+  localLong.forEach(addLongPt);
+  srvLong.forEach(addLongPt);
+  mergedFast.forEach(addLongPt);
+  const mergedLong = Array.from(longMap.values()).sort((a, b) => a.t - b.t).slice(-720);
+  try { localStorage.setItem(accLongKey, JSON.stringify(mergedLong)); } catch (e) {}
+
+  // 3) 合并与兜底历史峰值 & 浮亏阶梯统计 stats（结合云端 Redis 与本地浏览器缓存取最大值，绝不丢失任何一次历史峰值！）
+  let localStats = null;
+  try { localStats = JSON.parse(localStorage.getItem(accStatsKey) || 'null'); } catch (e) {}
+  let stats = mt4.stats && mt4.stats.peaks ? JSON.parse(JSON.stringify(mt4.stats)) : (localStats || {
+    sinceTs: Math.floor(Date.now() / 1000),
+    totalSamples: mergedFast.length,
+    peaks: {
+      maxDd: { val: 0, pct: 0, ts: 0, px: 0, buyCount: 0, buyLots: 0, sellCount: 0, sellLots: 0, netLots: 0, margin: 0, ml: 0 },
+      maxMargin: { val: 0, ts: 0, px: 0, buyCount: 0, buyLots: 0, sellCount: 0, sellLots: 0, totalLots: 0, dd: 0, ml: 0 },
+      minMarginLevel: { val: 0, freeMargin: 0, ts: 0, px: 0, dd: 0, margin: 0, buyCount: 0, sellCount: 0 },
+      minEquity: { val: mt4.equity || mt4.balance || 0, bal: mt4.balance || 0, ts: Math.floor(Date.now() / 1000), px: curPx, dd: curDd },
+      maxBalance: { val: mt4.balance || 0, ts: Math.floor(Date.now() / 1000) },
+      maxLayers: { val: 0, side: '-', lots: 0, netLots: 0, ts: 0, px: 0, dd: 0, margin: 0 }
+    },
+    tiers: MT4_DD_TIERS_DEF.map((th) => ({ th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-' })),
+    activeWave: null,
+    waveLog: []
+  });
+
+  // 与本地缓存的极值做合并保护（取两者中更极端的峰值）
+  if (localStats && localStats.peaks && stats.peaks) {
+    if ((localStats.peaks.maxDd && localStats.peaks.maxDd.val || 0) > (stats.peaks.maxDd.val || 0)) {
+      stats.peaks.maxDd = localStats.peaks.maxDd;
+    }
+    if ((localStats.peaks.maxMargin && localStats.peaks.maxMargin.val || 0) > (stats.peaks.maxMargin.val || 0)) {
+      stats.peaks.maxMargin = localStats.peaks.maxMargin;
+    }
+    if (localStats.peaks.minMarginLevel && localStats.peaks.minMarginLevel.val > 0 && (!stats.peaks.minMarginLevel.val || localStats.peaks.minMarginLevel.val < stats.peaks.minMarginLevel.val)) {
+      stats.peaks.minMarginLevel = localStats.peaks.minMarginLevel;
+    }
+    if (localStats.peaks.minEquity && localStats.peaks.minEquity.val > 0 && (!stats.peaks.minEquity.val || localStats.peaks.minEquity.val < stats.peaks.minEquity.val)) {
+      stats.peaks.minEquity = localStats.peaks.minEquity;
+    }
+    if ((localStats.peaks.maxLayers && localStats.peaks.maxLayers.val || 0) > (stats.peaks.maxLayers.val || 0)) {
+      stats.peaks.maxLayers = localStats.peaks.maxLayers;
+    }
+    if (Array.isArray(localStats.tiers) && Array.isArray(stats.tiers)) {
+      const lMap = new Map(localStats.tiers.map((x) => [x.th, x]));
+      stats.tiers = stats.tiers.map((t) => {
+        const lt = lMap.get(t.th);
+        if (!lt) return t;
+        return {
+          ...t,
+          waves: Math.max(t.waves || 0, lt.waves || 0),
+          recovered: Math.max(t.recovered || 0, lt.recovered || 0),
+          durSec: Math.max(t.durSec || 0, lt.durSec || 0),
+          maxDd: Math.max(t.maxDd || 0, lt.maxDd || 0),
+          maxMar: Math.max(t.maxMar || 0, lt.maxMar || 0),
+          lastTs: Math.max(t.lastTs || 0, lt.lastTs || 0) || t.lastTs,
+          lastPx: (t.lastTs || 0) >= (lt.lastTs || 0) ? t.lastPx : lt.lastPx,
+          lastPos: (t.lastTs || 0) >= (lt.lastTs || 0) ? t.lastPos : lt.lastPos
+        };
+      });
+    }
+  }
+
+  // 同时用当前帧兜底刷新一次极值
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (curDd > (stats.peaks.maxDd.val || 0)) {
+    stats.peaks.maxDd = {
+      val: curDd,
+      pct: mt4.balance > 0 ? r1((curDd / mt4.balance) * 100) : 0,
+      ts: nowSec,
+      px: curPx,
+      buyCount: mt4.buyCount || 0,
+      buyLots: mt4.buyLots || 0,
+      sellCount: mt4.sellCount || 0,
+      sellLots: mt4.sellLots || 0,
+      netLots: mt4.netLots || 0,
+      margin: mt4.margin || 0,
+      ml: mt4.marginLevel || 0
+    };
+  }
+  if ((mt4.margin || 0) > (stats.peaks.maxMargin.val || 0)) {
+    stats.peaks.maxMargin = {
+      val: mt4.margin || 0,
+      ts: nowSec,
+      px: curPx,
+      buyCount: mt4.buyCount || 0,
+      buyLots: mt4.buyLots || 0,
+      sellCount: mt4.sellCount || 0,
+      sellLots: mt4.sellLots || 0,
+      totalLots: r2((mt4.buyLots || 0) + (mt4.sellLots || 0)),
+      dd: curDd,
+      ml: mt4.marginLevel || 0
+    };
+  }
+  if ((mt4.marginLevel || 0) > 0 && (!stats.peaks.minMarginLevel.val || mt4.marginLevel < stats.peaks.minMarginLevel.val)) {
+    stats.peaks.minMarginLevel = {
+      val: mt4.marginLevel,
+      freeMargin: mt4.freeMargin || 0,
+      ts: nowSec,
+      px: curPx,
+      dd: curDd,
+      margin: mt4.margin || 0,
+      buyCount: mt4.buyCount || 0,
+      sellCount: mt4.sellCount || 0
+    };
+  }
+  const curMaxLayer = Math.max(mt4.buyCount || 0, mt4.sellCount || 0);
+  if (curMaxLayer > (stats.peaks.maxLayers.val || 0)) {
+    stats.peaks.maxLayers = {
+      val: curMaxLayer,
+      side: (mt4.buyCount || 0) >= (mt4.sellCount || 0) ? `多单${mt4.buyCount}层` : `空单${mt4.sellCount}层`,
+      lots: r2((mt4.buyLots || 0) + (mt4.sellLots || 0)),
+      netLots: mt4.netLots || 0,
+      ts: nowSec,
+      px: curPx,
+      dd: curDd,
+      margin: mt4.margin || 0
+    };
+  }
+
+  try { localStorage.setItem(accStatsKey, JSON.stringify(stats)); } catch (e) {}
 
   let initBal = Number(mt4.initBal) || 0;
   try {
     const savedBase = Number(localStorage.getItem(baseKey));
     if (savedBase > 0) initBal = savedBase;
-    else if (merged.length > 0 && merged[0].bal > 0) {
-      initBal = merged[0].bal;
+    else if (mergedFast.length > 0 && mergedFast[0].bal > 0) {
+      initBal = mergedFast[0].bal;
       localStorage.setItem(baseKey, String(initBal));
     }
   } catch (e) {}
   if (!initBal && mt4.balance > 0) initBal = mt4.balance;
 
-  return { history: merged, initBal };
+  return { history: mergedFast, historyLong: mergedLong, stats, initBal };
 }
 
 window.resetMt4CurveBase = function() {
@@ -4483,6 +4671,8 @@ window.resetMt4CurveBase = function() {
     bal: r2(D.mt4.balance || 0),
     eq: r2(D.mt4.equity || 0),
     pnl: r2(D.mt4.totalPnl || 0),
+    dd: r2(Math.max(0, -(D.mt4.totalPnl || 0))),
+    mar: r2(D.mt4.margin || 0),
     buyLots: r2(D.mt4.buyLots || 0),
     sellLots: r2(D.mt4.sellLots || 0),
     netLots: r2((D.mt4.buyLots || 0) - (D.mt4.sellLots || 0)),
@@ -4495,7 +4685,25 @@ window.resetMt4CurveBase = function() {
   } catch (e) {}
   if (D.mt4.history) D.mt4.history = [nowPt];
   render();
-  toast('✅ 已将当前余额设为收益曲线新起点！');
+  toast('✅ 已将当前余额设为收益曲线新起点！（历史峰值与浮亏阶梯统计依然保留）');
+};
+
+window.resetMt4AllStats = async function() {
+  if (!D || !D.mt4) return;
+  if (!confirm('确定要清空所有历史浮亏峰值、预付款峰值及分阶段次数统计，从当前时刻重新开始统计吗？')) return;
+  const acc = D.mt4.account || 'default';
+  try {
+    localStorage.removeItem(`gold_mt4_stats_v1_${acc}`);
+    localStorage.removeItem(`gold_mt4_long_v1_${acc}`);
+    await fetch('/api/mt4?resetStats=1');
+    const r = await fetch('/api/mt4');
+    const j = await r.json();
+    if (j && j.mt4) D.mt4 = j.mt4;
+    render();
+    toast('🗑️ 已重置历史峰值与阶梯统计档案！');
+  } catch (e) {
+    toast('重置失败: ' + e.message);
+  }
 };
 
 function calcMt4LiveDecision(d, mt4, pb, adjMap, lkNow, martingaleScore) {
@@ -4762,27 +4970,30 @@ function calcMt4LiveDecision(d, mt4, pb, adjMap, lkNow, martingaleScore) {
   };
 }
 
-function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
+function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   if (!hist || !hist.length) return '<div class="mut">正在采集 MT4 实盘余额与净值时序数据...</div>';
-  // 如果只有 1 个点，自动复制一个微秒级前驱点以便绘出完整水平基准线与面积图
   const arr = hist.length === 1
-    ? [{ ...hist[0], t: hist[0].t - 5000 }, hist[0]]
+    ? [{ ...hist[0], t: hist[0].t - 30000 }, hist[0]]
     : hist;
 
-  const W = 1200, H = 430, L = 68, R = 148, T = 26, B = 38;
+  const W = 1200, H = 450, L = 68, R = 156, T = 26, B = 38;
   const cw = W - L - R, n = arr.length;
   const xOf = (i) => L + (i / Math.max(1, n - 1)) * cw;
 
-  // 上面板 (topTop ~ topBot): 账户余额 (Balance) + 实时净值 (Equity) + 已用预付款100%警戒线 (Margin)
-  // 下面板 (botTop ~ botBot): 累计总收益曲线 (Equity - initBal) + 实时浮动盈亏柱状图 (totalPnl)
-  const topTop = T, topH = 210, topBot = topTop + topH;
-  const botTop = topBot + 36, botH = H - B - botTop, botBot = botTop + botH;
+  // 上面板 (topTop ~ topBot): 账户余额 (Balance) + 实时净值 (Equity) + 已用预付款曲线 (Margin 橙线) + 历史最高预付款虚线
+  // 下面板 (botTop ~ botBot): 综合净收益折线 + 浮动盈亏/最大浮亏柱状图 + 历史最大浮亏峰值红线
+  const topTop = T, topH = 215, topBot = topTop + topH;
+  const botTop = topBot + 38, botH = H - B - botTop, botBot = botTop + botH;
 
   const curMar = Number(mt4.margin) || 0;
+  const pkMaxMar = (stats && stats.peaks && stats.peaks.maxMargin && stats.peaks.maxMargin.val) || curMar;
+  const pkMaxDd = (stats && stats.peaks && stats.peaks.maxDd && stats.peaks.maxDd.val) || 0;
+
   let vMin = Infinity, vMax = -Infinity;
   arr.forEach((p) => {
-    const hi = Math.max(p.bal || 0, p.eq || 0, initBal || 0);
-    const lo = Math.min(p.bal || 0, p.eq || 0, initBal || 0, curMar > 0 ? curMar : Infinity);
+    const pMar = p.marMax != null ? p.marMax : (p.mar || 0);
+    const hi = Math.max(p.bal || 0, p.eq || 0, initBal || 0, pMar, pkMaxMar);
+    const lo = Math.min(p.bal || 0, p.eq || 0, initBal || 0, pMar > 0 ? pMar : Infinity);
     if (hi > vMax) vMax = hi;
     if (lo < vMin) vMin = lo;
   });
@@ -4794,10 +5005,10 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
   vMax += padV;
   vMin = Math.max(0, vMin - padV);
 
-  let pMin = Math.min(0, -10), pMax = Math.max(0, 10);
+  let pMin = Math.min(0, -10, -pkMaxDd), pMax = Math.max(0, 10);
   arr.forEach((p) => {
     const netRet = r2((p.eq || 0) - initBal);
-    const fl = r2(p.pnl || 0);
+    const fl = p.ddMax != null ? -p.ddMax : r2(p.pnl || 0);
     pMax = Math.max(pMax, netRet, fl);
     pMin = Math.min(pMin, netRet, fl);
   });
@@ -4808,9 +5019,8 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
   const yTop = (v) => topTop + (1 - (v - vMin) / Math.max(1e-6, vMax - vMin)) * topH;
   const yBot = (v) => botTop + (1 - (v - pMin) / Math.max(1e-6, pMax - pMin)) * botH;
 
-  MT4_CHART_STATE.pts = { arr, W, H, L, R, T, B, cw, topTop, topH, topBot, botTop, botH, botBot, vMin, vMax, pMin, pMax, initBal };
+  MT4_CHART_STATE.pts = { arr, W, H, L, R, T, B, cw, topTop, topH, topBot, botTop, botH, botBot, vMin, vMax, pMin, pMax, initBal, mode };
 
-  // 上面板网格与刻度
   const topTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const val = vMin + (1 - f) * (vMax - vMin);
     const y = (topTop + f * topH).toFixed(1);
@@ -4818,17 +5028,24 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
       <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#94a3b8" font-size="11">$${val.toFixed(1)}</text>`;
   }).join('');
 
-  // 100% 预付款警戒线 (当 Equity 跌到此线时 FreeMargin=0)
+  // 100% 预付款警戒线 & 历史最高预付款峰值线
   let marginLineSvg = '';
   if (curMar > 0 && curMar >= vMin && curMar <= vMax) {
     const ym = yTop(curMar).toFixed(1);
-    marginLineSvg = `
+    marginLineSvg += `
       <line x1="${L}" y1="${ym}" x2="${W - R}" y2="${ym}" stroke="#f43f5e" stroke-width="1.4" stroke-dasharray="5,4"/>
-      <text x="${W - R + 6}" y="${+ym + 4}" fill="#fb7185" font-size="11" font-weight="700">🚨 100%预付款线 $${curMar.toFixed(2)}</text>`;
+      <text x="${W - R + 6}" y="${+ym + 4}" fill="#fb7185" font-size="11" font-weight="700">🚨 当前预付款 $${curMar.toFixed(2)}</text>`;
+  }
+  if (pkMaxMar > 0 && Math.abs(pkMaxMar - curMar) > 3 && pkMaxMar >= vMin && pkMaxMar <= vMax) {
+    const ypk = yTop(pkMaxMar).toFixed(1);
+    marginLineSvg += `
+      <line x1="${L}" y1="${ypk}" x2="${W - R}" y2="${ypk}" stroke="#fb923c" stroke-width="1.2" stroke-dasharray="2,3"/>
+      <text x="${W - R + 6}" y="${+ypk + 4}" fill="#fb923c" font-size="10.5" font-weight="700">🏦 峰值预付款 $${pkMaxMar.toFixed(2)}</text>`;
   }
 
   const balPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yTop(p.bal).toFixed(1)}`).join(' ');
   const eqPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yTop(p.eq).toFixed(1)}`).join(' ');
+  const marPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yTop(p.marMax != null ? p.marMax : (p.mar || 0)).toFixed(1)}`).join(' ');
   const eqArea = `${xOf(0).toFixed(1)},${topBot} ${eqPts} ${xOf(n - 1).toFixed(1)},${topBot}`;
 
   const last = arr[n - 1];
@@ -4837,7 +5054,7 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
   const lastEqY = yTop(last.eq).toFixed(1);
   const eqColor = last.eq >= last.bal ? '#34d399' : '#38bdf8';
 
-  // 下面板：0轴 + 浮动盈亏柱状图 + 综合净收益折线 (Equity - initBal)
+  // 下面板：0轴 + 浮动盈亏柱状图 + 综合净收益折线 + 历史最大浮亏峰值水平红线
   const yZero = yBot(0).toFixed(1);
   const botTicks = [0, 0.5, 1].map((f) => {
     const val = pMin + (1 - f) * (pMax - pMin);
@@ -4846,16 +5063,24 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
       <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#94a3b8" font-size="11">${val >= 0 ? '+' : ''}$${val.toFixed(1)}</text>`;
   }).join('');
 
+  let maxDdLineSvg = '';
+  if (pkMaxDd > 0 && -pkMaxDd >= pMin && -pkMaxDd <= pMax) {
+    const ydd = yBot(-pkMaxDd).toFixed(1);
+    maxDdLineSvg = `
+      <line x1="${L}" y1="${ydd}" x2="${W - R}" y2="${ydd}" stroke="#f43f5e" stroke-width="1.3" stroke-dasharray="4,3"/>
+      <text x="${W - R + 6}" y="${+ydd + 4}" fill="#fb7185" font-size="10.5" font-weight="800">🔥 浮亏峰值 -$${pkMaxDd.toFixed(2)}</text>`;
+  }
+
   const bw = Math.max(2.5, Math.min(9, cw / Math.max(8, n) * 0.62));
   const pnlBars = arr.map((p, i) => {
     const x = xOf(i);
-    const fl = p.pnl || 0;
+    const fl = mode === 'long' && p.ddMax != null ? -p.ddMax : (p.pnl || 0);
     const yVal = yBot(fl);
     const y0 = yBot(0);
     const yt = Math.min(yVal, y0).toFixed(1);
     const bh = Math.max(1.5, Math.abs(yVal - y0)).toFixed(1);
     const col = fl >= 0 ? '#34d399' : '#fb7185';
-    return `<rect x="${(x - bw / 2).toFixed(1)}" y="${yt}" width="${bw.toFixed(1)}" height="${bh}" fill="${col}" opacity="0.38" rx="1"/>`;
+    return `<rect x="${(x - bw / 2).toFixed(1)}" y="${yt}" width="${bw.toFixed(1)}" height="${bh}" fill="${col}" opacity="0.4" rx="1"/>`;
   }).join('');
 
   const retPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yBot((p.eq || 0) - initBal).toFixed(1)}`).join(' ');
@@ -4868,12 +5093,15 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
   let xTicks = '';
   for (let i = 0; i < n; i += xStep) {
     const x = xOf(i).toFixed(1);
-    const tm = new Date(arr[i].t).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+    const dObj = new Date(arr[i].t);
+    const tm = mode === 'long'
+      ? dObj.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-')
+      : dObj.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
     xTicks += `<line x1="${x}" y1="${topTop}" x2="${x}" y2="${botBot}" stroke="#262d3b" stroke-width="1" opacity="0.45"/>
       <text x="${x}" y="${H - 12}" text-anchor="middle" fill="#94a3b8" font-size="11">${tm}</text>`;
   }
 
-  return `<svg class="big-svg" id="svg-mt4-curve" style="height:400px;min-height:360px;max-height:450px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onMt4ChartMove(event)" onmouseleave="onMt4ChartLeave()">
+  return `<svg class="big-svg" id="svg-mt4-curve" style="height:415px;min-height:370px;max-height:460px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onMt4ChartMove(event)" onmouseleave="onMt4ChartLeave()">
     <defs>
       <linearGradient id="mt4EqGrad" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stop-color="${eqColor}" stop-opacity="0.28"/>
@@ -4881,11 +5109,12 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
       </linearGradient>
     </defs>
 
-    <!-- 上面板：余额 & 净值 & 100%预付款线 -->
-    <text x="${L + 6}" y="${topTop - 7}" fill="#fbbf24" font-size="12.5" font-weight="bold">💰 账户余额(Balance 金色实线) vs 实时净值(Equity 青蓝实线) vs 100%预付款锁死线(红色虚线)  [已采集 ${hist.length} 个实盘快照点]</text>
+    <!-- 上面板：余额 & 净值 & 已用预付款曲线 -->
+    <text x="${L + 6}" y="${topTop - 7}" fill="#fbbf24" font-size="12.5" font-weight="bold">💰 账户余额(金实线) vs 实时最低净值(青蓝线) vs 已用预付款占用(橙虚线)  [${mode === 'long' ? `长周期15m极值归档 · ${hist.length}个桶` : `高频30s流 · ${hist.length}个快照`}]</text>
     ${topTicks}
     ${marginLineSvg}
     <polygon points="${eqArea}" fill="url(#mt4EqGrad)"/>
+    <polyline fill="none" stroke="#fb923c" stroke-width="1.6" stroke-dasharray="3,2" points="${marPts}" opacity="0.88"/>
     <polyline fill="none" stroke="#fbbf24" stroke-width="2.6" points="${balPts}"/>
     <polyline fill="none" stroke="${eqColor}" stroke-width="2.4" points="${eqPts}"/>
     <circle cx="${lastX}" cy="${lastBalY}" r="5" fill="#fbbf24" stroke="#0f172a" stroke-width="1.5"/>
@@ -4893,11 +5122,12 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
     <text x="${W - R + 6}" y="${+lastBalY + 4}" fill="#fbbf24" font-size="11.5" font-weight="800">余额 $${last.bal.toFixed(2)}</text>
     <text x="${W - R + 6}" y="${Math.abs(lastEqY - lastBalY) < 14 ? (+lastBalY + 18) : (+lastEqY + 4)}" fill="${eqColor}" font-size="11.5" font-weight="800">净值 $${last.eq.toFixed(2)}</text>
 
-    <!-- 下面板：实时收益曲线 & 浮亏柱状图 -->
+    <!-- 下面板：实时收益曲线 & 浮亏柱状图 & 浮亏峰值红线 -->
     <line x1="${L}" y1="${topBot + 14}" x2="${W - R}" y2="${topBot + 14}" stroke="#262d3b" stroke-width="1.5"/>
-    <text x="${L + 6}" y="${botTop - 7}" fill="#38bdf8" font-size="12.5" font-weight="bold">📈 实时收益曲线：已平仓落袋收益(金虚线 ${lastClosed >= 0 ? '+' : ''}$${lastClosed.toFixed(2)}) · 综合净值总收益(亮青线 ${lastRet >= 0 ? '+' : ''}$${lastRet.toFixed(2)}) · 实时浮动盈亏(红绿柱 ${last.pnl >= 0 ? '+' : ''}$${last.pnl.toFixed(2)})</text>
+    <text x="${L + 6}" y="${botTop - 7}" fill="#38bdf8" font-size="12.5" font-weight="bold">📈 收益与浮亏极值轨迹：已落袋收益(金虚线 ${lastClosed >= 0 ? '+' : ''}$${lastClosed.toFixed(2)}) · 综合净收益(紫线 ${lastRet >= 0 ? '+' : ''}$${lastRet.toFixed(2)}) · 浮动盈亏(红绿柱) · 历史最大浮亏(-$${pkMaxDd.toFixed(2)})</text>
     ${botTicks}
     <line x1="${L}" y1="${yZero}" x2="${W - R}" y2="${yZero}" stroke="#64748b" stroke-width="1.2" stroke-dasharray="4,2"/>
+    ${maxDdLineSvg}
     ${pnlBars}
     <polyline fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="4,3" points="${closedPts}"/>
     <polyline fill="none" stroke="#a78bfa" stroke-width="2.2" points="${retPts}"/>
@@ -4910,7 +5140,7 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal) {
       <line id="xh-mt4-v" x1="0" y1="${topTop}" x2="0" y2="${botBot}" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,4" opacity="0.85"/>
       <circle id="xh-mt4-bal" cx="0" cy="0" r="5.5" fill="#fbbf24" stroke="#fff" stroke-width="1.8"/>
       <circle id="xh-mt4-eq" cx="0" cy="0" r="5.5" fill="#38bdf8" stroke="#fff" stroke-width="1.8"/>
-      <rect id="xh-mt4-box" x="0" y="0" width="465" height="68" rx="6" fill="rgba(15,18,24,0.95)" stroke="#38bdf8" stroke-width="1.2"/>
+      <rect id="xh-mt4-box" x="0" y="0" width="510" height="70" rx="6" fill="rgba(15,18,24,0.95)" stroke="#38bdf8" stroke-width="1.2"/>
       <text id="xh-mt4-t1" x="0" y="0" fill="#fbbf24" font-size="12.5" font-weight="bold"></text>
       <text id="xh-mt4-t2" x="0" y="0" fill="#38bdf8" font-size="12.5" font-weight="bold"></text>
       <text id="xh-mt4-t3" x="0" y="0" fill="#cbd5e1" font-size="12"></text>
@@ -4939,7 +5169,7 @@ window.onMt4ChartMove = function(ev) {
   $('xh-mt4-eq').setAttribute('cx', x);
   $('xh-mt4-eq').setAttribute('cy', yEq);
 
-  const boxW = 475, boxH = 68;
+  const boxW = 515, boxH = 70;
   const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
   const by = cfg.topTop + 8;
   const box = $('xh-mt4-box'), t1 = $('xh-mt4-t1'), t2 = $('xh-mt4-t2'), t3 = $('xh-mt4-t3');
@@ -4951,9 +5181,10 @@ window.onMt4ChartMove = function(ev) {
   const tm = new Date(p.t).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
   const closedPnl = r2((p.bal || 0) - cfg.initBal);
   const netRet = r2((p.eq || 0) - cfg.initBal);
-  t1.textContent = `🕒 ${tm}  |  余额: $${f2(p.bal)}  |  净值: $${f2(p.eq)}  |  金价: $${f2(p.px)}`;
-  t2.textContent = `💰 已平仓落袋收益: ${closedPnl >= 0 ? '+' : ''}$${f2(closedPnl)}  |  实时浮动盈亏: ${p.pnl >= 0 ? '+' : ''}$${f2(p.pnl)}  |  综合净收益: ${netRet >= 0 ? '+' : ''}$${f2(netRet)}`;
-  t3.textContent = `📊 持仓敞口: 买${f2(p.buyLots)}手 / 卖${f2(p.sellLots)}手 (净敞口 ${p.netLots >= 0 ? '+' : ''}${f2(p.netLots)}手)  |  预付款比例: ${f2(p.ml)}%`;
+  const pMar = p.marMax != null ? p.marMax : (p.mar || 0);
+  t1.textContent = `🕒 ${tm}  |  余额: $${f2(p.bal)}  |  最低净值: $${f2(p.eq)}  |  已用预付款: $${f2(pMar)}  |  金价: $${f2(p.px)}`;
+  t2.textContent = `💰 已平仓落袋: ${closedPnl >= 0 ? '+' : ''}$${f2(closedPnl)}  |  浮动盈亏: ${p.pnl >= 0 ? '+' : ''}$${f2(p.pnl)}  |  综合净收益: ${netRet >= 0 ? '+' : ''}$${f2(netRet)}`;
+  t3.textContent = `📊 持仓敞口: 买${f2(p.buyLots)}手 / 卖${f2(p.sellLots)}手 (净敞口 ${p.netLots >= 0 ? '+' : ''}${f2(p.netLots)}手)  |  最低预付款比例: ${f2(p.ml)}%`;
 };
 
 window.onMt4ChartLeave = function() {
@@ -4969,72 +5200,305 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc) {
     return;
   }
   sec.style.display = 'block';
-  const { history, initBal } = getMergedMt4History(mt4);
+  const { history, historyLong, stats, initBal } = getMergedMt4History(mt4);
   const closedProfit = r2((mt4.balance || 0) - initBal);
   const netTotalProfit = r2((mt4.equity || 0) - initBal);
   const closedPct = initBal > 0 ? r1((closedProfit / initBal) * 100) : 0;
   const netRetPct = initBal > 0 ? r1((netTotalProfit / initBal) * 100) : 0;
 
-  const chartSvg = buildMt4AccountChartSvg(history, mt4, mt4Dec, initBal);
+  const mode = MT4_CHART_STATE.mode || 'fast';
+  const useHist = mode === 'long' && historyLong.length ? historyLong : history;
+  const chartSvg = buildMt4AccountChartSvg(useHist, mt4, mt4Dec, initBal, stats, mode);
+
+  const pk = (stats && stats.peaks) || {
+    maxDd: { val: mt4Dec.ddUsd, pct: mt4Dec.ddPct, ts: mt4.ts, px: mt4Dec.curPx, buyCount: mt4.buyCount, buyLots: mt4.buyLots, sellCount: mt4.sellCount, sellLots: mt4.sellLots, netLots: mt4Dec.absNetLots, margin: mt4.margin, ml: mt4Dec.ml },
+    maxMargin: { val: mt4.margin, ts: mt4.ts, px: mt4Dec.curPx, buyCount: mt4.buyCount, buyLots: mt4.buyLots, sellCount: mt4.sellCount, sellLots: mt4.sellLots, totalLots: r2((mt4.buyLots || 0) + (mt4.sellLots || 0)), dd: mt4Dec.ddUsd, ml: mt4Dec.ml },
+    minMarginLevel: { val: mt4Dec.ml, freeMargin: mt4Dec.freeM, ts: mt4.ts, px: mt4Dec.curPx, dd: mt4Dec.ddUsd, margin: mt4.margin, buyCount: mt4.buyCount, sellCount: mt4.sellCount },
+    minEquity: { val: mt4.equity, bal: mt4.balance, ts: mt4.ts, px: mt4Dec.curPx, dd: mt4Dec.ddUsd },
+    maxBalance: { val: mt4.balance, ts: mt4.ts },
+    maxLayers: { val: Math.max(mt4.buyCount || 0, mt4.sellCount || 0), side: '-', lots: r2((mt4.buyLots || 0) + (mt4.sellLots || 0)), netLots: mt4Dec.absNetLots, ts: mt4.ts }
+  };
+
+  // ========== 基于历史峰值的「账户到底该放多少钱」3档科学本金测算模型 ==========
+  // 原理：账户资金 = 历史最大浮亏 × 安全放大倍数 + 历史最高预付款 × 目标最低预付款比例
+  const obsMaxDd = Math.max(pk.maxDd.val || 0, mt4Dec.ddUsd || 0, 80);
+  const obsMaxMar = Math.max(pk.maxMargin.val || 0, mt4.margin || 0, 40);
+  // 1) 保底不断头本金：扛住 1.25倍历史峰值浮亏 且 预付款比例 ≥ 135%（保证不断开仓/锁仓权）
+  const capTier1 = Math.ceil((obsMaxDd * 1.25 + obsMaxMar * 1.35) / 10) * 10;
+  // 2) 稳健标准本金（推荐）：扛住 1.6倍历史峰值浮亏（或至少$350浮亏）且 预付款比例稳守 ≥ 220%
+  const capTier2 = Math.ceil((Math.max(obsMaxDd * 1.6, 300) + obsMaxMar * 2.2) / 50) * 50;
+  // 3) 机构级抗大单边本金：扛住 2.5倍历史峰值浮亏（或$600~$800大单边阶梯）且 预付款比例 ≥ 320%
+  const capTier3 = Math.ceil((Math.max(obsMaxDd * 2.5, 650) + obsMaxMar * 3.2) / 50) * 50;
+
+  const curBal = mt4.balance || 0;
+  const gapTier1 = r2(Math.max(0, capTier1 - curBal));
+  const gapTier2 = r2(Math.max(0, capTier2 - curBal));
+  const gapTier3 = r2(Math.max(0, capTier3 - curBal));
+
+  // ========== 浮亏分阶段突破次数统计表 ($50 / $100 / $150 / $200 / $300 / $400 / $600 / $800 / $1000 / $1500 / $2000) ==========
+  const tiers = (stats && Array.isArray(stats.tiers) && stats.tiers.length)
+    ? stats.tiers
+    : MT4_DD_TIERS_DEF.map((th) => ({ th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-' }));
+
+  const tierRowsHtml = tiers.map((t) => {
+    const isHitEver = (t.waves || 0) > 0 || (t.durSec || 0) > 0;
+    const isNowActive = mt4Dec.ddUsd >= t.th;
+    const isKeyMilestone = [100, 200, 400, 600, 800, 1000, 1500, 2000].includes(t.th);
+    const needCapForThisTier = Math.ceil((t.th * 1.2 + Math.max(t.maxMar || obsMaxMar, t.th * 0.55) * 1.5) / 20) * 20;
+    const canCurrentBalSurvive = curBal >= (t.th + (t.maxMar || obsMaxMar) * 0.5);
+    const rowBg = isNowActive
+      ? 'rgba(244,63,94,0.18)'
+      : isHitEver
+      ? 'rgba(245,158,11,0.08)'
+      : 'transparent';
+    return `<tr style="background:${rowBg};${isKeyMilestone ? 'font-weight:700;' : ''}">
+      <td>
+        <span style="color:${t.th >= 400 ? '#fb7185' : t.th >= 200 ? '#fbbf24' : '#38bdf8'};font-weight:800">浮亏 ≥ $${t.th}</span>
+        ${isNowActive ? `<span class="pill TREND" style="margin-left:4px;padding:1px 6px;font-size:10px">🔥 当前正处此级</span>` : ''}
+      </td>
+      <td><b style="font-size:14.5px;color:${(t.waves || 0) > 0 ? '#fbbf24' : '#64748b'}">${t.waves || 0} 次</b></td>
+      <td><span style="color:#34d399;font-weight:700">${t.recovered || 0} 次解套</span></td>
+      <td>${t.durSec > 0 ? `<b style="color:#e2e8f0">${fmtDuration(t.durSec)}</b>` : '<span class="mut">0秒</span>'}</td>
+      <td>${t.maxMar > 0 ? `预付款 <b>$${f2(t.maxMar)}</b> / 峰值亏 <b style="color:#fb7185">-$${f2(t.maxDd)}</b>` : '<span class="mut">未触及</span>'}</td>
+      <td class="xs">${t.lastTs ? `${fmtSecTime(t.lastTs)} · $${f2(t.lastPx)} · ${t.lastPos || ''}` : '<span class="mut">-</span>'}</td>
+      <td>
+        <b style="color:var(--gold)">建议 ≥ $${needCapForThisTier}</b>
+        <span class="pill ${canCurrentBalSurvive ? 'RANGE' : 'TREND'}" style="font-size:10px;padding:1px 5px;margin-left:4px">${canCurrentBalSurvive ? '当前余额可扛' : '当前余额会爆仓'}</span>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // 重大深套战役日志 (含当前进行中的 activeWave + 历史已结束的 waveLog)
+  const waveItems = [];
+  if (stats && stats.activeWave) {
+    waveItems.push({ ...stats.activeWave, status: 'ACTIVE', durSec: Math.max(5, Math.floor(Date.now() / 1000) - stats.activeWave.startTs) });
+  }
+  if (stats && Array.isArray(stats.waveLog)) {
+    waveItems.push(...stats.waveLog.slice(0, 12));
+  }
+  const waveLogHtml = waveItems.length
+    ? waveItems.map((w, idx) => {
+        const isLive = w.status === 'ACTIVE';
+        return `<div style="padding:7px 10px;border-radius:7px;background:${isLive ? 'rgba(244,63,94,0.16)' : 'rgba(15,23,42,0.75)'};border:1px solid ${isLive ? 'rgba(244,63,94,0.6)' : 'var(--bd)'};font-size:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+          <div>
+            <span class="pill ${isLive ? 'TREND' : 'RANGE'}" style="font-size:10.5px;margin-right:6px">${isLive ? '🔥 当前正在扛单中' : '✅ 已止盈解套'}</span>
+            <b>战役 #${waveItems.length - idx}</b> (${fmtSecTime(w.startTs)} ${isLive ? '至今' : `~ ${fmtSecTime(w.endTs)}`} · 历时 <b>${fmtDuration(w.durSec)}</b>)
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <span>最大浮亏峰值: <b style="color:#fb7185">-$${f2(w.peakDd)} (${w.peakDdPct || 0}%)</b></span>
+            <span>最高预付款: <b style="color:#fbbf24">$${f2(w.peakMargin)}</b></span>
+            <span>最低预付款比: <b style="color:${(w.minMl || 999) < 150 ? '#fb7185' : '#38bdf8'}">${f2(w.minMl)}%</b></span>
+            <span>最高层数/手数: <b>${w.posAtPeak || (w.maxLayers + '层/' + w.maxLots + '手')}</b></span>
+          </div>
+        </div>`;
+      }).join('')
+    : `<div class="xs mut">暂无浮亏超过 $30 的深套战役记录（系统正每 5 秒全天候自动监测记录中）</div>`;
 
   sec.innerHTML = `
     <div class="vhead" style="margin-bottom:10px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <h2 style="margin:0">💰 MT4 实盘账户：余额 · 净值 · 实时收益曲线图 &amp; 持仓生死线沙盘</h2>
+        <h2 style="margin:0">💰 MT4 实盘账户：历史峰值档案 · 浮亏阶梯次数统计 · 入金备付决策 &amp; 收益曲线图</h2>
         <span class="pill ${mt4Dec.healthCls}">账户 #${mt4.account} (${mt4.server || 'MT4'}) · 安全分 ${mt4Dec.accountHealthScore}/100</span>
+        <span class="xs mut">📦 云端 Redis 永久归档 + 本地双备份 · 已累计监测 <b>${stats ? (stats.totalSamples || 1) : 1}</b> 次实盘切片 (自 ${stats ? fmtSecTime(stats.sinceTs) : '今日'} 起)</span>
       </div>
       <div class="btns">
-        <button class="sm" onclick="resetMt4CurveBase()" title="以当前余额 $${f2(mt4.balance)} 作为新的零点基准重算累计收益曲线">🎯 重置收益曲线起点 (当前基准 $${f2(initBal)})</button>
+        <button class="sm ${mode === 'fast' ? 'on' : ''}" onclick="setMt4CurveMode('fast')">⚡ 高频曲线 (近2小时·30s极值)</button>
+        <button class="sm ${mode === 'long' ? 'on' : ''}" onclick="setMt4CurveMode('long')">📅 长周期历史归档 (7~30天·15m极值包络)</button>
+        <button class="sm" onclick="resetMt4CurveBase()" title="以当前余额 $${f2(mt4.balance)} 作为新的零点基准重算累计收益曲线">🎯 重置收益起点</button>
+        <button class="sm" onclick="resetMt4AllStats()" style="color:#94a3b8" title="清空历史峰值与阶梯次数，重新开始统计">🧹 清零峰值统计</button>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:12px">
-      <!-- KPI 1: 账户余额 & 已落袋平仓收益 -->
+    <!-- 第一排：实时状态 4 大 KPI -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:10px;margin-bottom:12px">
       <div style="background:rgba(15,23,42,0.9);border:1px solid rgba(251,191,36,0.45);border-radius:9px;padding:10px 12px">
-        <div class="xs mut" style="display:flex;justify-content:space-between"><span>💰 账户实时余额 (Balance)</span><span>基准 $${f2(initBal)}</span></div>
+        <div class="xs mut" style="display:flex;justify-content:space-between"><span>💰 账户实时余额 (Balance)</span><span>起点基准 $${f2(initBal)}</span></div>
         <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
-          <b style="font-size:24px;color:var(--gold)">$${f2(mt4.balance)}</b>
+          <b style="font-size:23px;color:var(--gold)">$${f2(mt4.balance)}</b>
           <span class="pill ${closedProfit >= 0 ? 'RANGE' : 'TREND'}">已落袋 ${closedProfit >= 0 ? '+' : ''}$${f2(closedProfit)} (${closedPct >= 0 ? '+' : ''}${closedPct}%)</span>
         </div>
-        <div class="xs mut">每次马丁整组止盈平仓后，金色余额曲线将呈阶梯向上跳升</div>
+        <div class="xs mut">历史最高余额: <b>$${f2(pk.maxBalance.val || mt4.balance)}</b></div>
       </div>
 
-      <!-- KPI 2: 实时净值 & 浮动盈亏/综合净收益 -->
       <div style="background:rgba(15,23,42,0.9);border:1px solid ${mt4.totalPnl >= 0 ? 'rgba(16,185,129,0.5)' : 'rgba(244,63,94,0.55)'};border-radius:9px;padding:10px 12px">
-        <div class="xs mut" style="display:flex;justify-content:space-between"><span>📉 账户实时净值 (Equity)</span><span>浮亏回撤率 ${mt4Dec.ddPct}%</span></div>
+        <div class="xs mut" style="display:flex;justify-content:space-between"><span>📉 账户实时净值 (Equity)</span><span>当前回撤 ${mt4Dec.ddPct}%</span></div>
         <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
-          <b style="font-size:24px;color:${mt4.totalPnl >= 0 ? '#34d399' : '#38bdf8'}">$${f2(mt4.equity)}</b>
-          <span class="pill ${mt4.totalPnl >= 0 ? 'RANGE' : 'TREND'}">浮盈亏 ${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)}</span>
+          <b style="font-size:23px;color:${mt4.totalPnl >= 0 ? '#34d399' : '#38bdf8'}">$${f2(mt4.equity)}</b>
+          <span class="pill ${mt4.totalPnl >= 0 ? 'RANGE' : 'TREND'}">当前浮盈亏 ${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)}</span>
         </div>
-        <div class="xs" style="color:#cbd5e1">综合净收益(含浮亏): <b style="color:${netTotalProfit >= 0 ? '#34d399' : '#fb7185'}">${netTotalProfit >= 0 ? '+' : ''}$${f2(netTotalProfit)} (${netRetPct >= 0 ? '+' : ''}${netRetPct}%)</b></div>
+        <div class="xs" style="color:#cbd5e1">历史最低净值谷底: <b style="color:#fb7185">$${f2(pk.minEquity.val || mt4.equity)}</b></div>
       </div>
 
-      <!-- KPI 3: 实盘多空均价 & 精确回本/止盈点位 -->
       <div style="background:rgba(15,23,42,0.9);border:1px solid rgba(56,189,248,0.45);border-radius:9px;padding:10px 12px">
-        <div class="xs mut" style="display:flex;justify-content:space-between"><span>🎯 实盘多空回本与整组止盈目标</span><span>实时推演价 $${f2(mt4Dec.curPx)}</span></div>
-        <div style="margin:5px 0;font-size:12.5px;line-height:1.5">
-          • 重仓回本均价: <b style="color:var(--gold);font-size:14px">$${f2(mt4Dec.heavyBreakEvenPx)}</b> <span class="xs mut">(还差 $${f2(mt4Dec.needHeavyBeMove)})</span><br>
-          • <b>马丁整组止盈清仓价</b>: <b style="color:#34d399;font-size:14px">$${f2(mt4Dec.heavyTpPx)}</b> <span class="xs mut">(还差 $${f2(mt4Dec.needHeavyTpMove)})</span>
+        <div class="xs mut" style="display:flex;justify-content:space-between"><span>🎯 实盘多空回本与整组止盈价</span><span>实时推演价 $${f2(mt4Dec.curPx)}</span></div>
+        <div style="margin:4px 0;font-size:12.5px;line-height:1.5">
+          • 重仓回本均价: <b style="color:var(--gold);font-size:14px">$${f2(mt4Dec.heavyBreakEvenPx)}</b> <span class="xs mut">(差 $${f2(mt4Dec.needHeavyBeMove)})</span><br>
+          • <b>马丁整组止盈清仓价</b>: <b style="color:#34d399;font-size:14px">$${f2(mt4Dec.heavyTpPx)}</b> <span class="xs mut">(差 $${f2(mt4Dec.needHeavyTpMove)})</span>
         </div>
-        <div class="xs mut">多单 ${mt4.buyCount}层/${f2(mt4.buyLots)}手($${f2(mt4.buyAvgPrice)}) | 空单 ${mt4.sellCount}层/${f2(mt4.sellLots)}手($${f2(mt4.sellAvgPrice)})</div>
+        <div class="xs mut">买${mt4.buyCount}层/${f2(mt4.buyLots)}手($${f2(mt4.buyAvgPrice)}) | 卖${mt4.sellCount}层/${f2(mt4.sellLots)}手($${f2(mt4.sellAvgPrice)})</div>
       </div>
 
-      <!-- KPI 4: 预付款比例 & 100%锁死/50%强平生死线 -->
       <div style="background:rgba(15,23,42,0.9);border:1px solid ${mt4Dec.ml < 220 ? 'rgba(244,63,94,0.65)' : 'rgba(148,163,184,0.35)'};border-radius:9px;padding:10px 12px">
-        <div class="xs mut" style="display:flex;justify-content:space-between"><span>🛡️ 预付款比例 &amp; 生死价格底线</span><span>可用预付款 $${f2(mt4Dec.freeM)}</span></div>
+        <div class="xs mut" style="display:flex;justify-content:space-between"><span>🛡️ 实时预付款比例 &amp; 生死线</span><span>已用 $${f2(mt4.margin)} / 可用 $${f2(mt4Dec.freeM)}</span></div>
         <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
           <b style="font-size:22px;color:${mt4Dec.ml < 200 ? '#fb7185' : mt4Dec.ml < 350 ? '#fbbf24' : '#34d399'}">${f2(mt4Dec.ml)}%</b>
-          <span class="xs" style="color:#fb7185;font-weight:700">🚨 100%锁死价: $${f2(mt4Dec.margin100Px)} (余$${f2(mt4Dec.distToMargin100)})</span>
+          <span class="xs" style="color:#fb7185;font-weight:700">🚨 100%锁死价: $${f2(mt4Dec.margin100Px)}</span>
         </div>
-        <div class="xs" style="color:#cbd5e1">⚡ 建议对冲防线: <b style="color:var(--gold)">$${f2(mt4Dec.hedgeTriggerPx)}</b> | 50%强平: <b style="color:#fb7185">$${f2(mt4Dec.stopOut50Px)}</b> | 20%强平: <b>$${f2(mt4Dec.stopOut20Px)}</b></div>
+        <div class="xs" style="color:#cbd5e1">⚡ 对冲防线: <b style="color:var(--gold)">$${f2(mt4Dec.hedgeTriggerPx)}</b> | 50%强平: <b style="color:#fb7185">$${f2(mt4Dec.stopOut50Px)}</b></div>
       </div>
     </div>
 
+    <!-- 第二排：🏆 账户历史 4 大极值峰值纪念碑（专为评估账户最大压力与资金配置设计） -->
+    <div style="margin-bottom:12px;padding:11px 13px;background:linear-gradient(135deg,rgba(244,63,94,0.11),rgba(15,23,42,0.95));border:1.5px solid rgba(244,63,94,0.45);border-radius:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+        <b style="color:#fff;font-size:13.5px">🏆 您的账户历史「峰值压力档案」 (每 5 秒捕捉极值 · 刷新历史峰值时立即永久写入云端 Redis，绝不漏掉任何一次插针)</b>
+        <span class="pill MIXED" style="font-size:11px">决定您账户最少要放多少本金的核心依据</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
+        <!-- 峰值 1：历史最大浮亏峰值 -->
+        <div style="background:rgba(15,19,28,0.92);border:1px solid rgba(244,63,94,0.5);border-radius:8px;padding:9px 11px">
+          <div class="xs mut">🔥 ① 历史最大浮亏峰值 (Max Drawdown)</div>
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
+            <b style="font-size:22px;color:#fb7185">-$${f2(pk.maxDd.val)}</b>
+            <span class="pill TREND">占当时本金 ${pk.maxDd.pct || 0}%</span>
+          </div>
+          <div class="xs" style="color:#cbd5e1;line-height:1.45">
+            • 发生时间: <b>${fmtSecTime(pk.maxDd.ts)}</b> (金价 $${f2(pk.maxDd.px)})<br>
+            • 当时持仓: <b>买${pk.maxDd.buyCount || 0}层(${f2(pk.maxDd.buyLots)}手)/卖${pk.maxDd.sellCount || 0}层(${f2(pk.maxDd.sellLots)}手)</b><br>
+            • 当时预付款: <b>$${f2(pk.maxDd.margin)}</b> (比例 ${f2(pk.maxDd.ml)}%)
+          </div>
+        </div>
+
+        <!-- 峰值 2：历史最高预付款占用峰值 -->
+        <div style="background:rgba(15,19,28,0.92);border:1px solid rgba(251,191,36,0.5);border-radius:8px;padding:9px 11px">
+          <div class="xs mut">🏦 ② 历史最高预付款峰值 (Peak Margin)</div>
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
+            <b style="font-size:22px;color:#fbbf24">$${f2(pk.maxMargin.val)}</b>
+            <span class="pill MIXED">合计 ${f2(pk.maxMargin.totalLots)} 手</span>
+          </div>
+          <div class="xs" style="color:#cbd5e1;line-height:1.45">
+            • 发生时间: <b>${fmtSecTime(pk.maxMargin.ts)}</b> (金价 $${f2(pk.maxMargin.px)})<br>
+            • 当时层数: <b>买${pk.maxMargin.buyCount || 0}层(${f2(pk.maxMargin.buyLots)}手)/卖${pk.maxMargin.sellCount || 0}层(${f2(pk.maxMargin.sellLots)}手)</b><br>
+            • 伴随浮亏: <b style="color:#fb7185">-$${f2(pk.maxMargin.dd)}</b> (预付款比 ${f2(pk.maxMargin.ml)}%)
+          </div>
+        </div>
+
+        <!-- 峰值 3：历史最低预付款比例险情值 -->
+        <div style="background:rgba(15,19,28,0.92);border:1px solid rgba(244,63,94,0.5);border-radius:8px;padding:9px 11px">
+          <div class="xs mut">🚨 ③ 历史最低预付款比例 (Min Margin Level)</div>
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
+            <b style="font-size:22px;color:${(pk.minMarginLevel.val || 999) < 150 ? '#fb7185' : '#fbbf24'}">${f2(pk.minMarginLevel.val)}%</b>
+            <span class="pill ${(pk.minMarginLevel.val || 999) < 130 ? 'TREND' : 'MIXED'}">仅余可用 $${f2(pk.minMarginLevel.freeMargin)}</span>
+          </div>
+          <div class="xs" style="color:#cbd5e1;line-height:1.45">
+            • 发生时间: <b>${fmtSecTime(pk.minMarginLevel.ts)}</b> (金价 $${f2(pk.minMarginLevel.px)})<br>
+            • 距100%锁死线仅差: <b style="color:#fb7185">${f2(Math.max(0, (pk.minMarginLevel.val || 100) - 100))}%</b><br>
+            • 当时状态: 浮亏 <b>-$${f2(pk.minMarginLevel.dd)}</b> + 预付款 <b>$${f2(pk.minMarginLevel.margin)}</b>
+          </div>
+        </div>
+
+        <!-- 峰值 4：历史最高马丁层数 & 资金配置建议摘要 -->
+        <div style="background:rgba(15,19,28,0.92);border:1px solid rgba(56,189,248,0.5);border-radius:8px;padding:9px 11px">
+          <div class="xs mut">📐 ④ 历史最高层数 &amp; 峰值总资金占用 (浮亏+预付款)</div>
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin:4px 0">
+            <b style="font-size:20px;color:#38bdf8">最高 ${pk.maxLayers.val || 0} 层 (${f2(pk.maxLayers.lots)}手)</b>
+            <span class="pill RANGE">净敞口 ${f2(pk.maxLayers.netLots)}手</span>
+          </div>
+          <div class="xs" style="color:#cbd5e1;line-height:1.45">
+            • <b>历史极值总占用 (峰值浮亏+峰值预付款)</b>: <b style="color:var(--gold)">$${f2((pk.maxDd.val || 0) + (pk.maxMargin.val || 0))}</b><br>
+            • <b>保底不断头需放</b>: <b style="color:#fbbf24">$${capTier1}</b> ${gapTier1 > 0 ? `(当前差 <b style="color:#fb7185">+$${f2(gapTier1)}</b>)` : '(✅已达标)'}<br>
+            • <b>稳健推荐配置本金</b>: <b style="color:#34d399">$${capTier2}</b> ${gapTier2 > 0 ? `(建议补 <b style="color:var(--gold)">+$${f2(gapTier2)}</b>)` : '(✅已达标)'}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 第三排：实时余额/净值/预付款/收益双面板交互曲线图 -->
     ${chartSvg}
+
+    <!-- 第四排：📊 浮亏分阶段突破次数统计表 ($50 ~ $2000) & 💰 后期账户放多少钱决策测算器 -->
+    <div style="display:grid;grid-template-columns:1.45fr 1fr;gap:12px;margin-top:12px">
+      <!-- 左侧：浮亏超过 50 / 100 / 200 / 400 / 600 / 800 / 1000... 阶段次数统计表 -->
+      <div style="background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:10px;padding:11px 13px;overflow-x:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          <b style="color:var(--gold);font-size:13.5px">📊 账户浮亏分阶段突破次数统计表 (独立深套波次计数 · 含 $200 / $400 / $600 / $1000+ 阶梯)</b>
+          <span class="xs mut">同一轮马丁扛单不重复刷次数，平仓解套重置后再次突破才计为下一波</span>
+        </div>
+        <table class="tbl" style="font-size:12px">
+          <thead>
+            <tr>
+              <th>浮亏金额阶梯</th>
+              <th>独立发生次数</th>
+              <th>成功解套次数</th>
+              <th>累计停留时长</th>
+              <th>该级最大预付款 / 峰值浮亏</th>
+              <th>最近一次触发记录</th>
+              <th>扛过该级所需本金</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tierRowsHtml}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 右侧：💰 后期往账户放多少钱？三档本金配置决策器 + 历史深套战役档案 -->
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="background:linear-gradient(135deg,rgba(16,185,129,0.10),rgba(15,23,42,0.95));border:1px solid rgba(16,185,129,0.45);border-radius:10px;padding:11px 13px">
+          <b style="color:#34d399;font-size:13.5px">💰 决策模型：根据您的实盘峰值，账户到底该放多少钱？</b>
+          <div class="xs mut" style="margin:4px 0 8px">基于您实测录得的 <b>最大浮亏 (-$${f2(pk.maxDd.val)})</b> + <b>最高预付款 ($${f2(pk.maxMargin.val)})</b> 自动推演：</div>
+
+          <div style="display:flex;flex-direction:column;gap:7px;font-size:12px">
+            <div style="padding:8px 10px;background:rgba(15,19,28,0.9);border-left:3px solid #fbbf24;border-radius:6px">
+              <div style="display:flex;justify-content:space-between">
+                <b>① 🛡️ 保底不断头本金（防100%预付款锁死）</b>
+                <b style="color:#fbbf24;font-size:14px">建议放 $${capTier1}</b>
+              </div>
+              <div class="xs mut" style="margin-top:2px">
+                可扛住历史最大浮亏再扩大 25%（约 -$${Math.round(obsMaxDd * 1.25)}）且预付款比例 ≥135% 不断开仓权。
+                ${gapTier1 > 0 ? `<b style="color:#fb7185">您当前余额 $${f2(curBal)}，至少需补 +$${f2(gapTier1)}！</b>` : `<b style="color:#34d399">您当前余额 $${f2(curBal)} 已满足此档！</b>`}
+              </div>
+            </div>
+
+            <div style="padding:8px 10px;background:rgba(15,19,28,0.9);border-left:3px solid #34d399;border-radius:6px">
+              <div style="display:flex;justify-content:space-between">
+                <b>② ⚖️ 稳健标准本金（推荐 · 扛住 $200~$350 阶梯）</b>
+                <b style="color:#34d399;font-size:14px">建议放 $${capTier2}</b>
+              </div>
+              <div class="xs mut" style="margin-top:2px">
+                当遭遇 7~8 层单边（浮亏达 $${Math.max(300, Math.round(obsMaxDd * 1.6))}、预付款达 $${Math.round(obsMaxMar * 1.5)}）时，预付款比例依然稳居 220%+，可从容等待 $2.7 反抽清仓。
+                ${gapTier2 > 0 ? `<span style="color:var(--gold)">距当前余额差 <b>+$${f2(gapTier2)}</b></span>` : `<b style="color:#34d399">已达标</b>`}
+              </div>
+            </div>
+
+            <div style="padding:8px 10px;background:rgba(15,19,28,0.9);border-left:3px solid #38bdf8;border-radius:6px">
+              <div style="display:flex;justify-content:space-between">
+                <b>③ 🏰 抗极端大单边本金（扛住 $400~$650+ 阶梯）</b>
+                <b style="color:#38bdf8;font-size:14px">建议放 $${capTier3}</b>
+              </div>
+              <div class="xs mut" style="margin-top:2px">
+                专为应对美盘 CPI/非农或无回调推土机行情（浮亏冲上 $400~$600 阶梯）设计，建议采用<b>「账户内放 $${capTier2} + 场外备付金 $${capTier3 - capTier2} 随时秒入金」</b>的隔离风控模式！
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 历史重大深套战役日志 -->
+        <div style="background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:10px;padding:11px 13px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <b style="color:#fff;font-size:13px">📜 历次深套扛单战役档案 (浮亏 ≥ $30 自动立档)</b>
+            <span class="xs mut">共记录 ${waveItems.length} 场战役</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;max-height:210px;overflow-y:auto">
+            ${waveLogHtml}
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 }
 
-// 每 5 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (页面在后台时暂停)
+// 每 8 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (配合服务端 8s 内存缓存与页面后台休眠，极致节省 Redis 额度)
 setInterval(async () => {
   if (!D || document.hidden) return; // 页面在后台时暂停轮询，节省 Redis 额度
   try {
@@ -5052,7 +5516,7 @@ setInterval(async () => {
       render();
     }
   } catch (e) {}
-}, 5000);
+}, 8000);
 // 1) 打开网页瞬间(0ms)：立即从浏览器 localStorage 恢复上次缓存秒开渲染，杜绝白屏等待
 try {
   const cachedStr = localStorage.getItem(LOCAL_DATA_CACHE_KEY);
