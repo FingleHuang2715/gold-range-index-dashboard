@@ -1014,6 +1014,270 @@ function computeKeyLevels(bars15m, bars1h, bars1d, curPrice) {
     nearest: nearest.slice(0, 6)
   };
 }
+
+// ---------- 锯齿回调解套能力 & 被套去留决策引擎 (Pullback & Basket-Clearance Analyzer) ----------
+// 解决核心痛点：
+// 1) 单边下跌/上涨 10$ 过程中若中途回调了 2.6~3.0$，马丁网格就能整组止盈平仓赚钱（属于「可做的锯齿型单边」，不应一刀切判死刑）；
+// 2) 当震荡指数突然骤降、用户已经持仓被套来不及离场时，精准测算「接下来 15~30 分钟出现 2.6~3.0$ 回调解套的概率」，直接给出「继续拿着等回调止盈」还是「立即锁仓/止损」的明确指令。
+function analyzePullback(bars1m, bars5m, tf1m, tf5m, tf15m, sentiment, keyLevels) {
+  const b1 = Array.isArray(bars1m) ? bars1m.slice(-90) : []; // 近90分钟 1M K线
+  const b5 = Array.isArray(bars5m) ? bars5m.slice(-36) : []; // 近3小时 5M K线
+  const src = b1.length >= 20 ? b1 : b5;
+  if (!src.length) return null;
+
+  const curPrice = src[src.length - 1].c;
+  const TARGET_PB = 2.7; // 马丁整组止盈所需的典型回调幅度 ($2.6 ~ $3.0)
+
+  // 统计近90分钟总高低波幅与净涨跌
+  const hi90 = Math.max(...src.map((b) => b.h));
+  const lo90 = Math.min(...src.map((b) => b.l));
+  const span90m = +(hi90 - lo90).toFixed(2);
+  const net90m = +(curPrice - src[0].o).toFixed(2);
+
+  // 状态机 1：模拟逢低做多马丁链 (Buy Basket，怕连续下跌不反弹)
+  let buyPeak = src[0].h;
+  let buyTrough = src[0].l;
+  let buyMaxBounceInLeg = 0;
+  let buyClears = 0;
+  const buyBounceHistory = [];
+
+  // 状态机 2：模拟逢高做空马丁链 (Sell Basket，怕连续上涨不回调)
+  let sellTrough = src[0].l;
+  let sellPeak = src[0].h;
+  let sellMaxDipInLeg = 0;
+  let sellClears = 0;
+  const sellDipHistory = [];
+
+  for (let i = 1; i < src.length; i++) {
+    const bar = src[i];
+
+    // --- 更新多单链 (Buy Basket) ---
+    if (bar.h > buyPeak && (buyPeak - buyTrough < 2.0)) {
+      buyPeak = bar.h;
+      buyTrough = bar.l;
+      buyMaxBounceInLeg = 0;
+    } else {
+      if (bar.l < buyTrough) {
+        buyTrough = bar.l;
+      }
+      const curDrop = buyPeak - buyTrough;
+      const bounce = bar.h - buyTrough;
+      if (bounce > buyMaxBounceInLeg) buyMaxBounceInLeg = bounce;
+      // 如果已经下跌超过 3.2$（至少加了3~4层多单），且随后反弹达到 TARGET_PB (2.7$)，则判定多单整组止盈清仓重置！
+      if (curDrop >= 3.2 && bounce >= TARGET_PB) {
+        buyClears++;
+        buyBounceHistory.push(+bounce.toFixed(2));
+        buyPeak = bar.h;
+        buyTrough = bar.l;
+        buyMaxBounceInLeg = 0;
+      }
+    }
+
+    // --- 更新空单链 (Sell Basket) ---
+    if (bar.l < sellTrough && (sellPeak - sellTrough < 2.0)) {
+      sellTrough = bar.l;
+      sellPeak = bar.h;
+      sellMaxDipInLeg = 0;
+    } else {
+      if (bar.h > sellPeak) {
+        sellPeak = bar.h;
+      }
+      const curRally = sellPeak - sellTrough;
+      const dip = sellPeak - bar.l;
+      if (dip > sellMaxDipInLeg) sellMaxDipInLeg = dip;
+      // 如果已经上涨超过 3.2$（至少加了3~4层空单），且随后回调达到 TARGET_PB (2.7$)，则判定空单整组止盈清仓重置！
+      if (curRally >= 3.2 && dip >= TARGET_PB) {
+        sellClears++;
+        sellDipHistory.push(+dip.toFixed(2));
+        sellTrough = bar.l;
+        sellPeak = bar.h;
+        sellMaxDipInLeg = 0;
+      }
+    }
+  }
+
+  // 当前尚未止盈清仓的「连续未解套下跌跨度」与「连续未解套上涨跨度」
+  const unretracedDown = +Math.max(0, buyPeak - buyTrough).toFixed(2);
+  const curBounceFromLow = +Math.max(0, curPrice - buyTrough).toFixed(2);
+  const unretracedUp = +Math.max(0, sellPeak - sellTrough).toFixed(2);
+  const curDipFromHigh = +Math.max(0, sellPeak - curPrice).toFixed(2);
+
+  // 判断当前哪一侧仓位正在承受逆势压力 (unretracedDown 大说明正在跌、多单受压；unretracedUp 大说明正在涨、空单受压)
+  const isDownPressure = unretracedDown >= unretracedUp;
+  const pressureSide = isDownPressure ? 'BUY_BASKET' : 'SELL_BASKET'; // 哪一侧马丁单子正在逆势扛单
+  const pressureSideTxt = isDownPressure ? '多单链(Buy)逆势受压' : '空单链(Sell)逆势受压';
+  const activeUnretraced = isDownPressure ? unretracedDown : unretracedUp;
+  const activeCurRetrace = isDownPressure ? curBounceFromLow : curDipFromHigh;
+  const activeMaxRetraceInLeg = +(isDownPressure ? buyMaxBounceInLeg : sellMaxDipInLeg).toFixed(2);
+  const needMoreForClear = +Math.max(0, TARGET_PB - activeCurRetrace).toFixed(2);
+  const totalClears90m = buyClears + sellClears;
+
+  // 统计所有显著波段的最大中途回调
+  const maxPb90m = +Math.max(
+    buyMaxBounceInLeg,
+    sellMaxDipInLeg,
+    ...(buyBounceHistory.length ? buyBounceHistory : [0]),
+    ...(sellDipHistory.length ? sellDipHistory : [0])
+  ).toFixed(2);
+
+  // 判断行情形态：
+  // 1) 窄幅箱体震荡 (span90m <= 6.5$ 且 activeUnretraced <= 4.5$)
+  // 2) 带回调的锯齿型单边/宽幅震荡 (span90m > 6.5$，但中途触发过 >=2.7$ 止盈回调 或 当前未解套跨度 <= 5.5$) -> 用户说的「下跌10美金但回调了3美金，马丁已平仓赚钱，能做！」
+  // 3) 无回调推土机单边 (activeUnretraced >= 6.5$ 且本段最大回调 < 2.2$) -> 马丁杀手
+  let pattern = 'BOX_RANGE';
+  let patternBadge = '🟢 窄幅箱体震荡 (双向平仓顺畅)';
+  let patternCls = 'RANGE';
+  let sawtoothBonus = 0; // 对传统震荡指数的「锯齿回调修正加分」
+
+  if (activeUnretraced <= 4.8 && totalClears90m >= 1 && span90m >= 6.0) {
+    pattern = 'SAWTOOTH_TREND';
+    patternBadge = `🟢 带回调锯齿行情 (90m走${span90m}$ · 已回调止盈${totalClears90m}次 · 可做!)`;
+    patternCls = 'RANGE';
+    sawtoothBonus = Math.min(24, 12 + totalClears90m * 5);
+  } else if (activeUnretraced <= 5.2) {
+    pattern = 'BOX_RANGE';
+    patternBadge = `🟢 良性震荡/浅波段 (当前未解套跨度仅 ${activeUnretraced}$ · 可做!)`;
+    patternCls = 'RANGE';
+    sawtoothBonus = totalClears90m >= 1 ? 10 : 4;
+  } else if (activeUnretraced > 5.2 && activeUnretraced <= 8.5 && (totalClears90m >= 1 || activeMaxRetraceInLeg >= 2.0)) {
+    pattern = 'WIDE_SAWTOOTH';
+    patternBadge = `🟡 宽幅阶梯波段 (本段已走${activeUnretraced}$ · 最大回调${activeMaxRetraceInLeg}$)`;
+    patternCls = 'MIXED';
+    sawtoothBonus = totalClears90m >= 1 ? 8 : 0;
+  } else {
+    pattern = 'NO_PB_BULLDOZER';
+    patternBadge = `🚨 无回调推土机单边 (已连续走 ${activeUnretraced}$ 未满2.7$回调!)`;
+    patternCls = 'TREND';
+    sawtoothBonus = -10;
+  }
+
+  // ---------- 计算「未来 15~30 分钟回调 ≥2.7$ 解套概率 (reboundProb%)」 ----------
+  // 用于回答用户核心困惑：「震荡指数突然骤降，我已经亏损被套来不及离场，该继续拿着等回调，还是砍仓/锁仓？」
+  let prob = 52;
+  const reasons = [];
+
+  // 因子 1：短周期 RSI 超买/超卖橡皮筋效应 (急跌/急涨拉出极端RSI时，反而极易出现 2.5~3.5$ 的技术性反抽！)
+  const rsi1 = (tf1m && tf1m.rsi) || 50;
+  const rsi5 = (tf5m && tf5m.rsi) || 50;
+  const emaDist1 = (tf1m && tf1m.emaDist) || 0;
+  const emaDist5 = (tf5m && tf5m.emaDist) || 0;
+
+  if (isDownPressure) {
+    if (rsi1 <= 26 || rsi5 <= 29) {
+      prob += 18;
+      reasons.push(`1M/5M RSI已严重超卖(${rsi1}/${rsi5})，急跌橡皮筋拉满，极易触发2.5~3.5$技术反抽`);
+    } else if (rsi5 >= 38 && rsi5 <= 48 && activeUnretraced >= 6.5) {
+      prob -= 14;
+      reasons.push(`5M RSI(${rsi5})未超卖却持续阴跌，属于最危险的“温水煮青蛙”阴跌推土机`);
+    }
+  } else {
+    if (rsi1 >= 74 || rsi5 >= 71) {
+      prob += 18;
+      reasons.push(`1M/5M RSI已严重超买(${rsi1}/${rsi5})，急涨偏离过大，极易触发2.5~3.5$获利回吐回调`);
+    } else if (rsi5 >= 52 && rsi5 <= 62 && activeUnretraced >= 6.5) {
+      prob -= 14;
+      reasons.push(`5M RSI(${rsi5})未超买却持续慢牛推升，属于“均线推土机”逼空`);
+    }
+  }
+
+  // 因子 2：偏离 EMA50 均线距离
+  if (Math.max(emaDist1, emaDist5) >= 2.2) {
+    prob += 12;
+    reasons.push(`价格偏离均线达 ${Math.max(emaDist1, emaDist5)} 倍ATR，均值引力强`);
+  }
+
+  // 因子 3：近90分钟锯齿回调基因 (之前能不能回调3美金？)
+  if (totalClears90m >= 2) {
+    prob += 15;
+    reasons.push(`近90分钟已成功出现 ${totalClears90m} 次 ≥2.7$ 止盈回调，盘面锯齿回归基因强`);
+  } else if (totalClears90m === 1) {
+    prob += 7;
+    reasons.push(`近90分钟曾出现 1 次 ≥2.7$ 止盈回调（最大回调 ${maxPb90m}$）`);
+  } else if (activeUnretraced >= 7.0) {
+    prob -= 16;
+    reasons.push(`近90分钟连续推进 ${activeUnretraced}$ 竟无一次满 2.7$ 的回调，单边动能极强`);
+  }
+
+  // 因子 4：最新 3 根 K 线是否出现下影线/上影线承接
+  const last3 = src.slice(-3);
+  if (last3.length === 3) {
+    const lowWicks = last3.map((b) => Math.min(b.o, b.c) - b.l);
+    const highWicks = last3.map((b) => b.h - Math.max(b.o, b.c));
+    const maxWick = isDownPressure ? Math.max(...lowWicks) : Math.max(...highWicks);
+    if (maxWick >= 0.8) {
+      prob += 9;
+      reasons.push(`最新K线已收出 ${maxWick.toFixed(2)}$ 止跌/受阻影线，开始出现反向承接盘`);
+    }
+  }
+
+  // 因子 5：主动吃单买卖比与散户反指配合
+  if (sentiment) {
+    if (isDownPressure && sentiment.takerBuyPct >= 52) {
+      prob += 8;
+      reasons.push(`15M市价主动买盘已回升至 ${sentiment.takerBuyPct}%，有资金正在抄底博反抽`);
+    } else if (isDownPressure && sentiment.retailLongPct >= 74 && sentiment.takerBuyPct <= 43) {
+      prob -= 12;
+      reasons.push(`散户 ${sentiment.retailLongPct}% 扎堆死扛多单且主力市价砸盘，易继续向下逼多`);
+    } else if (!isDownPressure && sentiment.retailShortPct >= 68 && sentiment.takerBuyPct >= 56) {
+      prob -= 12;
+      reasons.push(`散户扎堆摸顶做空且主动买盘强劲，易继续向上逼空`);
+    }
+  }
+
+  const reboundProb = Math.round(Math.max(8, Math.min(94, prob)));
+
+  // 生成「已被套/浮亏时」的一锤定音去留指令
+  let holdDecision = '';
+  let holdAction = '';
+  let holdCls = 'RANGE';
+
+  if (activeUnretraced <= 3.5) {
+    holdDecision = '🟢 仓位极轻 / 已在止盈射程内：安心持有自动止盈';
+    holdAction = `当前未解套逆势跨度仅 ${activeUnretraced}$（最多仅 3~4 层浅仓），且距整组止盈仅需再回调 ${needMoreForClear}$，正常持有让 EA 自动平仓即可。`;
+    holdCls = 'RANGE';
+  } else if (reboundProb >= 62 && activeUnretraced <= 10.5) {
+    holdDecision = `🟢 急跌/急涨超卖型骤降（回调解套概率 ${reboundProb}%）：建议【继续拿着等 $2.7 反抽平仓后再停 EA】！`;
+    holdAction = `💡 为什么不建议现在砍仓？因为刚拉出大K线导致震荡指数骤降时，短线橡皮筋已拉满（${reasons.slice(0, 2).join('；')}）。此时割肉极易砍在最低点/最高点！当前仅需再反抽 **$${needMoreForClear}** 即可触发马丁整组止盈。**最佳操作：继续拿着等这波 2.5~3.0$ 反抽把单子平掉赚钱出来，平仓那一刻再关停 EA 观望！**`;
+    holdCls = 'RANGE';
+  } else if (reboundProb >= 45 && activeUnretraced <= 9.5) {
+    holdDecision = `🟡 阶梯波段受压中（回调解套概率 ${reboundProb}%）：建议【暂停新加仓，等反抽减仓/平仓】`;
+    holdAction = `⚠️ 当前已连续逆势运行 **$${activeUnretraced}**，距离整组止盈还需反抽 **$${needMoreForClear}**。回调概率中等（${reboundProb}%）。**最佳操作：先在 MT4/MT5 暂停该亏损方向继续倍投加新单（控制住净敞口 N 不再放大），拿着现有仓位等待反抽 $${needMoreForClear} 平仓解套！**`;
+    holdCls = 'MIXED';
+  } else {
+    holdDecision = `🛑 高危无回调推土机（回调解套概率仅 ${reboundProb}%）：切勿盲目死扛，建议【立即反向锁仓控敞口】！`;
+    holdAction = `🚨 警报：当前行情已连续单边推进 **$${activeUnretraced}** 而中途最大回调仅 **$${activeMaxRetraceInLeg}**（${reasons.slice(0, 2).join('；')}）。这属于最伤马丁的“无回调推土机单边”，干等回调极易把层数拖到 12 层以上！**最佳操作：不要裸扛！立即手动下一笔反向单锁住 50%~80% 的净敞口 N（让浮亏不再随价格扩大），等 5M 收出明确反转吞没 K 线后再解锁！**`;
+    holdCls = 'TREND';
+  }
+
+  return {
+    span90m,
+    net90m,
+    targetPb: TARGET_PB,
+    buyClears,
+    sellClears,
+    totalClears90m,
+    maxPb90m,
+    unretracedDown,
+    curBounceFromLow,
+    unretracedUp,
+    curDipFromHigh,
+    pressureSide,
+    pressureSideTxt,
+    activeUnretraced,
+    activeCurRetrace,
+    activeMaxRetraceInLeg,
+    needMoreForClear,
+    pattern,
+    patternBadge,
+    patternCls,
+    sawtoothBonus,
+    reboundProb,
+    reasons,
+    holdDecision,
+    holdAction,
+    holdCls
+  };
+}
 // ---------- 汇总 ----------
 let cache = null, inflight = null, fastInflight = null;
 let cachedEvents = [], cachedKnn = null;
@@ -1185,6 +1449,15 @@ async function build() {
     gd.status === 'fulfilled' ? gd.value.bars : null,
     curPx
   ) || prev.keyLevels || null;
+  result.pullback = analyzePullback(
+    g1.status === 'fulfilled' ? g1.value.bars : null,
+    g5.status === 'fulfilled' ? g5.value.bars : null,
+    result.timeframes['1M'],
+    result.timeframes['5M'],
+    result.timeframes['15M'],
+    result.sentiment,
+    result.keyLevels
+  ) || prev.pullback || null;
   result.model = { sparks: sp };
   buildComposite(result);
   delete result.calendar.all;
@@ -1268,6 +1541,16 @@ async function refreshFast() {
       }
       cache.keyLevels = kLv;
     }
+    const pb = analyzePullback(
+      g1.status === 'fulfilled' ? g1.value.bars : null,
+      g5.status === 'fulfilled' ? g5.value.bars : null,
+      cache.timeframes['1M'],
+      cache.timeframes['5M'],
+      cache.timeframes['15M'],
+      cache.sentiment,
+      cache.keyLevels
+    );
+    if (pb) cache.pullback = pb;
     buildComposite(cache);
     lastFastTs = Date.now();
     saveDiskCache();

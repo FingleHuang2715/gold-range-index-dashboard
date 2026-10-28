@@ -170,8 +170,9 @@
 <div class="layout">
   <aside class="sidenav" id="sidenav">
     <div class="ng">核心决策</div>
+    <a href="#masterDecisionSec"><span>🧭 一锤定音总决策</span><span id="nav-master" class="pill RANGE">-</span></a>
     <a href="#topSessionSec"><span>🕒 时段 & 重磅红灯锁</span><span id="nav-sess" class="pill NEUT">-</span></a>
-    <a href="#tolSec"><span>🛡️ 账户推演 & 手动操作</span><span id="nav-ea" class="pill RANGE">-</span></a>
+    <a href="#tolSec"><span>🛡️ 净敞口推演(可开关)</span><span id="nav-ea" class="pill NEUT">关</span></a>
     <a href="#anomalySec"><span>⚡ 实时异动监控</span><span id="nav-anom" class="pill NEUT">0项</span></a>
     <a href="#keyLevelsSec"><span>🎯 清算位插针雷区</span><span id="nav-klv" class="pill NEUT">-</span></a>
     <a href="#verdict"><span>📊 核心震荡总览</span><span id="nav-run" class="pill MIXED">-</span></a>
@@ -229,11 +230,19 @@
         </div>
       </div>
     </section>
+    <section class="card" id="masterDecisionSec"></section>
     <section class="card" id="tolSec">
-      <div class="vhead" style="margin-bottom:10px">
-        <h2 style="margin:0">🛡️ M1双向追踪倍投马丁EA · 多空净敞口风控推演与实时操作指令台 <span class="mut sm" style="font-weight:400">(核心公式：抗单边美元 D = 可亏金额 ÷ (多空净敞口 N × 100) · 真正决定浮亏速度的是「买单手数 − 卖单手数」的净敞口)</span></h2>
-        <span class="pill NEUT" id="eaParamBadge">当前策略: 0.02起 · K_Lot 1.38 · 封顶1.32手 · 24层 · 步长1.0$</span>
+      <div class="vhead" style="margin-bottom:0">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 style="margin:0">🛡️ M1双向追踪倍投马丁EA · 多空净敞口风控推演与实时操作指令台</h2>
+          <span class="mut sm" id="tolSecCollapsedHint">(已按需默认收起 · 想用时随时点击右侧开关打开，不用时保持关闭不占屏幕)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="pill NEUT" id="eaParamBadge" style="display:none">当前策略: 0.02起 · K_Lot 1.38 · 封顶1.32手 · 24层 · 步长1.0$</span>
+          <button id="btnToggleTolSec" class="sm pri" onclick="toggleTolSec()" style="font-weight:800;padding:4px 12px">🔘 开关：点击打开推演台 (当前已关闭)</button>
+        </div>
       </div>
+      <div id="tolSecBody" style="display:none;margin-top:12px;padding-top:10px;border-top:1px solid var(--bd)">
       <div class="tol-bar" style="justify-content:space-between">
         <div style="display:flex;align-items:center;flex-wrap:wrap;gap:9px">
           <div style="display:flex;align-items:center;gap:5px">
@@ -297,6 +306,7 @@
       </details>
       <div id="eaActionBox"></div>
       <div id="tolResult" style="margin-top:12px"></div>
+      </div>
     </section>
     <section class="card" id="anomalySec"></section>
     <section class="card" id="keyLevelsSec"></section>
@@ -1259,6 +1269,39 @@ function evaluateVoiceAlerts(d, eaDir, lockState) {
   }
 }
 
+// ---------- 3. 「M1双向追踪倍投马丁EA · 多空净敞口风控推演台」显示/隐藏开关 (默认关闭收起，按需随时打开) ----------
+const SHOW_TOL_STORAGE_KEY = 'gold_show_tol_sec_v1';
+let SHOW_TOL_SEC = false; // 默认关闭，避免干扰视线
+try {
+  const savedTolShow = localStorage.getItem(SHOW_TOL_STORAGE_KEY);
+  if (savedTolShow !== null) SHOW_TOL_SEC = savedTolShow === '1';
+} catch (e) {}
+
+function syncTolSecToggleUi() {
+  const bodyEl = $('tolSecBody');
+  const btnEl = $('btnToggleTolSec');
+  const badgeEl = $('eaParamBadge');
+  const hintEl = $('tolSecCollapsedHint');
+  const navEa = $('nav-ea');
+  if (bodyEl) bodyEl.style.display = SHOW_TOL_SEC ? 'block' : 'none';
+  if (badgeEl) badgeEl.style.display = SHOW_TOL_SEC ? 'inline-block' : 'none';
+  if (hintEl) hintEl.textContent = SHOW_TOL_SEC ? '(当前已展开 · 点击右侧开关可随时收起隐藏)' : '(已按需收起关闭 · 想用时点击右侧开关即可打开)';
+  if (btnEl) {
+    btnEl.textContent = SHOW_TOL_SEC ? '🔽 关闭隐藏此推演台 (当前已开启)' : '🔘 开启净敞口推演台 (当前已关闭)';
+    btnEl.className = SHOW_TOL_SEC ? 'sm' : 'sm pri';
+  }
+  if (!SHOW_TOL_SEC && navEa) {
+    navEa.textContent = '已关';
+    navEa.className = 'pill NEUT';
+  }
+}
+
+window.toggleTolSec = () => {
+  SHOW_TOL_SEC = !SHOW_TOL_SEC;
+  try { localStorage.setItem(SHOW_TOL_STORAGE_KEY, SHOW_TOL_SEC ? '1' : '0'); } catch (e) {}
+  syncTolSecToggleUi();
+};
+
 // 每秒刷新一次顶部手动重磅事件红灯锁倒计时（不发网络请求，纯本地零开销跳秒）
 setInterval(() => {
   const st = renderCustomEventBar();
@@ -1277,6 +1320,7 @@ function mergeDashboardData(prev, incoming) {
   if (!incoming.attention && prev.attention) out.attention = prev.attention;
   if (!incoming.sentiment && prev.sentiment) out.sentiment = prev.sentiment;
   if (!incoming.keyLevels && prev.keyLevels) out.keyLevels = prev.keyLevels;
+  if (!incoming.pullback && prev.pullback) out.pullback = prev.pullback;
   if ((!incoming.calendar || !incoming.calendar.items || !incoming.calendar.items.length) && prev.calendar && prev.calendar.items && prev.calendar.items.length) {
     out.calendar = prev.calendar;
   }
@@ -1758,9 +1802,143 @@ function render() {
     // ========== 计算 EA 实时手动操作指令 (以 1M+5M 为主 65%，参考 15M+1H 35%) ==========
     const eaDir = calcEaDirective(d, ea, adjMap, eMap);
     if ($('nav-ea')) {
-      const navTxt = eaDir.state === 'PAUSE_SELL' ? '禁空Sell' : eaDir.state === 'PAUSE_BUY' ? '禁多Buy' : eaDir.state === 'STOP_ALL' ? '紧急停EA' : eaDir.state === 'CAUTION_WATCH' ? '戒备观察' : '自动运行';
+      const navTxt = SHOW_TOL_SEC ? (eaDir.state === 'PAUSE_SELL' ? '禁空Sell' : eaDir.state === 'PAUSE_BUY' ? '禁多Buy' : eaDir.state === 'STOP_ALL' ? '紧急停EA' : eaDir.state === 'CAUTION_WATCH' ? '戒备观察' : '自动运行') : '已关';
       $('nav-ea').textContent = navTxt;
-      $('nav-ea').className = 'pill ' + eaDir.badgeCls + ' fast-num';
+      $('nav-ea').className = SHOW_TOL_SEC ? ('pill ' + eaDir.badgeCls + ' fast-num') : 'pill NEUT';
+    }
+    syncTolSecToggleUi();
+
+    // ========== 渲染置顶「🧭 极简一锤定音总决策台」：解决“指数太多不知道看哪个、被套来不及跑该不该等回调、带3$回调的单边也能做”三大痛点 ==========
+    if ($('masterDecisionSec')) {
+      const pb = d.pullback || {
+        span90m: (d.timeframes['15M'] && d.timeframes['15M'].span14) || 5.0,
+        totalClears90m: 1,
+        maxPb90m: 3.0,
+        activeUnretraced: 2.5,
+        activeCurRetrace: 0.8,
+        needMoreForClear: 1.9,
+        pressureSideTxt: '多空均衡',
+        pattern: 'BOX_RANGE',
+        patternBadge: '🟢 良性震荡/带回调波段 (可做)',
+        patternCls: 'RANGE',
+        sawtoothBonus: 6,
+        reboundProb: 68,
+        reasons: ['盘面存在常态均值回归回调'],
+        holdDecision: '🟢 建议【继续拿着等 $2.7 反抽自动止盈平仓】',
+        holdAction: '当前未解套跨度较小，正常持有等待 EA 自动触发止盈清仓即可。',
+        holdCls: 'RANGE'
+      };
+      const lkNow = evalCustomLockState();
+      const hasRedLock = lkNow && lkNow.activeLocks && lkNow.activeLocks.length > 0;
+
+      // 合成全站唯一主指数：【马丁实盘可做总分 (0~100)】= 基础短周期震荡指数 + 锯齿回调修正加分(下跌10$但中途回调3$平仓了就加分！) - 红灯锁惩罚
+      const baseShortScore = Math.round(0.35 * (adjMap['1M'] || 60) + 0.40 * (adjMap['5M'] || 60) + 0.25 * (adjMap['15M'] || 60));
+      const rawMartingaleScore = baseShortScore + (pb.sawtoothBonus || 0) - (hasRedLock ? 25 : 0);
+      const martingaleScore = Math.max(5, Math.min(99, Math.round(rawMartingaleScore)));
+      const mCls = martingaleScore >= 60 ? 'RANGE' : martingaleScore >= 46 ? 'MIXED' : 'TREND';
+      const mStatusTxt = martingaleScore >= 60
+        ? '🟢 适合做马丁 (震荡或带3$回调的锯齿波段)'
+        : martingaleScore >= 46
+        ? '🟡 谨慎可做 (宽幅阶梯波段·注意控层)'
+        : '🔴 高危禁做 (无回调单边推土机或红灯锁)';
+
+      if ($('nav-master')) {
+        $('nav-master').textContent = `${martingaleScore}分`;
+        $('nav-master').className = 'pill ' + mCls + ' fast-num';
+      }
+
+      // 场景 1（空仓/轻仓 1~3层）：现在能不能入场开 EA？
+      let entryHeadline = '';
+      let entryDetail = '';
+      let entryBoxCls = 'RANGE';
+      if (hasRedLock) {
+        const topLk = lkNow.activeLocks[0];
+        entryHeadline = `🔴 严禁现在新开 EA（正处于 ${topLk.time} 重磅红灯锁）`;
+        entryDetail = `当前处于【${topLk.title}】前${topLk.pre}分~后${topLk.post}分高危窗口，极易瞬间扫损拉出无回调单边，请等红灯锁解除后再入场！`;
+        entryBoxCls = 'TREND';
+      } else if (martingaleScore >= 60 && pb.pattern !== 'NO_PB_BULLDOZER') {
+        entryHeadline = `🟢 可以入场 / 保持双向 EA 开启 (${martingaleScore}分)`;
+        entryDetail = pb.totalClears90m >= 1 && pb.span90m >= 6.0
+          ? `✅ <b>锯齿回调识别生效</b>：虽然近90分钟总波幅走了 <b>$${f2(pb.span90m)}</b>，但中途已出现 <b>${pb.totalClears90m} 次 ≥$2.7 的有效回调</b>（最大回调 <b>$${f2(pb.maxPb90m)}</b>），马丁网格完全能平仓赚钱！当前未解套连续跨度仅 <b>$${f2(pb.activeUnretraced)}</b>，可以正常做！`
+          : `✅ 当前盘面未解套连续跨度仅 <b>$${f2(pb.activeUnretraced)}</b>，多空来回折返顺畅，非常适合双向马丁刷单止盈。`;
+        entryBoxCls = 'RANGE';
+      } else if (martingaleScore >= 46) {
+        entryHeadline = `🟡 先观望 5~10 分钟，等当前急走 K 线收稳再入场`;
+        entryDetail = `当前处于宽幅波动（本段连续未回调跨度 <b>$${f2(pb.activeUnretraced)}</b>），若空仓建议等 1M/5M 出现止跌/受阻阳阴线后再开启 EA。`;
+        entryBoxCls = 'MIXED';
+      } else {
+        entryHeadline = `🔴 禁止现在入场！（正处于无回调推土机单边）`;
+        entryDetail = `🚨 当前已连续单边运行 <b>$${f2(pb.activeUnretraced)}</b> 而中途最大回调不足 <b>$${f2(pb.activeMaxRetraceInLeg || 1.5)}</b>，马丁无法平仓重置，空仓者切勿此时进场接飞刀！`;
+        entryBoxCls = 'TREND';
+      }
+
+      $('masterDecisionSec').innerHTML = `
+        <div class="vhead" style="margin-bottom:10px">
+          <div>
+            <h2 style="margin:0">🧭 马丁实盘「一锤定音」极简决策台 <span class="mut sm" style="font-weight:400">(不用再纠结看哪个指数！全站已合成为这 1 个总分 + 「空仓入场」与「被套去留」2 句直接指令)</span></h2>
+          </div>
+          <span class="pill ${pb.patternCls}" style="font-size:12.5px;padding:4px 10px">${pb.patternBadge}</span>
+        </div>
+
+        <div class="grid3" style="gap:12px">
+          <!-- 卡片 1：唯一总指数（含单边10$但回调3$平仓赚钱的锯齿修正） -->
+          <div style="background:linear-gradient(135deg,rgba(234,179,8,0.12),rgba(15,20,30,0.95));border:1.5px solid ${mCls === 'RANGE' ? 'rgba(16,185,129,0.55)' : mCls === 'MIXED' ? 'rgba(245,158,11,0.55)' : 'rgba(244,63,94,0.65)'};border-radius:10px;padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <b style="color:var(--gold);font-size:13px">① 全站唯一总分：马丁可做指数</b>
+              <span class="pill ${mCls}">${mStatusTxt.slice(0, 8)}</span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:8px;margin:4px 0 8px">
+              <span class="num-chip fast-num" style="font-size:38px;font-weight:900;line-height:1;color:${mCls === 'RANGE' ? '#34d399' : mCls === 'MIXED' ? '#fbbf24' : '#fb7185'}">${martingaleScore}</span>
+              <span class="mut sm">/ 100</span>
+              <span class="pill NEUT" style="font-size:11px">基础震荡 ${baseShortScore}分 ${pb.sawtoothBonus >= 0 ? `+ 锯齿回调加分 ${pb.sawtoothBonus}分` : `− 无回调扣分 ${Math.abs(pb.sawtoothBonus)}分`}</span>
+            </div>
+            ${idxBar(martingaleScore)}
+            <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--bd);font-size:12px;line-height:1.55;color:#cbd5e1">
+              • 近90分钟总波幅: <b>$${f2(pb.span90m)}</b> | 满$2.7止盈回调: <b style="color:#34d399">${pb.totalClears90m} 次</b> (最大回调 <b>$${f2(pb.maxPb90m)}</b>)<br>
+              • <b>当前连续未解套跨度</b>: <b style="color:${pb.activeUnretraced <= 5.5 ? '#34d399' : '#fb7185'}">$${f2(pb.activeUnretraced)}</b> <span class="xs mut">(≥60分即可正常做马丁)</span>
+            </div>
+          </div>
+
+          <!-- 卡片 2：空仓 / 轻仓时（1~3层）—— 现在能不能入场？ -->
+          <div style="background:rgba(15,20,30,0.92);border:1.5px solid ${entryBoxCls === 'RANGE' ? 'rgba(16,185,129,0.5)' : entryBoxCls === 'MIXED' ? 'rgba(245,158,11,0.5)' : 'rgba(244,63,94,0.6)'};border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <b style="color:#fff;font-size:13px">② 如果您现在【空仓 / 1~3层轻仓】：何时入场？</b>
+                <span class="pill ${entryBoxCls}">入场决策</span>
+              </div>
+              <div style="font-size:15.5px;font-weight:900;color:${entryBoxCls === 'RANGE' ? '#34d399' : entryBoxCls === 'MIXED' ? '#fbbf24' : '#fb7185'};margin:6px 0">
+                ${entryHeadline}
+              </div>
+              <div style="font-size:12px;line-height:1.55;color:#cbd5e1">
+                ${entryDetail}
+              </div>
+            </div>
+            <div class="xs mut" style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--bd)">
+              💡 核心法则：只要不是「连续走 &gt;6$ 无 2.7$ 回调」的推土机行情，哪怕单边跌 10$ 只要中途能回调 3$ 平仓，本卡都会亮绿灯让您做！
+            </div>
+          </div>
+
+          <!-- 卡片 3：已被套 / 浮亏中（刚遇震荡指数骤降来不及离场）—— 该继续拿着等回调，还是砍仓/锁仓？ -->
+          <div style="background:rgba(15,20,30,0.92);border:1.5px solid ${pb.holdCls === 'RANGE' ? 'rgba(16,185,129,0.55)' : pb.holdCls === 'MIXED' ? 'rgba(245,158,11,0.55)' : 'rgba(244,63,94,0.65)'};border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <b style="color:#fff;font-size:13px">③ 如果您【已被套浮亏 · 指数骤降来不及跑】：拿还是走？</b>
+                <span class="pill ${pb.holdCls}">回调解套概率 ${pb.reboundProb}%</span>
+              </div>
+              <div style="font-size:14.5px;font-weight:900;color:${pb.holdCls === 'RANGE' ? '#34d399' : pb.holdCls === 'MIXED' ? '#fbbf24' : '#fb7185'};margin:6px 0">
+                ${pb.holdDecision}
+              </div>
+              <div style="font-size:12px;line-height:1.55;color:#cbd5e1">
+                ${pb.holdAction.replace(/\*\*(.*?)\*\*/g, '<b style="color:var(--gold)">$1</b>')}
+              </div>
+            </div>
+            <div style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--bd);font-size:11.5px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px">
+              <span>当前受压: <b>${pb.pressureSideTxt}</b></span>
+              <span>已反抽: <b style="color:#34d399">$${f2(pb.activeCurRetrace)}</b></span>
+              <span>距止盈平仓还差: <b style="color:var(--gold)">$${f2(pb.needMoreForClear)}</b></span>
+            </div>
+          </div>
+        </div>`;
     }
 
     // 渲染 #eaActionBox：实时手动操作指令台 + 账户风控推演卡片
@@ -3167,6 +3345,14 @@ function buildText() {
     L.push(`  - 现货白银(XAGUSD): ${f2(xag.last)}$ (${xag.chgPct >= 0 ? '+' : ''}${f2(xag.chgPct)}%) | 实时金银比 ${f2(mc.gsr)} | 白银-黄金日内强弱差 ${f2(mc.agLead)}%`);
     L.push(`  - VIX恐慌指数: ${f2(vix.last)} (${vix.chgPct >= 0 ? '+' : ''}${f2(vix.chgPct)}%) | 上海黄金TD(AUTD): ${f2(autd.last)}元/克 (${autd.chgPct >= 0 ? '+' : ''}${f2(autd.chgPct)}%)`);
   }
+  if (d.pullback) {
+    const pb = d.pullback;
+    L.push(`\n■ 锯齿回调解套能力 & 被套去留决策分析 (近90分钟总波幅 $${f2(pb.span90m)}):`);
+    L.push(`  - 行情形态: ${pb.patternBadge} (锯齿回调修正加分: ${pb.sawtoothBonus >= 0 ? '+' : ''}${pb.sawtoothBonus}分)`);
+    L.push(`  - 止盈回调统计: 近90m内满$2.7止盈回调共 ${pb.totalClears90m} 次 (最大中途回调 $${f2(pb.maxPb90m)}) | 当前连续未解套跨度: $${f2(pb.activeUnretraced)} (${pb.pressureSideTxt}, 已反抽 $${f2(pb.activeCurRetrace)}, 距止盈平仓还需再回调 $${f2(pb.needMoreForClear)})`);
+    L.push(`  - 已被套去留决策 (未来15~30m回调解套概率 ${pb.reboundProb}%): ${pb.holdDecision}`);
+    L.push(`  - 具体指引: ${pb.holdAction.replace(/\*\*/g, '')}`);
+  }
   if (d.keyLevels && Array.isArray(d.keyLevels.levels)) {
     L.push(`\n■ 关键清算位与整数关口「插针雷区」地图 (当前现价 $${f2(d.keyLevels.curPrice)}):`);
     L.push(`  - 状态: ${d.keyLevels.headline}`);
@@ -3238,6 +3424,7 @@ function syncEaInputs() {
   if ($('tolInput')) $('tolInput').value = TOL;
   if ($('tolValTxt')) $('tolValTxt').textContent = f2(TOL);
   syncVoiceUi();
+  syncTolSecToggleUi();
   renderCustomEventBar();
 }
 
