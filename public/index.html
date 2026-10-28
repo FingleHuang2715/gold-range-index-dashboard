@@ -1411,11 +1411,17 @@ function idxBar(v) {
   return `<div class="bar" style="margin-top:6px">${segs}<div class="mk" style="left:${pos}%"></div></div><div class="ticks">${ticks}</div>`;
 }
 
-// 计算每个时间点的「震荡指数单次跌幅」与「是否适合入场评分(0-100)及状态」
+// 计算每个时间点的「入场/离场双线指数 (抗毛刺平滑快线 entryFast + EMA8 稳定慢均线 entrySlow)」及【🟢入场区间 / 🛡️均线护航等回调 / 🔴离场区间】
+// 核心改进：
+// 1) 过滤单根K线闪跌毛刺：对原始分做 3周期抗毛刺滤波得到「快线(entryFast)」，再计算 8周期指数移动平均得到「慢均线(entrySlow / EMA8)」；
+// 2) 防止“有时候入场指数降低，但很快又回去了”造成误离场：当快线短暂下探，但慢均线(EMA8)依然稳守在 ≥55分 以上时，判定为「🛡️ 假跌毛刺·均线护航中(拿住等回调)」，不轻易发离场假警报；
+// 3) 锯齿回调补偿：若近 10 根 K 线内虽有单边波动但已出现 ≥2.5$ 的有效反向回调(马丁可止盈清仓)，自动给入场指数补分。
 function calcEntrySeries(rawArr, tol) {
   if (!rawArr || !rawArr.length) return [];
   const base = rawArr.map((p) => ({ ...p, adjV: adjBySpan(p.v, p.span, tol) }));
-  return base.map((p, i) => {
+
+  // 第一步：计算每根 K 线的原始得分与锯齿回调补偿
+  const step1 = base.map((p, i) => {
     const prev = i > 0 ? base[i - 1] : p;
     const adjChg1 = r1(p.adjV - prev.adjV);
     const adjDrop1 = r1(Math.max(0, prev.adjV - p.adjV));
@@ -1427,37 +1433,331 @@ function calcEntrySeries(rawArr, tol) {
     const effDrop3 = r1(Math.max(p.drop3 || 0, Math.max(0, p3Max - p.adjV)));
     const barSpan = p.barSpan != null ? p.barSpan : +(((p.h ?? p.c) - (p.l ?? p.c)) || 0).toFixed(2);
 
-    // 入场适宜度评分: 以校准后震荡指数为基准, 叠加「震荡指数单次急跌扣分」+「单根K线巨震扣分」+「布林带破位扣分」
-    let score = p.adjV;
-    if (effDrop1 >= 3.5) score -= (effDrop1 - 3) * 3.4; // 单次急跌重罚(指数单次跳水=K线剧烈突破)
-    if (effDrop3 >= 8) score -= (effDrop3 - 7) * 1.6;   // 连续3根急跌追罚
-    if (tol > 0 && barSpan > tol * 0.32) score -= Math.min(22, (barSpan / tol - 0.32) * 48); // 单根K线波幅过大
-    const bbBreak = p.bbU != null && p.bbL != null && (p.c > p.bbU || p.c < p.bbL);
-    if (bbBreak) score -= 10; // 突破布林带上下轨
-    const entryScore = r1(clamp(score, 0, 100));
-
-    let entryState, entryTxt, entryCls, entryCol, entryReason;
-    if (effDrop1 >= 7.5) {
-      entryState = 'NO'; entryTxt = '🔴 禁止入场(指数急跌)'; entryCls = 'TREND'; entryCol = '#ef5b5b';
-      entryReason = `震荡指数单次急跌-${effDrop1}分,K线剧烈波动`;
-    } else if (p.span > tol * 1.15) {
-      entryState = 'NO'; entryTxt = '🔴 禁止入场(波幅超标)'; entryCls = 'TREND'; entryCol = '#ef5b5b';
-      entryReason = `14根波幅${f2(p.span)}$超出${f2(tol)}$目标`;
-    } else if (entryScore < 45 || p.adjV < 45) {
-      entryState = 'NO'; entryTxt = '🔴 禁止入场(单边趋势)'; entryCls = 'TREND'; entryCol = '#ef5b5b';
-      entryReason = p.dir === 'UP' ? '当前处于上涨单边趋势' : '当前处于下跌单边趋势';
-    } else if (entryScore >= 60 && p.adjV >= 55 && effDrop1 < 4.5 && !bbBreak) {
-      entryState = 'OK'; entryTxt = '🟢 适合入场'; entryCls = 'RANGE'; entryCol = '#2ecc8f';
-      entryReason = `指数平稳(单次Δ${effChg1 >= 0 ? '+' : ''}${effChg1})且波幅在${f2(tol)}$内`;
-    } else {
-      entryState = 'WAIT'; entryTxt = '🟡 谨慎观望'; entryCls = 'MIXED'; entryCol = '#f0b429';
-      entryReason = effDrop1 >= 4 ? `指数单次下滑-${effDrop1}分,等企稳再入` : (bbBreak ? '价格触及布林轨外侧,观望' : '处于过渡区,建议轻仓观望');
+    // 检查近 10 根 K 线内是否有 >= 2.5$ 的有效回调（锯齿止盈基因补偿）
+    let winHi = p.h ?? p.c, winLo = p.l ?? p.c;
+    for (let j = Math.max(0, i - 9); j <= i; j++) {
+      const bj = base[j];
+      if ((bj.h ?? bj.c) > winHi) winHi = bj.h ?? bj.c;
+      if ((bj.l ?? bj.c) < winLo) winLo = bj.l ?? bj.c;
     }
-    return { ...p, barSpan, effChg1, effDrop1, effDrop3, entryScore, entryState, entryTxt, entryCls, entryCol, entryReason };
+    const curC = p.c ?? 0;
+    const bounceFromLo = Math.max(0, curC - winLo);
+    const dipFromHi = Math.max(0, winHi - curC);
+    const hasSawtoothPb = (winHi - winLo >= 4.0) && (bounceFromLo >= 2.4 && dipFromHi >= 2.4);
+
+    // 原始单根入场评分（温和扣分，避免单根K线直接砸穿30分造成剧烈毛刺）
+    let rawScore = p.adjV + (hasSawtoothPb ? 7 : 0);
+    if (effDrop1 >= 4.0) rawScore -= Math.min(18, (effDrop1 - 3.5) * 2.2);
+    if (effDrop3 >= 9.0) rawScore -= Math.min(14, (effDrop3 - 8.0) * 1.4);
+    if (tol > 0 && barSpan > tol * 0.35) rawScore -= Math.min(14, (barSpan / tol - 0.35) * 32);
+    const bbBreak = p.bbU != null && p.bbL != null && (p.c > p.bbU || p.c < p.bbL);
+    if (bbBreak) rawScore -= 6;
+    rawScore = r1(clamp(rawScore, 5, 98));
+
+    return { ...p, barSpan, effChg1, effDrop1, effDrop3, bbBreak, hasSawtoothPb, rawScore };
   });
+
+  // 第二步：计算「抗毛刺快线 (entryFast, 3周期加权平滑)」与「稳定慢均线 (entrySlow, EMA8 指数均线)」
+  let emaSlow = step1[0].rawScore;
+  const alphaSlow = 2 / (8 + 1); // EMA8
+
+  const out = step1.map((p, i) => {
+    const r0 = p.rawScore;
+    const r1Prev = i >= 1 ? step1[i - 1].rawScore : r0;
+    const r2Prev = i >= 2 ? step1[i - 2].rawScore : r1Prev;
+    // 快线：3根K线加权滤波 (0.50, 0.32, 0.18)，既保留反应速度，又滤掉1分钟单根假插针毛刺
+    const entryFast = r1(clamp(0.50 * r0 + 0.32 * r1Prev + 0.18 * r2Prev, 5, 98));
+    // 慢均线：EMA8，作为判断入场/离场区间的核心定海神针
+    emaSlow = i === 0 ? entryFast : (alphaSlow * entryFast + (1 - alphaSlow) * emaSlow);
+    const entrySlow = r1(clamp(emaSlow, 5, 98));
+
+    // 主显示分数采用平滑快线 entryFast，但区间定性由「快线 + 慢均线(EMA8)」双线共同决定！
+    const entryScore = entryFast;
+
+    let entryState, entryTxt, entryCls, entryCol, entryReason, zoneName;
+    if (entrySlow >= 56 && entryFast >= 56) {
+      // 双线均在 56 分以上 -> 明确处于【🟢 入场区间】
+      entryState = 'OK';
+      zoneName = '🟢 入场区间';
+      entryTxt = '🟢 适合入场(双线共振)';
+      entryCls = 'RANGE';
+      entryCol = '#2ecc8f';
+      entryReason = `快线(${entryFast})与慢均线EMA8(${entrySlow})稳居入场区(≥56)，适合双向马丁运行`;
+    } else if (entrySlow >= 55 && entryFast >= 43 && p.effDrop3 < 12) {
+      // 快线短暂掉下56分，但慢均线(EMA8)依然稳守在 >=55分 -> 典型“闪跌假毛刺”，均线护航中，别乱离场！
+      entryState = 'OK';
+      zoneName = '🛡️ 均线护航(假跌过滤)';
+      entryTxt = '🛡️ 均线未破·拿住等回调';
+      entryCls = 'RANGE';
+      entryCol = '#38bdf8';
+      entryReason = `快线(${entryFast})短暂波动，但慢均线EMA8(${entrySlow})仍稳守安全区(≥55)，属假跌毛刺，无需离场`;
+    } else if ((entrySlow < 46 && entryFast < 46) || (entryFast < 38 && entrySlow < 51) || p.effDrop3 >= 14) {
+      // 双线跌破 46 分离场线，或连续重挫击穿均线 -> 真正进入【🔴 离场/锁仓区间】
+      entryState = 'NO';
+      zoneName = '🔴 离场/锁仓区间';
+      entryTxt = '🔴 离场/暂停加仓(双线破位)';
+      entryCls = 'TREND';
+      entryCol = '#ef5b5b';
+      entryReason = `快线(${entryFast})与慢均线EMA8(${entrySlow})双双跌入离场区(<46)，谨防无回调单边，建议暂停逆势加仓或锁仓`;
+    } else {
+      // 处于 46 ~ 56 之间的缓冲带 -> 【🟡 缓冲/等回调区间】
+      entryState = 'WAIT';
+      zoneName = '🟡 缓冲/等回调区';
+      entryTxt = '🟡 有单等回调·空仓观望';
+      entryCls = 'MIXED';
+      entryCol = '#f0b429';
+      entryReason = `双线处于46~56过渡缓冲带(快线${entryFast}/均线${entrySlow})，有单者等$2.7反抽平仓，空仓暂缓新开`;
+    }
+
+    return {
+      ...p,
+      entryScore,
+      entryFast,
+      entrySlow,
+      entryState,
+      zoneName,
+      entryTxt,
+      entryCls,
+      entryCol,
+      entryReason
+    };
+  });
+
+  // 第三步：标记区间切换信号点（用于 K 线与双线图上标注「🟢进场」与「🔴离场」）
+  for (let i = 1; i < out.length; i++) {
+    const cur = out[i], prv = out[i - 1];
+    if (cur.entryState === 'OK' && prv.entryState !== 'OK' && cur.entryFast >= 57) {
+      cur.switchTag = 'ENTRY'; // 切换到入场区
+    } else if (cur.entryState === 'NO' && prv.entryState !== 'NO') {
+      cur.switchTag = 'EXIT';  // 切换到离场区
+    }
+  }
+  return out;
 }
 
-// 一图一屏大型 SVG 图表 (含: ①震荡指数+单次急跌标记 ②时间1:1对齐的「是否适合入场」时序图 ③可选K线蜡烛图+布林带)
+let ENTRY_CHART_TF = '5M'; // 独立「入场/离场双线 × K线对照大图」默认周期
+const ENTRY_DEDICATED_PTS = {};
+
+window.setEntryChartTf = function(tf) {
+  ENTRY_CHART_TF = tf;
+  if (D) render();
+};
+
+// 专门的「🚦 入场/离场双线历史走势 × 黄金 K 线 1:1 上下对照大图」（上半图：黄金K线+入场/离场背景区间色带；下半图：快线+EMA8慢均线+入场/离场区间标注）
+function buildEntryKLineChartSvg(rawArr, tf) {
+  if (!rawArr || rawArr.length < 2) return '<div class="mut">暂无该周期历史数据</div>';
+  const arr = calcEntrySeries(rawArr, TOL);
+  const W = 1200, H = 560, L = 66, R = 138, T = 26, B = 44;
+  const cw = W - L - R, n = arr.length;
+  const xOf = (i) => L + (i / (n - 1)) * cw;
+
+  // 上半屏 (canTop ~ canBot): 黄金 K 线图 + 入场/离场区间直投背景色带
+  // 下半屏 (entTop ~ entBot): 入场快线(青白) + EMA8慢均线(亮金粗线) + 入场区间(≥56绿) / 缓冲区间(46-56黄) / 离场区间(<46红)
+  const canTop = T, canH = 235, canBot = canTop + canH;
+  const entTop = canBot + 36, entH = H - B - entTop, entBot = entTop + entH;
+
+  let pMin = Infinity, pMax = -Infinity;
+  arr.forEach((p) => {
+    const hi = Math.max(p.h ?? p.c ?? -Infinity, p.bbU ?? -Infinity);
+    const lo = Math.min(p.l ?? p.c ?? Infinity, p.bbL ?? Infinity);
+    if (isFinite(hi) && hi > pMax) pMax = hi;
+    if (isFinite(lo) && lo < pMin) pMin = lo;
+  });
+  if (pMax <= pMin) { pMax += 1; pMin -= 1; }
+  const pad = (pMax - pMin) * 0.08;
+  pMax += pad; pMin -= pad;
+
+  const yPrice = (v) => canTop + (1 - (v - pMin) / (pMax - pMin)) * canH;
+  const yEnt = (v) => entTop + (1 - v / 100) * entH;
+
+  ENTRY_DEDICATED_PTS[tf] = { arr, W, H, L, R, T, B, cw, canTop, canH, canBot, entTop, entH, entBot, pMin, pMax };
+
+  // 1) K线背景：把当时的「🟢入场区间 / 🔴离场区间」直接以半透明色带投射在 K 线背后，一眼看清哪段K线该做、哪段K线该停！
+  const colW = cw / Math.max(1, n - 1);
+  const kZoneBands = arr.map((p, i) => {
+    const x = Math.max(L, xOf(i) - colW / 2);
+    const w = Math.min(W - R - x, colW + 0.6);
+    const bg = p.entryState === 'OK' ? '#10b981' : p.entryState === 'NO' ? '#f43f5e' : '#f59e0b';
+    const op = p.entryState === 'OK' ? 0.08 : p.entryState === 'NO' ? 0.13 : 0.04;
+    return `<rect x="${x.toFixed(1)}" y="${canTop}" width="${Math.max(1, w).toFixed(1)}" height="${canH}" fill="${bg}" opacity="${op}"/>`;
+  }).join('');
+
+  // 2) K线价格网格刻度与布林带
+  const pTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const pv = pMin + (1 - f) * (pMax - pMin), py = (canTop + f * canH).toFixed(1);
+    return `<line x1="${L}" y1="${py}" x2="${W - R}" y2="${py}" stroke="#262d3b" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>
+      <text x="${L - 8}" y="${+py + 4}" text-anchor="end" fill="#8a93a6" font-size="11">${pv.toFixed(1)}</text>
+      <text x="${W - R + 6}" y="${+py + 4}" fill="#cbd5e1" font-size="11">${pv.toFixed(2)}$</text>`;
+  }).join('');
+
+  const bbValid = arr.map((p, i) => ({ p, i })).filter(({ p }) => p.bbU != null && p.bbM != null && p.bbL != null);
+  let bbSvg = '';
+  if (bbValid.length >= 2) {
+    const uPts = bbValid.map(({ p, i }) => `${xOf(i).toFixed(1)},${yPrice(p.bbU).toFixed(1)}`);
+    const mPts = bbValid.map(({ p, i }) => `${xOf(i).toFixed(1)},${yPrice(p.bbM).toFixed(1)}`);
+    const lPts = bbValid.map(({ p, i }) => `${xOf(i).toFixed(1)},${yPrice(p.bbL).toFixed(1)}`);
+    bbSvg = `<polyline fill="none" stroke="#58a6ff" stroke-width="1.2" points="${uPts.join(' ')}" opacity="0.75"/>
+      <polyline fill="none" stroke="#f0b429" stroke-width="1.3" stroke-dasharray="4,3" points="${mPts.join(' ')}" opacity="0.85"/>
+      <polyline fill="none" stroke="#58a6ff" stroke-width="1.2" points="${lPts.join(' ')}" opacity="0.75"/>`;
+  }
+
+  // 3) K线蜡烛图 + 入场/离场切换标签直接标在 K 线上
+  const bw = Math.max(2.8, Math.min(8.5, cw / n * 0.68));
+  let lastTagIdx = -10;
+  const candles = arr.map((p, i) => {
+    const x = xOf(i), o = p.o ?? p.c, c = p.c, h = p.h ?? Math.max(o, c), l = p.l ?? Math.min(o, c);
+    const up = c >= o, col = up ? '#2ecc8f' : '#ef5b5b';
+    const yh = yPrice(h).toFixed(1), yl = yPrice(l).toFixed(1);
+    const yo = yPrice(o), yc = yPrice(c), yt = Math.min(yo, yc).toFixed(1), bh = Math.max(1.5, Math.abs(yc - yo)).toFixed(1);
+    let swSvg = '';
+    if (p.switchTag && (i - lastTagIdx >= 6)) {
+      lastTagIdx = i;
+      const isEn = p.switchTag === 'ENTRY';
+      const ty = isEn ? Math.min(canBot - 8, +yl + 14) : Math.max(canTop + 14, +yh - 8);
+      swSvg = `<text x="${x.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" fill="${isEn ? '#34d399' : '#fda4af'}" font-size="10.5" font-weight="bold">${isEn ? '▲入场区' : '▼离场区'}</text>`;
+    }
+    return `<line x1="${x.toFixed(1)}" y1="${yh}" x2="${x.toFixed(1)}" y2="${yl}" stroke="${col}" stroke-width="1.2"/>
+      <rect x="${(x - bw / 2).toFixed(1)}" y="${yt}" width="${bw.toFixed(1)}" height="${bh}" fill="${col}"/>${swSvg}`;
+  }).join('');
+
+  // 4) 下半屏：入场指数「快线 + EMA8慢均线」+ 清晰标注【🟢入场区间 ≥56】、【🟡缓冲等回调区 46-56】、【🔴离场区间 <46】
+  const eY56 = yEnt(56), eY46 = yEnt(46);
+  const entTicks = [100, 75, 56, 46, 25, 0].map((v) => {
+    const y = yEnt(v).toFixed(1);
+    const col = v === 56 ? '#10b981' : v === 46 ? '#f43f5e' : '#262d3b';
+    const sw = (v === 56 || v === 46) ? '1.8' : '1';
+    const dash = (v === 100 || v === 0) ? '' : 'stroke-dasharray="5,4"';
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="${col}" stroke-width="${sw}" ${dash} opacity="0.85"/>
+      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="${v === 56 ? '#34d399' : v === 46 ? '#fb7185' : '#8a93a6'}" font-size="11" font-weight="${v === 56 || v === 46 ? 'bold' : 'normal'}">${v}</text>`;
+  }).join('');
+
+  // 右侧醒目区间说明标签
+  const zoneRightLabels = `
+    <rect x="${W - R + 6}" y="${((entTop + eY56) / 2 - 11).toFixed(1)}" width="126" height="22" rx="4" fill="rgba(16,185,129,0.18)" stroke="#10b981" stroke-width="1"/>
+    <text x="${W - R + 69}" y="${((entTop + eY56) / 2 + 4).toFixed(1)}" text-anchor="middle" fill="#34d399" font-size="11" font-weight="bold">🟢 入场区间 (≥56分)</text>
+    <rect x="${W - R + 6}" y="${((eY56 + eY46) / 2 - 10).toFixed(1)}" width="126" height="20" rx="4" fill="rgba(245,158,11,0.15)" stroke="#f59e0b" stroke-width="0.8"/>
+    <text x="${W - R + 69}" y="${((eY56 + eY46) / 2 + 4).toFixed(1)}" text-anchor="middle" fill="#fbbf24" font-size="10.5" font-weight="bold">🟡 缓冲/等回调(46-56)</text>
+    <rect x="${W - R + 6}" y="${((eY46 + entBot) / 2 - 11).toFixed(1)}" width="126" height="22" rx="4" fill="rgba(244,63,94,0.18)" stroke="#f43f5e" stroke-width="1"/>
+    <text x="${W - R + 69}" y="${((eY46 + entBot) / 2 + 4).toFixed(1)}" text-anchor="middle" fill="#fb7185" font-size="11" font-weight="bold">🔴 离场区间 (&lt;46分)</text>
+  `;
+
+  // X轴时间垂直对齐线
+  const step = Math.max(1, Math.floor((n - 1) / 8));
+  const idxs = [];
+  for (let i = 0; i < n - 1; i += step) idxs.push(i);
+  idxs.push(n - 1);
+  const xGrid = idxs.map((i) => {
+    const x = xOf(i).toFixed(1), tm = fmtBJ(arr[i].t), p = arr[i];
+    return `<line x1="${x}" y1="${canTop}" x2="${x}" y2="${entBot}" stroke="#262d3b" stroke-width="1" stroke-dasharray="2,4"/>
+      <text x="${x}" y="${entBot + 18}" text-anchor="middle" fill="#c6cddb" font-size="11.5">${tm}</text>
+      <text x="${x}" y="${entBot + 33}" text-anchor="middle" fill="${p.entryCol}" font-size="10.5" font-weight="bold">${p.zoneName.slice(0, 6)}</text>`;
+  }).join('');
+
+  // 绘制下半屏底部状态色柱 + 快线(青白 #38bdf8) + 慢均线 EMA8(亮金粗线 #fbbf24)
+  const fastPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yEnt(p.entryFast).toFixed(1)}`).join(' ');
+  const slowPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yEnt(p.entrySlow).toFixed(1)}`).join(' ');
+  const ebw = Math.max(2.5, Math.min(7.5, cw / n * 0.65));
+  const entBars = arr.map((p, i) => {
+    const x = xOf(i), y = yEnt(p.entryFast), h = Math.max(2, entBot - y);
+    return `<rect x="${(x - ebw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${ebw.toFixed(1)}" height="${h.toFixed(1)}" fill="${p.entryCol}" opacity="0.22" rx="1"/>`;
+  }).join('');
+
+  const lastP = arr[n - 1];
+  const lastX = xOf(n - 1).toFixed(1);
+  const lastFastY = yEnt(lastP.entryFast).toFixed(1);
+  const lastSlowY = yEnt(lastP.entrySlow).toFixed(1);
+
+  return `<svg class="big-svg" id="svg-entry-ded-${tf}" style="height:540px;min-height:480px;max-height:600px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onEntryDedicatedMove(event,'${tf}')" onmouseleave="onEntryDedicatedLeave('${tf}')">
+    <!-- 上半屏：黄金 K 线图 + 入场/离场历史背景直投 -->
+    <text x="${L + 6}" y="${canTop - 8}" fill="#e8b84a" font-size="12.5" font-weight="bold">🕯️ [${tf}周期] 现货黄金 K 线走势 × 历史入场/离场区间直投对照 (绿底=处于🟢入场区间 · 红底=处于🔴离场区间 · 黄虚线=MA20中轨)</text>
+    ${kZoneBands}${pTicks}${xGrid}${bbSvg}${candles}
+
+    <!-- 分割线与下半屏标题 -->
+    <line x1="${L}" y1="${canBot + 14}" x2="${W - R}" y2="${canBot + 14}" stroke="#334155" stroke-width="1.5"/>
+    <text x="${L + 6}" y="${entTop - 8}" fill="#e8b84a" font-size="12.5" font-weight="bold">🚦 [${tf}周期] 入场/离场「双线平滑指数」历史走势 (亮金粗线 = EMA8决策慢均线[定海神针] · 青白实线 = 3周期抗毛刺快线 · 蓝柱 = 均线护航过滤假跌)</text>
+
+    <!-- 下半屏：三大区间清晰背景色带 (≥56入场区间 / 46-56缓冲等回调区 / <46离场区间) -->
+    <rect x="${L}" y="${entTop}" width="${cw}" height="${eY56 - entTop}" fill="#10b981" opacity="0.11"/>
+    <rect x="${L}" y="${eY56}" width="${cw}" height="${eY46 - eY56}" fill="#f59e0b" opacity="0.07"/>
+    <rect x="${L}" y="${eY46}" width="${cw}" height="${entBot - eY46}" fill="#f43f5e" opacity="0.12"/>
+    <text x="${L + 10}" y="${entTop + 18}" fill="#34d399" font-size="11.5" font-weight="bold" opacity="0.85">▲ 🟢 入场安全区间 (≥56分：双线在此区间内可安心开启双向马丁)</text>
+    <text x="${L + 10}" y="${entBot - 8}" fill="#fda4af" font-size="11.5" font-weight="bold" opacity="0.85">▼ 🔴 离场/停EA高危区间 (&lt;46分：双线跌入此区代表持续单边，暂停逆势加仓或锁仓)</text>
+
+    ${entTicks}${zoneRightLabels}${entBars}
+    <!-- 青白色抗毛刺快线 (entryFast) -->
+    <polyline fill="none" stroke="#38bdf8" stroke-width="1.9" points="${fastPts}" opacity="0.92"/>
+    <!-- 亮金色粗实线 EMA8 慢均线 (entrySlow) -->
+    <polyline fill="none" stroke="#fbbf24" stroke-width="3.2" points="${slowPts}"/>
+    <circle cx="${lastX}" cy="${lastFastY}" r="4.5" fill="#38bdf8" stroke="#0f1218" stroke-width="1.2"/>
+    <circle cx="${lastX}" cy="${lastSlowY}" r="6" fill="#fbbf24" stroke="#0f1218" stroke-width="1.5"/>
+    <text x="${(+lastX - 10).toFixed(1)}" y="${Math.max(entTop + 16, Math.min(entBot - 10, +lastSlowY - 10)).toFixed(1)}" text-anchor="end" fill="#fbbf24" font-size="12.5" font-weight="bold">当前慢均线 ${lastP.entrySlow}分 | 快线 ${lastP.entryFast}分 (${lastP.zoneName})</text>
+
+    <!-- 1:1 垂直联动十字准星 -->
+    <g id="xh-eded-${tf}" style="display:none;pointer-events:none">
+      <line id="xh-eded-v-${tf}" x1="0" y1="${canTop}" x2="0" y2="${entBot}" stroke="#ffffff" stroke-width="1.2" stroke-dasharray="4,4" opacity="0.9"/>
+      <line id="xh-eded-h-${tf}" x1="${L}" y1="0" x2="${W - R}" y2="0" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,4" opacity="0.75"/>
+      <circle id="xh-eded-kdot-${tf}" cx="0" cy="0" r="5.5" fill="#ffffff" stroke="#0f1218" stroke-width="2"/>
+      <circle id="xh-eded-fdot-${tf}" cx="0" cy="0" r="5" fill="#38bdf8" stroke="#ffffff" stroke-width="1.5"/>
+      <circle id="xh-eded-sdot-${tf}" cx="0" cy="0" r="6.5" fill="#fbbf24" stroke="#ffffff" stroke-width="2"/>
+      <rect id="xh-eded-xbg-${tf}" x="0" y="${entBot + 3}" width="124" height="20" rx="4" fill="#fbbf24"/>
+      <text id="xh-eded-xtxt-${tf}" x="0" y="${entBot + 17}" text-anchor="middle" fill="#0f172a" font-size="11.5" font-weight="bold"></text>
+      <rect id="xh-eded-tbg-${tf}" x="0" y="0" width="530" height="74" rx="6" fill="rgba(15,18,26,0.96)" stroke="#fbbf24" stroke-width="1.3"/>
+      <text id="xh-eded-t1-${tf}" x="0" y="0" fill="#fbbf24" font-size="12.5" font-weight="bold"></text>
+      <text id="xh-eded-t2-${tf}" x="0" y="0" fill="#34d399" font-size="12.5" font-weight="bold"></text>
+      <text id="xh-eded-t3-${tf}" x="0" y="0" fill="#e2e8f0" font-size="12"></text>
+    </g>
+  </svg>`;
+}
+
+window.onEntryDedicatedMove = function(ev, tf) {
+  const cfg = ENTRY_DEDICATED_PTS[tf];
+  const svg = $('svg-entry-ded-' + tf), g = $('xh-eded-' + tf);
+  if (!cfg || !svg || !g) return;
+  const rect = svg.getBoundingClientRect();
+  const mx = (ev.clientX - rect.left) / rect.width * cfg.W;
+  const my = (ev.clientY - rect.top) / rect.height * cfg.H;
+  const n = cfg.arr.length;
+  const idx = Math.max(0, Math.min(n - 1, Math.round((mx - cfg.L) / cfg.cw * (n - 1))));
+  const p = cfg.arr[idx];
+  const x = cfg.L + (idx / (n - 1)) * cfg.cw;
+  const yK = cfg.canTop + (1 - (p.c - cfg.pMin) / (cfg.pMax - cfg.pMin)) * cfg.canH;
+  const yF = cfg.entTop + (1 - p.entryFast / 100) * cfg.entH;
+  const yS = cfg.entTop + (1 - p.entrySlow / 100) * cfg.entH;
+  const hy = Math.max(cfg.canTop, Math.min(cfg.entBot, my));
+
+  g.style.display = 'block';
+  $('xh-eded-v-' + tf).setAttribute('x1', x); $('xh-eded-v-' + tf).setAttribute('x2', x);
+  $('xh-eded-h-' + tf).setAttribute('y1', hy); $('xh-eded-h-' + tf).setAttribute('y2', hy);
+  $('xh-eded-kdot-' + tf).setAttribute('cx', x); $('xh-eded-kdot-' + tf).setAttribute('cy', yK);
+  $('xh-eded-fdot-' + tf).setAttribute('cx', x); $('xh-eded-fdot-' + tf).setAttribute('cy', yF);
+  $('xh-eded-sdot-' + tf).setAttribute('cx', x); $('xh-eded-sdot-' + tf).setAttribute('cy', yS);
+
+  const tm = fmtBJ(p.t);
+  const xClamped = Math.max(cfg.L + 62, Math.min(cfg.W - cfg.R - 62, x));
+  $('xh-eded-xbg-' + tf).setAttribute('x', xClamped - 62);
+  $('xh-eded-xtxt-' + tf).setAttribute('x', xClamped);
+  $('xh-eded-xtxt-' + tf).textContent = tm;
+
+  const boxW = 530, boxH = 74;
+  const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
+  const by = Math.max(cfg.canTop + 6, Math.min(cfg.entBot - boxH - 6, hy - 36));
+  $('xh-eded-tbg-' + tf).setAttribute('x', bx); $('xh-eded-tbg-' + tf).setAttribute('y', by);
+  const t1 = $('xh-eded-t1-' + tf), t2 = $('xh-eded-t2-' + tf), t3 = $('xh-eded-t3-' + tf);
+  t1.setAttribute('x', bx + 10); t1.setAttribute('y', by + 20);
+  t2.setAttribute('x', bx + 10); t2.setAttribute('y', by + 42);
+  t3.setAttribute('x', bx + 10); t3.setAttribute('y', by + 62);
+  t1.textContent = `🕒 ${tm} | 黄金K线: 开$${f2(p.o)} 高$${f2(p.h)} 低$${f2(p.l)} 收$${f2(p.c)} (单根波幅 $${f2(p.barSpan)} / 14根波幅 $${f2(p.span)})`;
+  t2.setAttribute('fill', p.entryCol);
+  t2.textContent = `🚦 所在区间: 【${p.zoneName}】 | 慢均线(EMA8): ${p.entrySlow}分  ·  抗毛刺快线: ${p.entryFast}分`;
+  t3.textContent = `📌 决策原因: ${p.entryReason}`;
+};
+
+window.onEntryDedicatedLeave = function(tf) {
+  const g = $('xh-eded-' + tf);
+  if (g) g.style.display = 'none';
+};
+
+// 一图一屏大型 SVG 图表 (含: ①震荡指数+单次急跌标记 ②时间1:1对齐的「是否适合入场」双线时序图 ③可选K线蜡烛图+布林带)
 function bigChartSvg(rawArr, tf) {
   if (!rawArr || rawArr.length < 2) return '<div class="mut">暂无趋势数据</div>';
   const showC = !!SHOW_CANDLE[tf];
@@ -1466,7 +1766,7 @@ function bigChartSvg(rawArr, tf) {
   const cw = W - L - R, n = arr.length;
   const xOf = (i) => L + (i / (n - 1)) * cw;
 
-  // 面板1: 震荡指数走势图 | 面板2: 时间轴1:1对齐的「是否适合入场」时序图 | 面板3(可选): 黄金K线蜡烛图+布林带
+  // 面板1: 震荡指数走势图 | 面板2: 时间轴1:1对齐的「是否适合入场(快线+EMA8慢均线)」时序图 | 面板3(可选): 黄金K线蜡烛图+布林带
   const idxTop = T, idxH = showC ? 210 : 255, idxBot = idxTop + idxH;
   const entTop = idxBot + 32, entH = showC ? 155 : 175, entBot = entTop + entH;
   const canTop = entBot + 32, canH = showC ? (H - B - canTop) : 0, canBot = canTop + canH;
@@ -1518,7 +1818,7 @@ function bigChartSvg(rawArr, tf) {
   const gridBottom = showC ? canBot : entBot;
   const xTicks = idxs.map((i) => {
     const x = xOf(i).toFixed(1), tm = fmtBJ(arr[i].t), p = arr[i];
-    const stShort = p.entryState === 'OK' ? '🟢可入' : p.entryState === 'WAIT' ? '🟡观望' : '🔴禁入';
+    const stShort = p.entryState === 'OK' ? '🟢入场区' : p.entryState === 'WAIT' ? '🟡缓冲' : '🔴离场区';
     return `<line x1="${x}" y1="${T}" x2="${x}" y2="${gridBottom}" stroke="#262d3b" stroke-width="1" stroke-dasharray="2,4"/>
       <line x1="${x}" y1="${gridBottom}" x2="${x}" y2="${gridBottom + 5}" stroke="#8a93a6" stroke-width="1"/>
       <text x="${x}" y="${gridBottom + 20}" text-anchor="middle" fill="#c6cddb" font-size="12">${tm}</text>
@@ -1541,41 +1841,46 @@ function bigChartSvg(rawArr, tf) {
       (isLast ? `<text x="${(x - 10).toFixed(1)}" y="${Math.max(idxTop + 16, y - 12).toFixed(1)}" text-anchor="end" fill="#fff" font-size="13" font-weight="bold">当前 ${p.adjV} (${p.adjV < 45 ? dirTxt : '震荡/过渡'})</text>` : '');
   }).join('');
 
-  // 面板2: 时间轴 1:1 对齐的「是否适合入场」时序图 (含绿/黄/红入场信号柱 + 入场适宜度曲线 + 单次急跌禁入警示)
-  const eY60 = yEnt(60), eY45 = yEnt(45);
-  const entTicks = [100, 60, 45, 0].map((v) => {
+  // 面板2: 时间轴 1:1 对齐的「入场/离场双线指数 (快线+EMA8慢均线)」时序图
+  const eY56 = yEnt(56), eY46 = yEnt(46);
+  const entTicks = [100, 56, 46, 0].map((v) => {
     const y = yEnt(v).toFixed(1);
-    const col = v === 60 ? '#2ecc8f' : v === 45 ? '#ef5b5b' : '#262d3b';
+    const col = v === 56 ? '#2ecc8f' : v === 46 ? '#ef5b5b' : '#262d3b';
     const dash = (v === 100 || v === 0) ? '' : 'stroke-dasharray="4,4"';
-    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="${col}" stroke-width="1" ${dash} opacity="0.65"/>
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="${col}" stroke-width="1.2" ${dash} opacity="0.75"/>
       <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#8a93a6" font-size="11">${v}</text>`;
   }).join('');
   const entRLabels = [
-    [(entTop + eY60) / 2, '🟢适合入场(≥60)', '#2ecc8f'],
-    [(eY60 + eY45) / 2, '🟡谨慎观望(45-60)', '#f0b429'],
-    [(eY45 + entBot) / 2, '🔴禁止入场(<45)', '#ef5b5b'],
+    [(entTop + eY56) / 2, '🟢入场区间(≥56)', '#2ecc8f'],
+    [(eY56 + eY46) / 2, '🟡缓冲等回调(46-56)', '#f0b429'],
+    [(eY46 + entBot) / 2, '🔴离场区间(<46)', '#ef5b5b'],
   ].map(([y, txt, c]) => `<text x="${W - R + 6}" y="${y + 4}" fill="${c}" font-size="11" font-weight="600">${txt}</text>`).join('');
 
   const ebw = Math.max(3, Math.min(8.5, cw / n * 0.72));
   const entBars = arr.map((p, i) => {
-    const x = xOf(i), y = yEnt(p.entryScore), h = Math.max(2, entBot - y);
-    return `<rect x="${(x - ebw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${ebw.toFixed(1)}" height="${h.toFixed(1)}" fill="${p.entryCol}" opacity="0.38" rx="1"/>`;
+    const x = xOf(i), y = yEnt(p.entryFast), h = Math.max(2, entBot - y);
+    return `<rect x="${(x - ebw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${ebw.toFixed(1)}" height="${h.toFixed(1)}" fill="${p.entryCol}" opacity="0.28" rx="1"/>`;
   }).join('');
-  const entPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yEnt(p.entryScore).toFixed(1)}`).join(' ');
+  const entFastPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yEnt(p.entryFast).toFixed(1)}`).join(' ');
+  const entSlowPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yEnt(p.entrySlow).toFixed(1)}`).join(' ');
   const entDots = arr.map((p, i) => {
-    const x = xOf(i), y = yEnt(p.entryScore), isLast = i === n - 1;
-    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${isLast ? 5.5 : 2.2}" fill="${p.entryCol}" stroke="#0f1218" stroke-width="1"/>` +
-      (isLast ? `<text x="${(x - 10).toFixed(1)}" y="${Math.max(entTop + 15, y - 10).toFixed(1)}" text-anchor="end" fill="${p.entryCol}" font-size="13" font-weight="bold">当前: ${p.entryTxt} (${p.entryScore}分)</text>` : '');
+    const x = xOf(i), y = yEnt(p.entrySlow), isLast = i === n - 1;
+    return isLast
+      ? `<circle cx="${x.toFixed(1)}" cy="${yEnt(p.entryFast).toFixed(1)}" r="4.5" fill="#38bdf8" stroke="#0f1218" stroke-width="1"/>
+         <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5.5" fill="#fbbf24" stroke="#0f1218" stroke-width="1.2"/>
+         <text x="${(x - 10).toFixed(1)}" y="${Math.max(entTop + 15, y - 10).toFixed(1)}" text-anchor="end" fill="${p.entryCol}" font-size="12.5" font-weight="bold">当前: ${p.zoneName} (均线${p.entrySlow}/快线${p.entryFast})</text>`
+      : '';
   }).join('');
 
   const entryPanelSvg = `
     <line x1="${L}" y1="${idxBot + 14}" x2="${W - R}" y2="${idxBot + 14}" stroke="#262d3b" stroke-width="1.5"/>
-    <text x="${L + 6}" y="${entTop - 7}" fill="#e8b84a" font-size="12" font-weight="bold">🚦 是否适合网格入场 · 时序图 (与上方震荡指数时间点 1:1 严格对齐 | 绿≥60适合入场 · 黄45-60观望 · 红&lt;45或指数单次急跌禁止入场)</text>
-    <rect x="${L}" y="${entTop}" width="${cw}" height="${eY60 - entTop}" fill="#2ecc8f" opacity="0.07"/>
-    <rect x="${L}" y="${eY60}" width="${cw}" height="${eY45 - eY60}" fill="#f0b429" opacity="0.05"/>
-    <rect x="${L}" y="${eY45}" width="${cw}" height="${entBot - eY45}" fill="#ef5b5b" opacity="0.07"/>
+    <text x="${L + 6}" y="${entTop - 7}" fill="#e8b84a" font-size="12" font-weight="bold">🚦 入场/离场双线平滑时序图 (亮金粗线=EMA8慢均线 · 青白线=抗毛刺快线 | 🟢入场区间≥56 · 🟡缓冲等回调46-56 · 🔴离场区间&lt;46)</text>
+    <rect x="${L}" y="${entTop}" width="${cw}" height="${eY56 - entTop}" fill="#2ecc8f" opacity="0.08"/>
+    <rect x="${L}" y="${eY56}" width="${cw}" height="${eY46 - eY56}" fill="#f0b429" opacity="0.05"/>
+    <rect x="${L}" y="${eY46}" width="${cw}" height="${entBot - eY46}" fill="#ef5b5b" opacity="0.08"/>
     ${entTicks}${entRLabels}${entBars}
-    <polyline fill="none" stroke="#ffffff" stroke-width="1.8" points="${entPts}" opacity="0.85"/>
+    <polyline fill="none" stroke="#38bdf8" stroke-width="1.6" points="${entFastPts}" opacity="0.9"/>
+    <polyline fill="none" stroke="#fbbf24" stroke-width="2.8" points="${entSlowPts}"/>
     ${entDots}`;
 
   // 面板3: 黄金价格 K 线蜡烛图 + 布林带 BB(20,2) 子面板 (仅当用户点击开启时渲染)
@@ -2506,7 +2811,22 @@ function render() {
       </div>
       <div class="tfidx-grid">${tfCards}</div>`;
 
-    // 渲染「🚦 多周期是否适合入场 · 时序信号对照图 & 震荡指数单次跳水监控」
+    // 渲染「🚦 入场/离场双线指数 × 黄金 K 线 1:1 上下对照历史大图」(#entrySec)
+    const curEntTf = ENTRY_CHART_TF || '5M';
+    const curEntSpRaw = (m.sparks && m.sparks[curEntTf]) || [];
+    const curEntSer = calcEntrySeries(curEntSpRaw, TOL);
+    const curEntLast = curEntSer[curEntSer.length - 1] || { entryFast: '-', entrySlow: '-', zoneName: '-', entryTxt: '-', entryCls: 'MIXED', entryReason: '-' };
+    const filteredFakeDropCnt = curEntSer.filter((p) => p.zoneName && p.zoneName.includes('均线护航')).length;
+    const okZonePct = curEntSer.length ? Math.round(curEntSer.filter((p) => p.entryState === 'OK').length / curEntSer.length * 100) : 0;
+    const exitZonePct = curEntSer.length ? Math.round(curEntSer.filter((p) => p.entryState === 'NO').length / curEntSer.length * 100) : 0;
+
+    const entryTfBtns = ['1M', '5M', '15M', '1H', '4H'].map((k) => {
+      const spK = calcEntrySeries((m.sparks && m.sparks[k]) || [], TOL);
+      const lK = spK[spK.length - 1];
+      const badge = lK ? `${lK.entrySlow}分` : '';
+      return `<button class="sm ${curEntTf === k ? 'on pri' : ''}" onclick="setEntryChartTf('${k}')">${k}${k === '5M' ? '(主推)' : ''} ${badge}</button>`;
+    }).join('');
+
     const entryRowsHtml = ['1M', '5M', '15M', '1H', '4H'].map((k) => {
       const t = d.timeframes[k];
       if (!t) return '';
@@ -2515,39 +2835,60 @@ function render() {
       const lastE = sp[sp.length - 1];
       const okCnt = sp.filter((p) => p.entryState === 'OK').length;
       const okPct = Math.round(okCnt / sp.length * 100);
-      const plungeCnt = sp.filter((p) => p.effDrop1 >= 7).length;
+      const fakeCnt = sp.filter((p) => p.zoneName && p.zoneName.includes('均线护航')).length;
       const strip = sp.map((p) => {
         const tm = fmtBJ(p.t);
-        const hPct = Math.max(25, p.entryScore);
-        const plungeMark = p.effDrop1 >= 7 ? 'border-top:2px solid #fff;' : '';
-        return `<div style="flex:1;height:28px;display:flex;align-items:flex-end;background:#0f1218" title="${tm} | ${p.entryTxt} (${p.entryScore}分) | 震荡指数:${p.adjV}分(单次Δ${p.effChg1 >= 0 ? '+' : ''}${p.effChg1}分) | K线:${f2(p.c)}$(单根波幅${f2(p.barSpan)}$)"><div style="width:100%;height:${hPct}%;background:${p.entryCol};opacity:0.88;${plungeMark}"></div></div>`;
+        const hPct = Math.max(25, p.entrySlow);
+        return `<div style="flex:1;height:26px;display:flex;align-items:flex-end;background:#0f1218" title="${tm} | ${p.zoneName} | 慢均线EMA8:${p.entrySlow}分 / 快线:${p.entryFast}分 | K线:${f2(p.c)}$"><div style="width:100%;height:${hPct}%;background:${p.entryCol};opacity:0.88"></div></div>`;
       }).join('');
       const fTm = fmtBJ(sp[0].t), lTm = fmtBJ(sp[sp.length - 1].t);
       const isFast = k === '1M' || k === '5M';
-      return `<div style="padding:10px 12px;background:#131720;border:1px solid var(--bd);border-radius:10px;margin-bottom:10px;cursor:pointer" onclick="location.hash='#chart-${k}'" title="点击查看 ${k} 震荡指数与是否适合入场同步大图">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+      return `<div style="padding:9px 12px;background:#131720;border:1px solid ${curEntTf === k ? 'var(--gold)' : 'var(--bd)'};border-radius:9px;margin-bottom:8px;cursor:pointer" onclick="setEntryChartTf('${k}')" title="点击在上方大图中查看 ${k} 周期 K线 × 入场双线历史对照图">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:5px">
           <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
             <b>${k} 周期 ${isFast ? '<span class="live-dot"></span>' : ''}</b>
-            <span class="pill ${lastE.entryCls}">${lastE.entryTxt} (适宜度 ${lastE.entryScore}分)</span>
-            <span class="mut sm">原因: <b style="color:var(--tx)">${lastE.entryReason}</b></span>
+            <span class="pill ${lastE.entryCls}">${lastE.zoneName} (慢均线 ${lastE.entrySlow}分 / 快线 ${lastE.entryFast}分)</span>
+            <span class="mut sm">${lastE.entryReason}</span>
           </div>
           <div class="sm" style="display:flex;align-items:center;flex-wrap:wrap;gap:10px">
-            <span>当前单次变化: <b class="${lastE.effDrop1 >= 7 ? 'err' : ''}">${lastE.effChg1 >= 0 ? '+' : ''}${lastE.effChg1}分</b></span>
-            <span>14根最大单次跌: <b class="${(t.maxDrop14 || 0) >= 7 ? 'err' : ''}">-${t.maxDrop14 ?? 0}分</b><span class="mut">(K线波幅${f2(t.maxDropBarSpan14)}$)</span></span>
-            <span class="mut">近120根适合入场率: <b>${okPct}%</b> (急跌跳水 ${plungeCnt} 次)</span>
+            <span class="mut">入场区间占比: <b style="color:#34d399">${okPct}%</b> (均线过滤假跌 <b style="color:#38bdf8">${fakeCnt}次</b>)</span>
           </div>
         </div>
         <div style="display:flex;gap:1px;border-radius:5px;overflow:hidden;border:1px solid #262d3b">${strip}</div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:3px"><span>${fTm}</span><span>← 鼠标悬停色块查看该时间点入场结论 · 点击展开 ${k} 大图 →</span><span>${lTm} (当前)</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:3px"><span>${fTm}</span><span>← 点击切换上方 K线×双线大图为 ${k} 周期 →</span><span>${lTm} (当前)</span></div>
       </div>`;
     }).join('');
-    $('entrySec').innerHTML = `<h2>🚦 是否适合入场 · 多周期时序信号总览 & 震荡指数单次跳水监控 <span class="mut sm" style="font-weight:400">(每个色块对应1根K线时间点: 绿=适合入场, 黄=谨慎观望, 红=禁止入场, 顶部白线=震荡指数单次急跌≥7分跳水点)</span></h2>
-      <div class="mut sm" style="margin-bottom:10px;padding:8px 12px;background:#131720;border-radius:8px;border-left:3px solid var(--green)">
-        💡 <b>入场判定规则 (已结合您发现的「震荡指数单次大跌 = K线剧烈波动」规律)</b>：
-        当某时间点同时满足 ① 策略校准震荡指数 $\ge 55$（波幅在 ${f2(TOL)}$ 内）、② <b>震荡指数单次跌幅 $&lt; 4.5$ 分</b>（无跳水异动）、③ 价格未突破布林带上下轨 且 入场适宜度 $\ge 60$ 分时，标记为 <span class="pill RANGE">🟢 适合入场</span>；
-        一旦<b>震荡指数单次急跌 $\ge 7.5$ 分</b>（此时 K 线往往正在拉出大阳/大阴线破位巨震）或波幅超出容忍度/进入单边趋势，立即强制标记为 <span class="pill TREND">🔴 禁止入场</span>！下方各周期大图内均已同步内置 1:1 时间对齐的「是否适合入场」子图。
+
+    $('entrySec').innerHTML = `
+      <div class="vhead" style="margin-bottom:10px">
+        <div>
+          <h2 style="margin:0">🚦 入场/离场「双线平滑指数」× 黄金 K 线 1:1 历史对照大图 <span class="mut sm" style="font-weight:400">(亮金粗线 = EMA8决策慢均线[防假跌乱跳] · 青白实线 = 3周期抗毛刺快线 · 上下1:1对齐K线回看历史入场区与离场区)</span></h2>
+        </div>
+        <div class="btns">${entryTfBtns}</div>
       </div>
-      ${entryRowsHtml}`;
+      <div class="meta-strip" style="margin-bottom:10px">
+        <div class="mchip"><span>当前查看周期:</span><b style="color:var(--gold)">${curEntTf}</b></div>
+        <div class="mchip"><span>当前所在区间:</span><span class="pill ${curEntLast.entryCls}">${curEntLast.zoneName}</span></div>
+        <div class="mchip"><span>🟡 慢均线(EMA8·定海神针):</span><span class="big-num" style="color:#fbbf24">${curEntLast.entrySlow}</span><span class="mut">分</span></div>
+        <div class="mchip"><span>🔵 抗毛刺快线:</span><b style="color:#38bdf8;font-size:16px">${curEntLast.entryFast}</b><span class="mut">分</span></div>
+        <div class="mchip"><span>🛡️ 均线过滤假跌毛刺:</span><b style="color:#38bdf8">${filteredFakeDropCnt} 次</b><span class="mut">(快线偶发下探但均线≥55未破)</span></div>
+        <div class="mchip"><span>近120根统计:</span><span style="color:#34d399;font-weight:700">🟢入场区 ${okZonePct}%</span><span class="mut">·</span><span style="color:#fb7185;font-weight:700">🔴离场区 ${exitZonePct}%</span></div>
+      </div>
+      <div class="chart-wrap">${buildEntryKLineChartSvg(curEntSpRaw, curEntTf)}</div>
+      <div class="legend" style="justify-content:space-between;margin-bottom:10px">
+        <div style="display:flex;flex-wrap:wrap;gap:14px">
+          <span><i style="background:#fbbf24;height:4px"></i><b>亮金粗实线: EMA8 慢速决策均线 (核心基准，不破 55 分不轻易离场)</b></span>
+          <span><i style="background:#38bdf8"></i>青白实线: 3周期抗毛刺快线</span>
+          <span><i style="background:#10b981"></i>🟢 入场区间 (≥56分：双线共振可开EA)</span>
+          <span><i style="background:#38bdf8"></i>🛡️ 均线护航 (快线短暂掉下但均线≥55未破 = 假跌毛刺，拿住等回调)</span>
+          <span><i style="background:#f43f5e"></i>🔴 离场区间 (&lt;46分：双线共振破位，暂停逆势加仓/锁仓)</span>
+        </div>
+        <span>🎯 鼠标在图上左右移动即可 1:1 对齐回看历史 K 线与双线入场/离场点</span>
+      </div>
+      <details class="clean-fold" id="fold-entry-all-tfs" ${window.OPEN_FOLDS && window.OPEN_FOLDS['fold-entry-all-tfs'] ? 'open' : ''} ontoggle="window.OPEN_FOLDS&&(window.OPEN_FOLDS[this.id]=this.open)">
+        <summary>📊 点击展开/收起：1M / 5M / 15M / 1H / 4H 全周期入场区间色带一览表 (点击任意周期可切换上方大图)</summary>
+        <div style="margin-top:8px">${entryRowsHtml}</div>
+      </details>`;
 
     // 渲染 5 个周期的「一图一屏幕」大型趋势图 (顶部标签全部采用 .mchip 严格水平等高对齐 + 内置是否适合入场时序图 + 蜡烛图对比开关按钮)
     const TF_DESC = { '1M': '1分钟超短线 (每15秒0延迟更新)', '5M': '5分钟短线 (每15秒0延迟更新)', '15M': '15分钟波段 (每15秒0延迟更新)', '1H': '1小时主周期 (每15秒0延迟更新)', '4H': '4小时大周期 (每15秒0延迟更新)' };
