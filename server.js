@@ -30,6 +30,24 @@ async function getJSON(url, headers = {}, timeout = 15000, retries = 2) {
   throw new Error((lastErr && (lastErr.cause && lastErr.cause.code || lastErr.message)) || 'fetch failed');
 }
 
+async function getText(url, headers = {}, timeout = 10000, retries = 1) {
+  let lastErr;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const r = await fetch(url, {
+        headers: { 'user-agent': UA, ...headers },
+        signal: AbortSignal.timeout(timeout),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.text();
+    } catch (e) {
+      lastErr = e;
+      await new Promise((res) => setTimeout(res, 400 * (i + 1)));
+    }
+  }
+  return '';
+}
+
 // 实时现货黄金 XAUUSD K线接口 (华尔街见闻 DDC 行情源, 0秒延迟秒级实时, 失败自动降级 Yahoo GC=F)
 async function wscnGold(periodSec, count = 600, fallbackInterval = '1h', fallbackRange = '3mo') {
   const url = `https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=${count}&period_type=${periodSec}&fields=tick_at,open_px,close_px,high_px,low_px`;
@@ -491,90 +509,190 @@ async function wscnMacro(xau15mBarsOrPromise) {
   };
 }
 
-// ---------- 特朗普言论 & 关税/地缘/美联储突发实时监控 (7x24快讯流 + 黄金冲击量化分级) ----------
-function classifyTrumpItem(title, text, wscnScore) {
+// ---------- 全球多源实时资讯聚合 & 黄金冲击大小与利多/利空量化分级引擎 (华尔街见闻 + 新浪财经 + 东方财富) ----------
+function classifyGoldNewsItem(title, text, source) {
   const full = `${title || ''} ${text || ''}`;
   const isDirect = /特朗普\s*[：:]|特朗普(表示|称|宣布|威胁|签署|警告|要求|呼吁|发文|下令|社交媒体)/.test(full);
   const tags = [];
-  if (/关税|贸易|加征|税率|谈判|进口|出口|制裁|美加|中美|美墨|美欧|世贸/.test(full)) tags.push('关税/贸易');
-  if (/美联储|鲍威尔|降息|加息|利率|央行|美元指数|强势美元|弱势美元|美元汇率|汇率|通胀|国债|美债|债务上限|赤字|税改/.test(full)) tags.push('美联储/利率/美元');
-  if (/伊朗|以色列|中东|哈马斯|黎巴嫩|俄|乌|普京|泽连斯基|朝鲜|军事|打击|停火|战争|导弹|核|北约|胡塞/.test(full)) tags.push('地缘/军事冲突');
-  if (/黄金|金价|储备|白银|原油|大宗商品/.test(full)) tags.push('黄金/战略储备');
+  const isGoldDirect = /黄金|金价|现货黄金|XAU|COMEX|纽约金|伦敦金|白银|贵金属|黄金储备|央行购金/.test(full);
+  if (isGoldDirect) tags.push('黄金/贵金属');
+  if (/美联储|鲍威尔|降息|加息|利率决议|FOMC|点阵图|CPI|PCE|非农|初请|失业率|通胀|缩表|国债收益率/.test(full)) tags.push('美联储/利率');
+  if (/伊朗|以色列|中东|哈马斯|黎巴嫩|红海|胡塞|俄|乌|普京|泽连斯基|朝鲜|军事|打击|空袭|停火|战争|导弹|核|北约|安理会/.test(full)) tags.push('地缘/军事');
+  if (/特朗普|关税|贸易战|加征|制裁|贸易谈判|美加|中美|美欧|实体清单|商务部/.test(full)) tags.push('关税/贸易');
+  if (/美元指数|强势美元|弱势美元|美元走强|美债|离岸人民币|汇率/.test(full)) tags.push('美元/外汇');
 
-  const isGoldRelevant = tags.length > 0;
-  if (!isGoldRelevant) tags.push('美国内政/一般动态');
+  const isRelevant = tags.length > 0;
+  if (!isRelevant) tags.push('全球宏观/财经');
 
-  let impactScore = 18;
-  if (isGoldRelevant) {
-    impactScore = 48 + (tags.length - 1) * 12 + (isDirect ? 12 : 0) + (wscnScore >= 2 ? 15 : 0);
-    if (/加征.*关税|100%关税|全面关税|紧急状态|解雇鲍威尔|必须降息|大幅降息|军事打击|空袭|全面制裁|撕毁|黄金储备|停摆|违约/.test(full)) {
-      impactScore += 22;
-    }
-  } else if (wscnScore >= 2) {
-    impactScore = 35;
-  }
-  impactScore = Math.min(98, Math.max(10, impactScore));
-  const impact = impactScore >= 70 ? 'HIGH' : impactScore >= 45 ? 'MED' : 'LOW';
+  // 冲击力打分 (0 ~ 100)
+  let score = 20;
+  if (isGoldDirect) score += 35;
+  if (tags.includes('美联储/利率')) score += 25;
+  if (tags.includes('地缘/军事')) score += 20;
+  if (tags.includes('关税/贸易')) score += 18;
+  if (isDirect) score += 12;
+  if (/非农|CPI|利率决议|鲍威尔|突发|开战|空袭|袭击|导弹|核试验|全面关税|100%关税|紧急状态|爆雷|解雇鲍威尔|必须降息/.test(full)) score += 22;
+  score = Math.min(98, Math.max(10, score));
 
-  let goldBias = '影响较小(常规内政)';
+  const impact = score >= 70 ? 'HIGH' : score >= 45 ? 'MED' : 'LOW';
+
+  // 利多 / 利空评分
+  const bullMatches = full.match(/袭击|空袭|交火|升级|制裁|紧张|爆发|遇袭|冲突|宣战|轰炸|降息|鸽派|放缓|疲软|不及预期|下行|宽松|避险|避险买盘|增持黄金|购买黄金|储备增加|加征关税|征收关税|反制|实体清单|撕毁|报复/g) || [];
+  const bearMatches = full.match(/停火|和平协议|撤军|缓和|达成协议|释放人质|谈判进展|加息|鹰派|推迟降息|延后降息|超出预期|超预期强劲|通胀受控|经济强劲|上调利率|美元大涨|美元走强|强势美元|美债收益率飙升|跳水|大幅下挫|抛售|取消关税|豁免/g) || [];
+
+  const bullScore = bullMatches.length * 1.5;
+  const bearScore = bearMatches.length * 1.5;
+
+  let goldBias = '⚡ 多空博弈/中性';
   let biasCls = 'NEUT';
-  if (impact !== 'LOW') {
-    const bull = /加征|威胁|升级|打击|制裁|破裂|紧张|降息|弱势美元|不愿意.*签字|拒绝|报复|翻倍|不确定性|避险|关税反噬/.test(full);
-    const bear = /达成.*协议|释放乐观|回暖|停火|撤军|豁免|取消关税|下调关税|谈判进展|和平/.test(full);
-    if (bull && !bear) { goldBias = '📈 避险/宽松 · 偏利多黄金'; biasCls = 'RANGE'; }
-    else if (bear && !bull) { goldBias = '📉 缓和/达成协议 · 偏利空黄金'; biasCls = 'TREND'; }
-    else { goldBias = '⚡ 政策博弈 · 双向巨震预警'; biasCls = 'MIXED'; }
+  let reason = '常规宏观动态';
+
+  if (bullScore >= bearScore + 1) {
+    goldBias = '📈 利多黄金';
+    biasCls = 'RANGE';
+    reason = tags.includes('地缘/军事') ? '避险买盘升温' : tags.includes('美联储/利率') ? '宽松降息预期' : '避险与关税反制';
+  } else if (bearScore >= bullScore + 1) {
+    goldBias = '📉 利空黄金';
+    biasCls = 'TREND';
+    reason = tags.includes('美联储/利率') ? '鹰派压制/高息延后' : tags.includes('地缘/军事') ? '局势缓和避险退潮' : '美元走强压制';
+  } else if (isRelevant && (bullScore > 0 || bearScore > 0)) {
+    goldBias = '⚡ 多空交织';
+    biasCls = 'MIXED';
+    reason = '利多与利空因素并存';
   }
 
-  return { isDirect, tags, isGoldRelevant, impact, impactScore, goldBias, biasCls };
+  return { isDirect, tags, isGoldDirect, isGoldRelevant: isRelevant, isRelevant, impactScore: score, impact, goldBias, biasCls, reason };
 }
 
-async function wscnTrump(calEvents) {
-  const apiUrl = 'https://api-one-wscn.awtmt.com/apiv1/search/live?query=%E7%89%B9%E6%9C%97%E6%99%AE&limit=25';
-  const j = await getJSON(apiUrl, {}, 10000, 1);
-  const rawItems = (j && j.data && j.data.items) || [];
+async function fetchMultiSourceGoldNews(calEvents) {
+  const [rSina, rEast, rWscnLive, rWscnGold] = await Promise.allSettled([
+    getJSON('https://zhibo.sina.com.cn/api/zhibo/feed?zhibo_id=152&page_size=35', {}, 6000, 1),
+    getText('https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html', {}, 6000),
+    getJSON('https://api-one-wscn.awtmt.com/apiv1/content/lives?channel=global-channel&limit=35', {}, 6000, 1),
+    getJSON('https://api-one-wscn.awtmt.com/apiv1/search/live?query=%E9%BB%84%E9%87%91&limit=25', {}, 6000, 1)
+  ]);
+
+  const raw = [];
   const nowSec = Math.floor(Date.now() / 1000);
 
-  const items = rawItems.map((x) => {
-    const title = (x.title || '').trim();
-    const text = (x.content_text || '').replace(/\s+/g, ' ').trim();
-    const cls = classifyTrumpItem(title, text, x.score || 1);
-    const ageMin = Math.max(0, Math.round((nowSec - (x.display_time || nowSec)) / 60));
-    return {
-      id: x.id,
-      time: x.display_time,
-      ageMin,
-      title,
-      text,
-      uri: x.uri || `https://wallstreetcn.com/livenews/${x.id}`,
-      wscnScore: x.score || 1,
-      ...cls
-    };
-  });
+  // 1) 新浪财经 7x24 全球实时直播流 (无反爬拦截，秒级直推)
+  if (rSina.status === 'fulfilled' && rSina.value && rSina.value.result && rSina.value.result.data && rSina.value.result.data.feed) {
+    (rSina.value.result.data.feed.list || []).forEach((x) => {
+      const text = (x.rich_text || x.text || '').replace(/\s+/g, ' ').trim();
+      if (!text) return;
+      const title = (text.split('】')[0].replace('【', '') || '').trim();
+      const tSec = Math.floor(new Date(x.create_time).getTime() / 1000) || nowSec;
+      raw.push({
+        id: 'sina_' + x.id,
+        src: '新浪财经',
+        time: tSec,
+        title,
+        text,
+        uri: 'https://finance.sina.com.cn/7x24/'
+      });
+    });
+  }
 
-  // 从金十周历中提取本周与特朗普/美国总统相关的日程事件
-  const schedule = (calEvents || []).filter((e) => /特朗普|美国总统|白宫/.test((e.title || '') + (e.summary || ''))).map((e) => ({
+  // 2) 东方财富 7x24 全球快讯
+  if (rEast.status === 'fulfilled' && rEast.value) {
+    try {
+      const cleanJson = rEast.value.replace(/^var\s+\w+\s*=\s*/, '').trim();
+      const parsed = JSON.parse(cleanJson);
+      (parsed.LivesList || []).forEach((x) => {
+        const title = (x.title || '').trim();
+        const text = (x.digest || x.news_content || '').replace(/\s+/g, ' ').trim();
+        if (!title && !text) return;
+        const tSec = Math.floor(new Date(x.showtime).getTime() / 1000) || nowSec;
+        raw.push({
+          id: 'em_' + x.id,
+          src: '东方财富',
+          time: tSec,
+          title,
+          text,
+          uri: 'https://kuaixun.eastmoney.com/'
+        });
+      });
+    } catch (e) {}
+  }
+
+  // 3) 华尔街见闻 7x24 全球快讯
+  if (rWscnLive.status === 'fulfilled' && rWscnLive.value && rWscnLive.value.data && rWscnLive.value.data.items) {
+    rWscnLive.value.data.items.forEach((x) => {
+      const title = (x.title || '').trim();
+      const text = (x.content_text || '').replace(/\s+/g, ' ').trim();
+      if (!title && !text) return;
+      raw.push({
+        id: 'wscn_' + x.id,
+        src: '华尔街见闻',
+        time: x.display_time || nowSec,
+        title,
+        text,
+        uri: x.uri || ('https://wallstreetcn.com/livenews/' + x.id)
+      });
+    });
+  }
+
+  // 4) 华尔街见闻 黄金专项快讯
+  if (rWscnGold.status === 'fulfilled' && rWscnGold.value && rWscnGold.value.data && rWscnGold.value.data.items) {
+    rWscnGold.value.data.items.forEach((x) => {
+      const title = (x.title || '').trim();
+      const text = (x.content_text || '').replace(/\s+/g, ' ').trim();
+      if (!title && !text) return;
+      raw.push({
+        id: 'wscn_g_' + x.id,
+        src: '华尔街见闻',
+        time: x.display_time || nowSec,
+        title,
+        text,
+        uri: x.uri || ('https://wallstreetcn.com/livenews/' + x.id)
+      });
+    });
+  }
+
+  // 去重 (根据标题或内容核心字去重)
+  const seen = new Set();
+  const deduped = [];
+  raw.sort((a, b) => b.time - a.time);
+
+  for (const item of raw) {
+    const key = (item.title || item.text.slice(0, 32)).replace(/[\s\p{P}]/gu, '');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const cls = classifyGoldNewsItem(item.title, item.text, item.src);
+    const ageMin = Math.max(0, Math.round((nowSec - item.time) / 60));
+    deduped.push({
+      ...item,
+      ageMin,
+      ...cls
+    });
+  }
+
+  // 金十周历日程事件提取
+  const schedule = (calEvents || []).filter((e) => /黄金|美联储|鲍威尔|特朗普|非农|CPI|利率|央行/.test((e.title || '') + (e.summary || ''))).slice(0, 10).map((e) => ({
     time: e.time,
     date: e.date,
     star: e.star || 3,
     title: e.title,
-    summary: e.summary || '特朗普日程'
+    summary: e.summary || '重点财经日程'
   }));
 
-  // 检查最近 2 小时 (120分钟) 内是否有中高冲击的黄金相关特朗普言论
-  const recent2h = items.filter((x) => x.ageMin <= 120 && (x.impact === 'HIGH' || x.impact === 'MED'));
-  const recent6h = items.filter((x) => x.ageMin <= 360 && (x.impact === 'HIGH' || x.impact === 'MED'));
+  const recent2h = deduped.filter((x) => x.ageMin <= 120 && (x.impact === 'HIGH' || x.impact === 'MED'));
+  const recent6h = deduped.filter((x) => x.ageMin <= 360 && (x.impact === 'HIGH' || x.impact === 'MED'));
 
   return {
-    apiUrl,
-    webUrl: 'https://wallstreetcn.com/live/global',
     updatedAt: new Date().toISOString(),
+    sources: ['华尔街见闻 (7x24全球)', '新浪财经 (7x24直播)', '东方财富 (7x24快讯)'],
+    totalCount: deduped.length,
     recent2hCount: recent2h.length,
     recent6hCount: recent6h.length,
     latestAlert: recent2h[0] || recent6h[0] || null,
     schedule,
-    items
+    items: deduped
   };
+}
+
+async function wscnTrump(calEvents) {
+  return fetchMultiSourceGoldNews(calEvents);
 }
 
 // ---------- 黄金受关注度综合指数 (5维全球统计：7x24涉金快讯密度 / COMEX期货实时量比 / GLD机构ETF量比 / 沪金主连量比与资金 / 全球搜索与链上热度) ----------
@@ -1918,9 +2036,19 @@ function updateMt4StatsAndHistory(prevState, snap) {
         H.s += 900;
         H.dd = Math.max(H.dd, b.ddMax || 0);
         H.mar = Math.max(H.mar, b.marMax || 0);
-        MT4_DD_TIERS.forEach((th, i) => { if ((b.ddMax || 0) >= th) H.d[i] += 900; });
+        MT4_DD_TIERS.forEach((th, i) => {
+          if ((b.ddMax || 0) >= th) {
+            H.d[i] += 900;
+            H.w[i] += 1;
+          }
+        });
       }
     }
+  } else {
+    stats.hourly.forEach((H) => {
+      if (!Array.isArray(H.w) || H.w.length !== MT4_DD_TIERS.length) H.w = MT4_DD_TIERS.map((_, i) => (H.w || [])[i] || 0);
+      if (!Array.isArray(H.d) || H.d.length !== MT4_DD_TIERS.length) H.d = MT4_DD_TIERS.map((_, i) => (H.d || [])[i] || 0);
+    });
   }
   const HR = stats.hourly[bjHour];
   if (HR.w.length !== MT4_DD_TIERS.length) { HR.w = MT4_DD_TIERS.map((_, i) => HR.w[i] || 0); HR.d = MT4_DD_TIERS.map((_, i) => HR.d[i] || 0); }

@@ -252,7 +252,7 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
     <div class="ng">情绪、宏观与日历</div>
     <a href="#sentimentSec"><span>📊 散户反指情绪</span><span id="nav-sent" class="pill NEUT">-</span></a>
     <a href="#attentionSec"><span>🔥 黄金受关注度</span><span id="nav-attn" class="pill NEUT">-</span></a>
-    <a href="#trumpSec"><span>🦅 特朗普言论监控</span><span id="nav-trump" class="pill NEUT">-</span></a>
+    <a href="#trumpSec"><span>📰 7×24黄金突发快讯</span><span id="nav-trump" class="pill NEUT">-</span></a>
     <a href="#macroSec"><span>🌐 跨市场长周期备查</span><span id="nav-macro" class="pill NEUT">-</span></a>
     <a href="#sessionSec"><span>🕒 时段说明 & GVZ</span></a>
     <a href="#calSec"><span>📅 金十经济周历</span></a>
@@ -662,6 +662,42 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
   </main>
 </div>
 <div id="toast"></div>
+
+<!-- 自定义日期筛选模态弹窗 -->
+<div id="dateRangeModal" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);backdrop-filter:blur(5px);justify-content:center;align-items:center;padding:16px">
+  <div style="background:#0f172a;border:1px solid #38bdf8;border-radius:12px;width:100%;max-width:440px;box-shadow:0 20px 40px rgba(0,0,0,0.85);overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:rgba(56,189,248,0.12);border-bottom:1px solid rgba(56,189,248,0.25)">
+      <b style="color:#fff;font-size:14px;display:flex;align-items:center;gap:6px">📅 自定义浮亏热力表统计日期范围</b>
+      <button onclick="closeDateRangeModal()" style="background:transparent;border:none;color:#94a3b8;font-size:18px;cursor:pointer;padding:2px 6px">✕</button>
+    </div>
+    <div style="padding:16px">
+      <div style="font-size:12px;color:#94a3b8;margin-bottom:8px">快捷选择常用时间跨度：</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+        <button class="sm" onclick="modalSetPreset('all')">⚡ 全部历史</button>
+        <button class="sm" onclick="modalSetPreset('today')">今日</button>
+        <button class="sm" onclick="modalSetPreset('yesterday')">昨日</button>
+        <button class="sm" onclick="modalSetPreset('3d')">近3天</button>
+        <button class="sm" onclick="modalSetPreset('7d')">近7天</button>
+        <button class="sm" onclick="modalSetPreset('14d')">近14天</button>
+        <button class="sm" onclick="modalSetPreset('30d')">近30天</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+        <div>
+          <label style="display:block;font-size:11.5px;color:#cbd5e1;margin-bottom:4px">开始日期：</label>
+          <input type="date" id="modalStartDate" style="width:100%;box-sizing:border-box;background:#0b0f17;color:#fff;border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:12px">
+        </div>
+        <div>
+          <label style="display:block;font-size:11.5px;color:#cbd5e1;margin-bottom:4px">结束日期：</label>
+          <input type="date" id="modalEndDate" style="width:100%;box-sizing:border-box;background:#0b0f17;color:#fff;border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:12px">
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button class="sm" onclick="closeDateRangeModal()" style="padding:6px 14px">取消</button>
+        <button class="sm pri" onclick="modalApplyCustomDate()" style="padding:6px 18px;background:var(--gold);color:#000;font-weight:700">✅ 确定筛选</button>
+      </div>
+    </div>
+  </div>
+</div>
 <script>
   const wkd = (() => { const n = new Date(Date.now() + 8 * 3600e3), m = n.getTime() - ((n.getUTCDay() + 6) % 7) * 86400e3, f = (t) => new Date(t).toISOString().slice(0, 10); return [f(m), f(m + 6 * 86400e3)]; })();
   const WK = wkd;
@@ -748,27 +784,49 @@ const fmtBJ = (ts) => new Date(ts * 1000).toLocaleString('zh-CN', { timeZone: 'A
 const f2 = (v) => v == null || isNaN(v) ? '-' : Number(v).toFixed(2);
 const toast = (m) => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 1800); };
 
-// ========== 常用世界时区时钟 (北京/伦敦/纽约/东京) 每秒精准跳动 ==========
+// ========== 常用世界时区时钟 (北京/伦敦/纽约/东京) 每秒精准跳动 (含日期与GMT提示) ==========
 function updateWorldClocks() {
   const now = new Date();
   const fmt = (tz) => {
     try {
-      return now.toLocaleTimeString('zh-CN', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const dt = now.toLocaleDateString('zh-CN', { timeZone: tz, month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
+      const tm = now.toLocaleTimeString('zh-CN', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return { dt, tm };
     } catch (e) {
-      return '--:--:--';
+      return { dt: '--', tm: '--:--:--' };
     }
   };
+  const getGmt = (tz) => {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' }).formatToParts(now);
+      const tzPart = parts.find((p) => p.type === 'timeZoneName');
+      return tzPart ? tzPart.value : 'GMT';
+    } catch (e) { return 'GMT'; }
+  };
+
   const bjt = fmt('Asia/Shanghai');
   const lon = fmt('Europe/London');
   const nyc = fmt('America/New_York');
   const tyo = fmt('Asia/Tokyo');
 
-  const elBjt = $('clkBjt'); if (elBjt) elBjt.textContent = bjt;
-  const elLon = $('clkLon'); if (elLon) elLon.textContent = lon;
-  const elNyc = $('clkNyc'); if (elNyc) elNyc.textContent = nyc;
-  const elTyo = $('clkTyo'); if (elTyo) elTyo.textContent = tyo;
+  const gBjt = getGmt('Asia/Shanghai');
+  const gLon = getGmt('Europe/London');
+  const gNyc = getGmt('America/New_York');
+  const gTyo = getGmt('Asia/Tokyo');
 
-  const bjH = Number(bjt.slice(0, 2)) || 0;
+  const setClock = (id, obj, gmtStr, color) => {
+    const el = $(id);
+    if (el) {
+      el.innerHTML = `<span style="font-size:10px;opacity:.68;margin-right:2px">(${gmtStr})</span><span style="font-size:10.5px;color:#94a3b8;font-family:monospace;margin-right:2px">${obj.dt}</span><b style="color:${color};font-family:monospace;font-size:12px">${obj.tm}</b>`;
+    }
+  };
+
+  setClock('clkBjt', bjt, gBjt, '#fbbf24');
+  setClock('clkLon', lon, gLon, '#a78bfa');
+  setClock('clkNyc', nyc, gNyc, '#fb923c');
+  setClock('clkTyo', tyo, gTyo, '#38bdf8');
+
+  const bjH = Number(bjt.tm.slice(0, 2)) || 0;
   const uDay = now.getUTCDay(), uH = now.getUTCHours();
   const isWeekend = (uDay === 6 && uH >= 3) || (uDay === 0) || (uDay === 1 && uH < 1);
   const badge = $('clkSessionBadge');
@@ -4011,10 +4069,23 @@ function render() {
 }
 
 let TRUMP_ONLY_GOLD = true;
+let NEWS_TAB = 'all'; // 'all' | 'gold' | 'bull' | 'bear' | 'high'
+let NEWS_SRC = 'all'; // 'all' | '新浪财经' | '华尔街见闻' | '东方财富'
+
 window.setTrumpFilter = (onlyGold) => {
   TRUMP_ONLY_GOLD = !!onlyGold;
-  if ($('btnTrumpGold')) $('btnTrumpGold').classList.toggle('on', TRUMP_ONLY_GOLD);
-  if ($('btnTrumpAll')) $('btnTrumpAll').classList.toggle('on', !TRUMP_ONLY_GOLD);
+  NEWS_TAB = onlyGold ? 'gold' : 'all';
+  if (D) { saveUiState(); renderTrump(); restoreUiState(); }
+};
+
+window.setNewsTab = (tab) => {
+  NEWS_TAB = tab;
+  TRUMP_ONLY_GOLD = (tab === 'gold');
+  if (D) { saveUiState(); renderTrump(); restoreUiState(); }
+};
+
+window.setNewsSource = (src) => {
+  NEWS_SRC = src;
   if (D) { saveUiState(); renderTrump(); restoreUiState(); }
 };
 
@@ -4026,66 +4097,113 @@ function fmtAge(min) {
 }
 
 function renderTrump() {
-  const tr = D && D.trump;
+  const tr = D && (D.goldNews || D.trump);
   if (!tr || !tr.items) {
-    $('trumpSec').innerHTML = `<h2>🦅 特朗普言论 & 关税/地缘/美联储实时监控</h2><span class="mut">正在加载7×24实时快讯流...</span>`;
+    $('trumpSec').innerHTML = `<h2>📰 全球多源 7×24 黄金实时快讯与多空量化分级</h2><span class="mut">正在连接华尔街见闻、新浪财经、东方财富多源直播流...</span>`;
     return;
   }
   const allItems = tr.items || [];
-  const goldItems = allItems.filter((x) => x.isGoldRelevant || x.impact !== 'LOW');
-  const showItems = TRUMP_ONLY_GOLD ? goldItems : allItems;
+  const goldItems = allItems.filter((x) => x.isGoldRelevant || x.impact !== 'LOW' || /黄金|金价|XAU|COMEX|现货黄金|贵金属/.test((x.title || '') + (x.text || '')));
+  const bullItems = allItems.filter((x) => x.goldBias && x.goldBias.includes('利多'));
+  const bearItems = allItems.filter((x) => x.goldBias && x.goldBias.includes('利空'));
+  const highItems = allItems.filter((x) => x.impact === 'HIGH');
+
+  let filtered = allItems;
+  if (NEWS_TAB === 'gold') filtered = goldItems;
+  else if (NEWS_TAB === 'bull') filtered = bullItems;
+  else if (NEWS_TAB === 'bear') filtered = bearItems;
+  else if (NEWS_TAB === 'high') filtered = highItems;
+
+  if (NEWS_SRC !== 'all') {
+    filtered = filtered.filter((x) => x.src === NEWS_SRC);
+  }
+
   const recentAlertCnt = allItems.filter((x) => x.ageMin <= 180 && (x.impact === 'HIGH' || x.impact === 'MED')).length;
 
   if ($('nav-trump')) {
-    $('nav-trump').textContent = recentAlertCnt ? `${recentAlertCnt}条新` : '平稳';
+    $('nav-trump').textContent = recentAlertCnt ? `${recentAlertCnt}条异动` : '平稳';
     $('nav-trump').className = 'pill ' + (recentAlertCnt ? 'MIXED' : 'NEUT');
   }
 
   const schedHtml = (tr.schedule && tr.schedule.length)
     ? `<div style="margin-bottom:10px;padding:8px 12px;background:var(--card2);border:1px solid var(--bd);border-radius:8px;font-size:12.5px">
-        <b style="color:var(--gold)">📅 本周金十日历 · 特朗普/白宫重点日程：</b>
-        ${tr.schedule.map((s) => `<span class="pill NEUT" style="margin:2px 4px">${s.time.replace('T', ' ').slice(5, 16)} ${s.title}</span>`).join('')}
+        <b style="color:var(--gold)">📅 重点财经事件 &amp; 央行/非农/CPI日程速览：</b>
+        ${tr.schedule.map((s) => `<span class="pill NEUT" style="margin:2px 4px">${(s.time || '').replace('T', ' ').slice(5, 16)} ${s.title}</span>`).join('')}
       </div>`
     : '';
 
-  const listHtml = showItems.length ? showItems.map((x) => {
+  const srcColorMap = {
+    '新浪财经': '#0284c7',
+    '华尔街见闻': '#e11d48',
+    '东方财富': '#d97706'
+  };
+
+  const listHtml = filtered.length ? filtered.map((x) => {
     const impCls = x.impact === 'HIGH' ? 'TREND' : x.impact === 'MED' ? 'MIXED' : 'NEUT';
-    const impTxt = x.impact === 'HIGH' ? `🚨 高危冲击(${x.impactScore}分)` : x.impact === 'MED' ? `⚠️ 中等关注(${x.impactScore}分)` : `⚪ 一般内政(${x.impactScore}分)`;
+    const impTxt = x.impact === 'HIGH' ? `🚨 重磅冲击(${x.impactScore}分)` : x.impact === 'MED' ? `⚠️ 重点关注(${x.impactScore}分)` : `☕ 常规动态(${x.impactScore}分)`;
     const isRecent = x.ageMin <= 180 && x.impact !== 'LOW';
-    const bdrStyle = isRecent ? (x.impact === 'HIGH' ? 'border-left:3px solid var(--red);background:rgba(244,63,94,0.05);' : 'border-left:3px solid var(--yel);background:rgba(245,158,11,0.04);') : '';
-    const tagPills = (x.tags || []).map((t) => `<span class="pill NEUT">${t}</span>`).join(' ');
+    const bdrStyle = isRecent ? (x.impact === 'HIGH' ? 'border-left:3px solid var(--red);background:rgba(244,63,94,0.06);' : 'border-left:3px solid var(--yel);background:rgba(245,158,11,0.04);') : '';
+    const tagPills = (x.tags || []).map((t) => `<span class="pill NEUT" style="font-size:10.5px">${t}</span>`).join(' ');
+    const srcCol = srcColorMap[x.src] || '#64748b';
+
+    let biasPill = '';
+    if (x.goldBias && x.goldBias.includes('利多')) {
+      biasPill = `<span class="pill" style="background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.5)">📈 利多黄金 ${x.biasReason ? `<span style="font-size:10px;opacity:.85">(${x.biasReason})</span>` : ''}</span>`;
+    } else if (x.goldBias && x.goldBias.includes('利空')) {
+      biasPill = `<span class="pill" style="background:rgba(244,63,94,0.18);color:#fb7185;border:1px solid rgba(244,63,94,0.5)">📉 利空黄金 ${x.biasReason ? `<span style="font-size:10px;opacity:.85">(${x.biasReason})</span>` : ''}</span>`;
+    } else if (x.goldBias && x.goldBias.includes('多空交织')) {
+      biasPill = `<span class="pill" style="background:rgba(245,158,11,0.18);color:#fbbf24;border:1px solid rgba(245,158,11,0.5)">⚡ 多空交织</span>`;
+    } else {
+      biasPill = `<span class="pill NEUT">☕ 中性动态</span>`;
+    }
+
     return `<div style="padding:10px 12px;background:var(--card2);border:1px solid var(--bd);border-radius:8px;margin-bottom:8px;${bdrStyle}">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:5px">
         <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+          <span class="pill" style="background:${srcCol}22;color:${srcCol};border:1px solid ${srcCol}66;font-weight:700">📡 ${x.src || '全球快讯'}</span>
           <span class="pill ${impCls}">${impTxt}</span>
-          <span class="pill ${x.biasCls || 'NEUT'}">${x.goldBias}</span>
+          ${biasPill}
           ${tagPills}
-          ${x.isDirect ? `<span class="pill" style="background:rgba(234,179,8,0.14);color:var(--gold);border:1px solid rgba(234,179,8,0.3)">🎙️ 直接表态/动作</span>` : ''}
+          ${x.isDirect ? `<span class="pill" style="background:rgba(234,179,8,0.14);color:var(--gold);border:1px solid rgba(234,179,8,0.3)">🎙️ 直接表态</span>` : ''}
         </div>
         <div class="sm mut" style="display:flex;align-items:center;gap:8px">
-          <span><b style="color:${x.ageMin <= 120 ? 'var(--gold)' : '#94a3b8'}">${fmtAge(x.ageMin)}</b> (${fmtBJ(x.time)})</span>
-          <a href="${x.uri}" target="_blank" rel="noopener" style="color:var(--gold);text-decoration:none">🔗 原文验证</a>
+          <span><b style="color:${x.ageMin <= 60 ? '#34d399' : x.ageMin <= 180 ? 'var(--gold)' : '#94a3b8'}">${fmtAge(x.ageMin)}</b> (${fmtBJ(x.time)})</span>
+          ${x.uri ? `<a href="${x.uri}" target="_blank" rel="noopener" style="color:var(--gold);text-decoration:none">🔗 原文</a>` : ''}
         </div>
       </div>
       ${x.title ? `<div style="font-weight:700;color:#fff;font-size:13.5px;margin-bottom:3px">${x.title}</div>` : ''}
       <div class="sm" style="color:#cbd5e1;line-height:1.5">${x.text}</div>
     </div>`;
-  }).join('') : `<div class="mut sm">暂无符合筛选条件的言论动态</div>`;
+  }).join('') : `<div class="mut sm" style="padding:20px;text-align:center">暂无符合当前筛选条件的快讯动态</div>`;
 
   $('trumpSec').innerHTML = `
     <div class="vhead" style="margin-bottom:10px">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
-        <h2 style="margin:0"><span class="live-dot"></span>🦅 特朗普言论 & 关税/联储/地缘实时监控 <span class="mut sm" style="font-weight:400">(7×24秒级快讯流 · 每15秒同步 · 近3h涉金异动自动置顶到页面最前方)</span></h2>
-        <span class="pill ${recentAlertCnt ? 'MIXED' : 'NEUT'}">${recentAlertCnt ? `近3小时有 ${recentAlertCnt} 条涉金表态` : '近3小时无高危涉金突发言论'}</span>
+        <h2 style="margin:0"><span class="live-dot"></span>📰 全球多源 7×24 黄金实时突发与量化多空分级 <span class="mut sm" style="font-weight:400">(新浪财经 · 华尔街见闻 · 东方财富 · 0秒级全网突发监测 · 自动判定影响大小与利多/利空)</span></h2>
+        <span class="pill ${recentAlertCnt ? 'MIXED' : 'NEUT'}">${recentAlertCnt ? `近3小时 ${recentAlertCnt} 条重磅动态` : '近3小时无重大涉金突发'}</span>
       </div>
-      <div class="btns">
-        <button class="sm ${TRUMP_ONLY_GOLD ? 'on' : ''}" id="btnTrumpGold" onclick="setTrumpFilter(true)">🎯 仅看黄金相关 (${goldItems.length})</button>
-        <button class="sm ${!TRUMP_ONLY_GOLD ? 'on' : ''}" id="btnTrumpAll" onclick="setTrumpFilter(false)">📋 全部动态含内政 (${allItems.length})</button>
-        <a href="${tr.apiUrl}" target="_blank" rel="noopener"><button class="sm">🔗 验证实时快讯 JSON</button></a>
+      <div class="btns" style="flex-wrap:wrap">
+        <button class="sm ${NEWS_TAB === 'all' ? 'on' : ''}" onclick="setNewsTab('all')">📋 全部 (${allItems.length})</button>
+        <button class="sm ${NEWS_TAB === 'gold' ? 'on' : ''}" onclick="setNewsTab('gold')">🎯 黄金核心 (${goldItems.length})</button>
+        <button class="sm ${NEWS_TAB === 'bull' ? 'on' : ''}" onclick="setNewsTab('bull')" style="${NEWS_TAB === 'bull' ? 'border-color:#10b981;color:#34d399;' : ''}">📈 利多 (${bullItems.length})</button>
+        <button class="sm ${NEWS_TAB === 'bear' ? 'on' : ''}" onclick="setNewsTab('bear')" style="${NEWS_TAB === 'bear' ? 'border-color:#f43f5e;color:#fb7185;' : ''}">📉 利空 (${bearItems.length})</button>
+        <button class="sm ${NEWS_TAB === 'high' ? 'on' : ''}" onclick="setNewsTab('high')">🚨 重磅 (${highItems.length})</button>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;background:rgba(15,23,42,0.6);padding:6px 10px;border-radius:8px;border:1px solid var(--bd);margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span class="xs mut">媒体来源:</span>
+        <button class="sm ${NEWS_SRC === 'all' ? 'on' : ''}" onclick="setNewsSource('all')" style="font-size:11px;padding:2px 8px">全部数据源</button>
+        <button class="sm ${NEWS_SRC === '新浪财经' ? 'on' : ''}" onclick="setNewsSource('新浪财经')" style="font-size:11px;padding:2px 8px">新浪财经 7x24</button>
+        <button class="sm ${NEWS_SRC === '华尔街见闻' ? 'on' : ''}" onclick="setNewsSource('华尔街见闻')" style="font-size:11px;padding:2px 8px">华尔街见闻 7x24</button>
+        <button class="sm ${NEWS_SRC === '东方财富' ? 'on' : ''}" onclick="setNewsSource('东方财富')" style="font-size:11px;padding:2px 8px">东方财富 7x24</button>
+      </div>
+      <div class="xs mut">
+        已聚合 <b>${allItems.length}</b> 条全球实时快讯 · 自动过滤无关广告
       </div>
     </div>
     ${schedHtml}
-    <div id="trumpScrollBox" class="thin-scroll" style="max-height:460px;overflow-y:auto;padding-right:6px">
+    <div id="trumpScrollBox" class="thin-scroll" style="max-height:480px;overflow-y:auto;padding-right:6px">
       ${listHtml}
     </div>`;
 }
@@ -4924,11 +5042,86 @@ const MT4_CHART_STATE = {
 };
 const MT4_DD_TIERS_DEF = [50, 100, 150, 200, 300, 400, 600, 800, 1000, 1500, 2000, 3000, 4000];
 
-// ========== 浮亏高危时段热力表日期范围筛选状态 ==========
+// ========== 浮亏高危时段热力表日期范围筛选状态与日均频次切换 ==========
 const HEATMAP_FILTER = {
   preset: 'all', // 'all' | 'today' | 'yesterday' | '3d' | '7d' | 'custom'
   startDate: '',
   endDate: ''
+};
+let HEATMAP_VIEW_MODE = 'total'; // 'total' (累计总次数) | 'avg' (日均频次 · 除以天数)
+
+window.setHeatmapViewMode = function(m) {
+  HEATMAP_VIEW_MODE = m;
+  if (D) render();
+};
+
+window.openDateRangeModal = function() {
+  const m = $('dateRangeModal');
+  if (!m) return;
+  const sInput = $('modalStartDate');
+  const eInput = $('modalEndDate');
+  if (sInput && HEATMAP_FILTER.startDate) sInput.value = HEATMAP_FILTER.startDate;
+  if (eInput && HEATMAP_FILTER.endDate) eInput.value = HEATMAP_FILTER.endDate;
+  m.style.display = 'flex';
+};
+
+window.closeDateRangeModal = function() {
+  const m = $('dateRangeModal');
+  if (m) m.style.display = 'none';
+};
+
+window.modalSetPreset = function(preset) {
+  const now = new Date(Date.now() + 8 * 3600000);
+  const toIso = (d) => d.toISOString().slice(0, 10);
+  let s = '', e = '';
+  if (preset === 'today') {
+    s = toIso(now); e = toIso(now);
+  } else if (preset === 'yesterday') {
+    const yest = new Date(now.getTime() - 86400000);
+    s = toIso(yest); e = toIso(yest);
+  } else if (preset === '3d') {
+    const d3 = new Date(now.getTime() - 2 * 86400000);
+    s = toIso(d3); e = toIso(now);
+  } else if (preset === '7d') {
+    const d7 = new Date(now.getTime() - 6 * 86400000);
+    s = toIso(d7); e = toIso(now);
+  } else if (preset === '14d') {
+    const d14 = new Date(now.getTime() - 13 * 86400000);
+    s = toIso(d14); e = toIso(now);
+  } else if (preset === '30d') {
+    const d30 = new Date(now.getTime() - 29 * 86400000);
+    s = toIso(d30); e = toIso(now);
+  } else if (preset === 'all') {
+    s = ''; e = '';
+  }
+  const sInput = $('modalStartDate');
+  const eInput = $('modalEndDate');
+  if (sInput) sInput.value = s;
+  if (eInput) eInput.value = e;
+  if (preset === 'all') {
+    window.setHeatmapPreset('all');
+    window.closeDateRangeModal();
+  }
+};
+
+window.modalApplyCustomDate = function() {
+  const sInput = $('modalStartDate');
+  const eInput = $('modalEndDate');
+  const s = sInput ? sInput.value : '';
+  const e = eInput ? eInput.value : '';
+  if (!s || !e) {
+    toast('请选择开始和结束日期');
+    return;
+  }
+  HEATMAP_FILTER.preset = 'custom';
+  HEATMAP_FILTER.startDate = s <= e ? s : e;
+  HEATMAP_FILTER.endDate = s <= e ? e : s;
+  window.closeDateRangeModal();
+  if (!window.MT4_ARCHIVE) {
+    fetchMt4Archive(true).then(() => { if (D) render(); });
+  }
+  if (D) render();
+  toast(`已应用日期筛选：${HEATMAP_FILTER.startDate} ~ ${HEATMAP_FILTER.endDate}`);
 };
 
 // 长期归档本地缓存 & 服务端拉取
@@ -6061,56 +6254,85 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
   const startDate = HEATMAP_FILTER.startDate || '';
   const endDate = HEATMAP_FILTER.endDate || '';
 
-  let activeHourly = null;
-  let rangeLabel = '';
   const arc = window.MT4_ARCHIVE;
+  const historyLong = (window.D && window.D.mt4 && Array.isArray(window.D.mt4.historyLong)) ? window.D.mt4.historyLong : [];
 
-  if (arc && arc.daily && typeof arc.daily === 'object') {
-    const allDates = Object.keys(arc.daily).sort();
-    if (allDates.length > 0) {
-      let filterDates = allDates;
-      if (preset === 'today' && startDate) {
-        filterDates = allDates.filter(d => d === startDate);
-        rangeLabel = `今日 (${startDate})`;
-      } else if (preset === 'yesterday' && startDate) {
-        filterDates = allDates.filter(d => d === startDate);
-        rangeLabel = `昨日 (${startDate})`;
-      } else if ((preset === '3d' || preset === '7d' || preset === 'custom') && startDate && endDate) {
-        filterDates = allDates.filter(d => d >= startDate && d <= endDate);
-        rangeLabel = `${startDate} ~ ${endDate} (共 ${filterDates.length} 天样本)`;
-      } else {
-        rangeLabel = `全部历史 (${allDates[0]} ~ ${allDates[allDates.length - 1]} · 共 ${allDates.length} 天)`;
-      }
+  const activeHourly = Array.from({ length: 24 }, () => ({
+    s: 0, dd: 0, mar: 0,
+    w: TH.map(() => 0),
+    d: TH.map(() => 0)
+  }));
+  const datesSet = new Set();
+  let rangeLabel = '';
 
-      if (filterDates.length > 0) {
-        activeHourly = Array.from({ length: 24 }, () => ({
-          s: 0, dd: 0, mar: 0,
-          w: TH.map(() => 0),
-          d: TH.map(() => 0)
-        }));
-        filterDates.forEach(dateKey => {
-          const dObj = arc.daily[dateKey] || {};
-          for (let h = 0; h < 24; h++) {
-            const slot = dObj[h];
-            if (!slot) continue;
-            activeHourly[h].s += slot.s || 0;
-            if ((slot.dd || 0) > activeHourly[h].dd) activeHourly[h].dd = slot.dd;
-            if ((slot.mar || 0) > activeHourly[h].mar) activeHourly[h].mar = slot.mar;
-            TH.forEach((th, k) => {
-              activeHourly[h].w[k] += (slot.w && slot.w[k]) || 0;
-              activeHourly[h].d[k] += (slot.d && slot.d[k]) || 0;
-            });
-          }
-        });
-      }
-    }
+  // 1) 优先从真实历史 15分钟样本提取 (只要超过该阶段就计入一次)
+  if (historyLong.length > 0) {
+    historyLong.forEach(b => {
+      const bt = (b.t || 0) < 1e11 ? (b.t || 0) * 1000 : (b.t || 0);
+      if (!bt) return;
+      const dt = new Date(bt + 8 * 3600000);
+      const dateStr = dt.toISOString().slice(0, 10);
+      if (startDate && dateStr < startDate) return;
+      if (endDate && dateStr > endDate) return;
+      datesSet.add(dateStr);
+      const h = dt.getUTCHours();
+      const dd = b.ddMax != null ? b.ddMax : Math.max(0, -(b.pnl || 0));
+      const mar = b.marMax != null ? b.marMax : (b.mar || 0);
+      activeHourly[h].s += 900;
+      if (dd > activeHourly[h].dd) activeHourly[h].dd = dd;
+      if (mar > activeHourly[h].mar) activeHourly[h].mar = mar;
+      TH.forEach((th, k) => {
+        if (dd >= th) {
+          activeHourly[h].w[k] += 1;
+          activeHourly[h].d[k] += 900;
+        }
+      });
+    });
   }
 
-  const hourly = activeHourly || ((stats && Array.isArray(stats.hourly) && stats.hourly.length === 24) ? stats.hourly : null);
-  if (!hourly) return '<div class="xs mut">时段档案正在建立中，下一次实盘推送后即开始按小时累计…</div>';
-  if (!rangeLabel) rangeLabel = '全天候累计';
+  // 2) 补充 arc.daily 中更早的历史天数样本
+  if (arc && arc.daily && typeof arc.daily === 'object') {
+    const allArcDates = Object.keys(arc.daily).sort();
+    allArcDates.forEach(dateKey => {
+      if (datesSet.has(dateKey)) return;
+      if (startDate && dateKey < startDate) return;
+      if (endDate && dateKey > endDate) return;
+      datesSet.add(dateKey);
+      const dObj = arc.daily[dateKey] || {};
+      for (let h = 0; h < 24; h++) {
+        const slot = dObj[h];
+        if (!slot) continue;
+        activeHourly[h].s += slot.s || 0;
+        if ((slot.dd || 0) > activeHourly[h].dd) activeHourly[h].dd = slot.dd;
+        if ((slot.mar || 0) > activeHourly[h].mar) activeHourly[h].mar = slot.mar;
+        TH.forEach((th, k) => {
+          activeHourly[h].w[k] += (slot.w && slot.w[k]) || 0;
+          activeHourly[h].d[k] += (slot.d && slot.d[k]) || 0;
+        });
+      }
+    });
+  }
 
-  // 每小时风险分：阶梯越深权重越高 (独立发生次数×th/50) + 峰值浮亏/50 + 深套停留分钟/10
+  const hasSample = activeHourly.some(h => h.s > 0 || (h.w && h.w.some(v => v > 0)));
+  const hourly = hasSample ? activeHourly : ((stats && Array.isArray(stats.hourly) && stats.hourly.length === 24) ? stats.hourly : null);
+  if (!hourly) return '<div class="xs mut">时段档案正在建立中，下一次实盘推送后即开始按小时累计…</div>';
+
+  const statDays = Math.max(1, datesSet.size);
+  const sortedDates = Array.from(datesSet).sort();
+
+  if (preset === 'today' && startDate) {
+    rangeLabel = `今日 (${startDate} · 1天样本)`;
+  } else if (preset === 'yesterday' && startDate) {
+    rangeLabel = `昨日 (${startDate} · 1天样本)`;
+  } else if ((preset === '3d' || preset === '7d' || preset === 'custom') && startDate && endDate) {
+    rangeLabel = `${startDate} ~ ${endDate} (共 ${statDays} 天样本)`;
+  } else if (sortedDates.length > 0) {
+    rangeLabel = `全部历史 (${sortedDates[0]} ~ ${sortedDates[sortedDates.length - 1]} · 共 ${statDays} 天样本)`;
+  } else {
+    rangeLabel = `样本共 ${statDays} 天`;
+  }
+
+  // 每小时风险分
   const rows = hourly.map((h, i) => {
     const w = h.w || [], dd = h.d || [];
     let score = 0, w100 = 0, w200 = 0, dur100 = 0;
@@ -6122,7 +6344,6 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
     score += (h.dd || 0) / 50;
     return { hour: i, s: h.s || 0, dd: h.dd || 0, mar: h.mar || 0, w, d: dd, score: +score.toFixed(1), w100, w200, dur100 };
   });
-  const monitored = rows.filter((r) => r.s >= 60);
   const maxScore = Math.max(1, ...rows.map((r) => r.score));
   const level = (r) => {
     if (r.s < 60) return { t: '无数据', c: '#475569', e: '⚪' };
@@ -6131,7 +6352,6 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
     if (r.score > 0.3) return { t: '轻微', c: '#fbbf24', e: '🟡' };
     return { t: '安全', c: '#34d399', e: '🟢' };
   };
-  const rank = monitored.filter((r) => r.score > 0.3).sort((a, b) => b.score - a.score).slice(0, 6);
   const fmtRange = (h) => String(h).padStart(2, '0') + ':00-' + String((h + 1) % 24).padStart(2, '0') + ':00';
 
   const head = rows.map((r) => {
@@ -6143,14 +6363,23 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
     const cells = rows.map((r) => {
       const wv = r.w[k] || 0, dv = r.d[k] || 0;
       let bg, txt, col = '#e2e8f0';
-      if (r.s < 60) { bg = 'rgba(71,85,105,0.12)'; txt = '·'; col = '#475569'; }
-      else if (wv === 0 && dv === 0) { bg = 'rgba(16,185,129,0.08)'; txt = '0'; col = '#4b5d52'; }
-      else {
-        const inten = Math.min(1, 0.25 + wv * 0.18 + dv / 3600);
+      if (r.s < 60) {
+        bg = 'rgba(71,85,105,0.12)'; txt = '·'; col = '#475569';
+      } else if (wv === 0 && dv === 0) {
+        bg = 'rgba(16,185,129,0.08)'; txt = '0'; col = '#4b5d52';
+      } else {
+        const inten = Math.min(1, 0.25 + (wv / statDays) * 0.35 + dv / (3600 * statDays));
         bg = (th >= 3000 ? 'rgba(225,29,72,' : th >= 1000 ? 'rgba(244,63,94,' : th >= 200 ? 'rgba(249,115,22,' : 'rgba(245,158,11,') + inten.toFixed(2) + ')';
-        txt = wv > 0 ? String(wv) : '~'; col = '#fff';
+        if (HEATMAP_VIEW_MODE === 'avg') {
+          const avg = wv / statDays;
+          txt = avg >= 10 ? Math.round(avg) : avg >= 0.1 ? avg.toFixed(1) : (avg > 0 ? avg.toFixed(2) : '0');
+        } else {
+          txt = wv > 0 ? String(wv) : '0';
+        }
+        col = '#fff';
       }
-      const tip = r.s < 60 ? '该小时尚无持仓监测数据' : (String(r.hour).padStart(2, '0') + '时 浮亏≥$' + th + ': 独立发生' + wv + '次, 累计停留' + fmtDuration(dv));
+      const avgStr = (wv / statDays).toFixed(2);
+      const tip = r.s < 60 ? '该小时尚无持仓监测数据' : (String(r.hour).padStart(2, '0') + '时 浮亏≥$' + th + ': 累计发生 ' + wv + ' 次 (样本共 ' + statDays + ' 天 · 日均 ' + avgStr + ' 次/天), 累计停留 ' + fmtDuration(dv));
       return '<td title="' + tip + '" style="text-align:center;padding:3px 0;font-size:12px;font-weight:800;background:' + bg + ';color:' + col + ';' + (r.hour === bjNowH ? 'outline:1px solid #38bdf8;' : '') + '">' + txt + '</td>';
     }).join('');
     return '<tr><td style="padding:3px 8px;white-space:nowrap;font-weight:800;color:' + (th >= 3000 ? '#f43f5e' : th >= 1000 ? '#fb7185' : th >= 200 ? '#fb923c' : '#fbbf24') + '">浮亏 ≥ $' + th + '</td>' + cells + '</tr>';
@@ -6184,13 +6413,9 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
     : curLv.t === '无数据' ? '<span class="mut">当前时段(' + fmtRange(bjNowH) + ')尚无历史数据，持续监测中</span>'
     : '<span style="color:#34d399;font-weight:800">✅ 现在是历史【' + curLv.t + '】时段(' + fmtRange(bjNowH) + ')</span>';
 
-  const rankHtml = rank.length
-    ? rank.map((r, i) => { const L = level(r); return '<span class="pill ' + (L.t === '高危' ? 'TREND' : 'MIXED') + '" style="font-size:11.5px;padding:3px 9px">' + (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '#' + (i + 1)) + ' <b>' + fmtRange(r.hour) + '</b> ' + sessOf(r.hour)[0] + ' · 最大浮亏-$' + Math.round(r.dd) + ' · 深套' + r.w100 + '次</span>'; }).join(' ')
-    : '<span class="xs mut">目前各时段尚未出现明显深套 (浮亏≥$50)，数据积累越久越准</span>';
-
   return '<div id="mt4HeatSec" style="margin-top:12px;background:linear-gradient(135deg,rgba(244,63,94,0.08),rgba(15,20,30,0.95));border:1.5px solid rgba(244,63,94,0.4);border-radius:10px;padding:11px 13px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><b style="color:#fff;font-size:13.5px">🕒 浮亏高危时段热力表 (北京时间 24 小时 × 浮亏阶梯 · 支持阶梯至$4000 &amp; 自定义日期筛选)</b><span class="xs">' + curMsg + '</span></div>'
-    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px;background:rgba(15,23,42,0.7);padding:6px 10px;border-radius:8px;border:1px solid rgba(244,63,94,0.25)">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><b style="color:#fff;font-size:13.5px">🕒 浮亏高危时段热力表 (北京时间 24 小时 × 浮亏阶梯 · 阶梯覆盖至$4000 · 支持日均频次)</b><span class="xs">' + curMsg + '</span></div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;background:rgba(15,23,42,0.7);padding:6px 10px;border-radius:8px;border:1px solid rgba(244,63,94,0.25)">'
     + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
     + '<span style="font-size:12px;font-weight:700;color:var(--gold)">🗓️ 时段范围:</span>'
     + '<button class="sm ' + (preset === 'all' ? 'on' : '') + '" onclick="setHeatmapPreset(\'all\')">⚡ 全部历史</button>'
@@ -6198,21 +6423,21 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
     + '<button class="sm ' + (preset === 'yesterday' ? 'on' : '') + '" onclick="setHeatmapPreset(\'yesterday\')">昨日</button>'
     + '<button class="sm ' + (preset === '3d' ? 'on' : '') + '" onclick="setHeatmapPreset(\'3d\')">近3天</button>'
     + '<button class="sm ' + (preset === '7d' ? 'on' : '') + '" onclick="setHeatmapPreset(\'7d\')">近7天</button>'
-    + '</div>'
-    + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
-    + '<span class="xs mut">自定义:</span>'
-    + '<input type="date" id="heatStartDate" value="' + startDate + '" style="background:#0b0f17;color:#fff;border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px">'
-    + '<span class="xs mut">至</span>'
-    + '<input type="date" id="heatEndDate" value="' + endDate + '" style="background:#0b0f17;color:#fff;border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px">'
-    + '<button class="sm pri" onclick="applyHeatmapCustomDate()" style="padding:3px 8px;font-size:11.5px">应用日期</button>'
-    + (preset !== 'all' ? '<button class="sm" onclick="resetHeatmapFilter()" style="padding:3px 8px;font-size:11.5px">清空</button>' : '')
+    + '<button class="sm ' + (preset === 'custom' ? 'on' : '') + '" onclick="openDateRangeModal()" style="display:flex;align-items:center;gap:3px">📅 自定义日期 ▾</button>'
+    + (preset !== 'all' ? '<button class="sm" onclick="resetHeatmapFilter()" style="padding:3px 8px;font-size:11px">✕ 重置全部</button>' : '')
     + '<span class="xs" style="color:#38bdf8;margin-left:4px">📅 ' + rangeLabel + '</span>'
     + '</div>'
+    + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+    + '<span style="font-size:11.5px;color:#cbd5e1">表格数值:</span>'
+    + '<div style="display:flex;background:rgba(0,0,0,0.4);border-radius:6px;padding:2px;border:1px solid rgba(255,255,255,0.1)">'
+    + '<button class="sm ' + (HEATMAP_VIEW_MODE === 'total' ? 'on' : '') + '" onclick="setHeatmapViewMode(\'total\')" style="font-size:11px;padding:2px 8px">🔢 累计总次数</button>'
+    + '<button class="sm ' + (HEATMAP_VIEW_MODE === 'avg' ? 'on' : '') + '" onclick="setHeatmapViewMode(\'avg\')" style="font-size:11px;padding:2px 8px">📊 日均频次 (除以' + statDays + '天)</button>'
     + '</div>'
-    + '<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center"><b class="xs" style="color:#fbbf24">🚫 建议避开开仓的高危时段榜：</b>' + rankHtml + '</div>'
+    + '</div>'
+    + '</div>'
     + '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr><th style="text-align:left;padding:3px 8px;color:#94a3b8;font-size:11px">阶梯 \\ 时(北京)</th>' + head + '</tr></thead><tbody>' + tierRows + ddRow + marRow + monRow + lvRow + '</tbody></table></div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:9px">' + sessCards + '</div>'
-    + '<div class="xs mut" style="margin-top:6px">说明：以持仓期间每 5 秒采样累计；「·」=该小时尚无持仓数据，「~」=该级曾停留但未新增波次；蓝框=当前小时。支持至 $4000 极端深套阶梯，可随时按天筛选。</div>'
+    + '<div class="xs mut" style="margin-top:6px">说明：数据以持仓期间 15 分钟与每 5 秒采样累计；超过该阶梯即计入 1 次；可自由切换「累计总次数」与「日均频次 (除以样本天数)」。支持至 $4000 极端深套阶梯，点击「自定义日期」可自由弹出窗口挑选历史天数。</div>'
     + '</div>';
 }
 
@@ -6593,7 +6818,8 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
   const gapTier2 = r2(Math.max(0, capTier2 - curBal));
   const gapTier3 = r2(Math.max(0, capTier3 - curBal));
 
-  // ========== 浮亏分阶段突破次数统计表 ($50 / $100 / $150 / $200 / $300 / $400 / $600 / $800 / $1000 / $1500 / $2000) ==========
+  // ========== 浮亏分阶段突破次数统计表与科学抗险推演 ($50 ~ $4000) ==========
+  const ea = calcEaModel(curBal, EA_CFG, CUR_LAYERS, mt4.margin || USED_MARGIN);
   const tiers = (stats && Array.isArray(stats.tiers) && stats.tiers.length)
     ? stats.tiers
     : MT4_DD_TIERS_DEF.map((th) => ({ th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-' }));
@@ -6602,27 +6828,52 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
     const isHitEver = (t.waves || 0) > 0 || (t.durSec || 0) > 0;
     const isNowActive = mt4Dec.ddUsd >= t.th;
     const isKeyMilestone = [100, 200, 400, 600, 800, 1000, 1500, 2000, 3000, 4000].includes(t.th);
-    const needCapForThisTier = Math.ceil((t.th * 1.2 + Math.max(t.maxMar || obsMaxMar, t.th * 0.55) * 1.5) / 20) * 20;
-    const canCurrentBalSurvive = curBal >= (t.th + (t.maxMar || obsMaxMar) * 0.5);
-    const rowBg = isNowActive
-      ? 'rgba(244,63,94,0.18)'
-      : isHitEver
-      ? 'rgba(245,158,11,0.08)'
-      : 'transparent';
+
+    // 匹配 EA 真实加仓模型各层
+    let matchedLayer = ea.layers[0];
+    for (let i = 0; i < ea.layers.length; i++) {
+      if (ea.layers[i].ddUsd >= t.th) {
+        matchedLayer = ea.layers[i];
+        break;
+      }
+      matchedLayer = ea.layers[i];
+    }
+
+    const estMar = matchedLayer.estMargin || Math.max(6, t.th * 0.08);
+    // 保底防爆线 (净值保持在 100% 维持率，不触发 50% 强平)
+    const capMin = Math.ceil((t.th + estMar * 1.2) / 10) * 10;
+    // 稳健推荐本金 (250% 充裕维持率，防范极端单边连加 2-3 层)
+    const capRec = Math.ceil((t.th * 1.45 + estMar * 2.8) / 50) * 50;
+
+    let safetyBadge = '';
+    if (curBal >= capRec) {
+      safetyBadge = `<span class="pill RANGE" style="font-size:10.5px;padding:2px 6px">🟢 资金充裕 (+${Math.round(curBal - capRec)}$)</span>`;
+    } else if (curBal >= capMin) {
+      safetyBadge = `<span class="pill MIXED" style="font-size:10.5px;padding:2px 6px">🟡 临界抗险 (防爆但忌加仓)</span>`;
+    } else {
+      safetyBadge = `<span class="pill TREND" style="font-size:10.5px;padding:2px 6px">🔴 存在强平风险 (缺 $${Math.round(capMin - curBal)})</span>`;
+    }
+
+    const recPct = t.waves > 0 ? Math.round(((t.recovered || 0) / t.waves) * 100) : 100;
+    const rowBg = isNowActive ? 'rgba(244,63,94,0.18)' : isHitEver ? 'rgba(245,158,11,0.06)' : 'transparent';
+
     return `<tr style="background:${rowBg};${isKeyMilestone ? 'font-weight:700;' : ''}">
       <td>
         <span style="color:${t.th >= 3000 ? '#e11d48' : t.th >= 1000 ? '#fb7185' : t.th >= 200 ? '#fbbf24' : '#38bdf8'};font-weight:800">浮亏 ≥ $${t.th}</span>
         ${isNowActive ? `<span class="pill TREND" style="margin-left:4px;padding:1px 6px;font-size:10px">🔥 当前正处此级</span>` : ''}
       </td>
-      <td><b style="font-size:14.5px;color:${(t.waves || 0) > 0 ? '#fbbf24' : '#64748b'}">${t.waves || 0} 次</b></td>
-      <td><span style="color:#34d399;font-weight:700">${t.recovered || 0} 次解套</span></td>
-      <td>${t.durSec > 0 ? `<b style="color:#e2e8f0">${fmtDuration(t.durSec)}</b>` : '<span class="mut">0秒</span>'}</td>
-      <td>${t.maxMar > 0 ? `预付款 <b>$${f2(t.maxMar)}</b> / 峰值亏 <b style="color:#fb7185">-$${f2(t.maxDd)}</b>` : '<span class="mut">未触及</span>'}</td>
-      <td class="xs">${t.lastTs ? `${fmtSecTime(t.lastTs)} · $${f2(t.lastPx)} · ${t.lastPos || ''}` : '<span class="mut">-</span>'}</td>
-      <td>
-        <b style="color:var(--gold)">建议 ≥ $${needCapForThisTier}</b>
-        <span class="pill ${canCurrentBalSurvive ? 'RANGE' : 'TREND'}" style="font-size:10px;padding:1px 5px;margin-left:4px">${canCurrentBalSurvive ? '当前余额可扛' : '当前余额会爆仓'}</span>
+      <td style="font-size:11.5px">
+        <b>第 ${matchedLayer.n} 层</b> · 累 <b>${matchedLayer.cumLot}</b> 手 · 预估预付款 <b>$${estMar.toFixed(0)}</b>
       </td>
+      <td><b style="font-size:14px;color:${(t.waves || 0) > 0 ? '#fbbf24' : '#64748b'}">${t.waves || 0} 次</b></td>
+      <td><span style="color:#34d399;font-weight:700">${t.recovered || 0} 次 (${recPct}%)</span></td>
+      <td>${t.durSec > 0 ? `<b style="color:#e2e8f0">${fmtDuration(t.durSec)}</b>` : '<span class="mut">0秒</span>'}</td>
+      <td>
+        <span style="font-size:11px;color:#94a3b8">保底防爆:</span> <b style="color:#fbbf24;font-size:12px">$${capMin}</b>
+        <span style="font-size:11px;color:#94a3b8;margin-left:6px">稳健推荐:</span> <b style="color:var(--gold);font-size:12px">$${capRec}</b>
+      </td>
+      <td>${safetyBadge}</td>
+      <td class="xs">${t.lastTs ? `${fmtSecTime(t.lastTs)} · $${f2(t.lastPx)}` : '<span class="mut">未曾触及</span>'}</td>
     </tr>`;
   }).join('');
 
@@ -6806,19 +7057,20 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       <!-- 左侧：浮亏超过 50 / 100 / 200 / 400 / 600 / 800 / 1000... 阶段次数统计表 -->
       <div id="mt4TierSec" style="background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:10px;padding:11px 13px;overflow-x:auto">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-          <b style="color:var(--gold);font-size:13.5px">📊 账户浮亏分阶段突破次数统计表 (独立深套波次计数 · 含 $200 / $400 / $600 / $1000+ 阶梯)</b>
-          <span class="xs mut">同一轮马丁扛单不重复刷次数，平仓解套重置后再次突破才计为下一波</span>
+          <b style="color:var(--gold);font-size:13.5px">🪜 账户浮亏分阶段突破次数与科学抗险推演表 ($50 ~ $4000)</b>
+          <span class="xs mut">基于当前 EA 策略参数 (首单 0.02 / 倍率 1.38 / 封顶 1.32) 严格推演对应层数、持仓手数及所需抗险本金</span>
         </div>
-        <table class="tbl" style="font-size:12px">
+        <table class="tbl" style="font-size:12px;width:100%">
           <thead>
             <tr>
-              <th>浮亏金额阶梯</th>
-              <th>独立发生次数</th>
-              <th>成功解套次数</th>
+              <th>浮亏阶梯</th>
+              <th>EA加仓推演 (层数/手数/预估保证金)</th>
+              <th>发生频次</th>
+              <th>成功解套率</th>
               <th>累计停留时长</th>
-              <th>该级最大预付款 / 峰值浮亏</th>
-              <th>最近一次触发记录</th>
-              <th>扛过该级所需本金</th>
+              <th>科学抗险所需本金</th>
+              <th>当前账户安全度 (余额 $${f2(curBal)})</th>
+              <th>最近一次触发</th>
             </tr>
           </thead>
           <tbody>
