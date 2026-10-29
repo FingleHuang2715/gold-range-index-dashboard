@@ -9,9 +9,14 @@
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
   body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
-  header{position:sticky;top:0;z-index:50;background:rgba(11,14,20,0.94);backdrop-filter:blur(12px);display:flex;flex-wrap:nowrap;gap:12px;align-items:center;justify-content:space-between;padding:8px 20px;border-bottom:1px solid var(--bd)}
-  header>div:first-child{min-width:0;flex:1}
-  h1{margin:0;font-size:17.5px;color:#f8fafc;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  header{position:sticky;top:0;z-index:50;background:rgba(11,14,20,0.96);backdrop-filter:blur(14px);display:flex;flex-direction:column;gap:5px;padding:6px 18px;border-bottom:1px solid var(--bd)}
+  .header-row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%}
+  .header-row-top{min-height:26px}
+  .header-row-bot{min-height:30px}
+  .world-clocks{display:flex;align-items:center;gap:12px;font-size:11.5px;background:rgba(15,23,42,0.65);padding:2px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.06)}
+  .world-clocks .clk-item{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+  header>div:first-child{min-width:0}
+  h1{margin:0;font-size:16.5px;color:#f8fafc;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-flex;align-items:center;gap:6px}
   h1 b{color:var(--gold)}
   .sub{color:var(--mut);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
@@ -26,7 +31,7 @@
   button.on{background:rgba(234,179,8,0.15);color:var(--gold);border-color:rgba(234,179,8,0.5);font-weight:600}
   button:disabled{opacity:.5;cursor:wait}
   .layout{display:grid;grid-template-columns:224px minmax(0,1fr);max-width:1680px;margin:0 auto}
-  aside.sidenav{position:sticky;top:61px;height:calc(100vh - 61px);overflow-y:auto;overflow-x:hidden;padding:12px 10px;border-right:1px solid var(--bd);background:#0e121a;display:flex;flex-direction:column;gap:2px;scrollbar-width:thin;scrollbar-color:#212838 transparent}
+  aside.sidenav{position:sticky;top:70px;height:calc(100vh - 70px);overflow-y:auto;overflow-x:hidden;padding:12px 10px;border-right:1px solid var(--bd);background:#0e121a;display:flex;flex-direction:column;gap:2px;scrollbar-width:thin;scrollbar-color:#212838 transparent}
   aside.sidenav:hover{scrollbar-color:rgba(234,179,8,0.45) transparent}
   aside.sidenav::-webkit-scrollbar{width:4px}
   aside.sidenav::-webkit-scrollbar-track{background:transparent}
@@ -147,55 +152,69 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
 </head>
 <body>
 <header>
-  <div>
-    <h1>🥇 <b>黄金震荡指数</b> <span class="mut sm" style="font-weight:400">· 网格马丁量化决策台</span></h1>
-    <div class="sub" id="meta">加载中…</div>
+  <!-- 第一行：品牌标题 + 盘面时段徽标 + 4大世界交易时钟 (固定常驻，清晰不拥挤) -->
+  <div class="header-row header-row-top">
+    <div style="display:flex;align-items:center;gap:10px;min-width:0">
+      <h1>🥇 <b>黄金震荡指数</b> <span class="mut sm" style="font-weight:400">· 网格马丁量化决策台</span></h1>
+      <span id="clkSessionBadge" class="pill RANGE" style="font-size:10px;padding:1px 6px">🌏 亚盘震荡期</span>
+    </div>
+    <div class="world-clocks" title="全球主要黄金外汇交易时区实时时钟 (自动按夏/冬令时高精对齐)">
+      <div class="clk-item" title="北京时间 (BJT · UTC+8)"><span style="opacity:.7">🇨🇳 北京</span> <b id="clkBjt" style="color:#fbbf24;font-family:monospace;font-size:12px">--:--:--</b></div>
+      <div class="clk-item" title="伦敦时间 (LON · 欧盘主力)"><span style="opacity:.7">🇬🇧 伦敦</span> <b id="clkLon" style="color:#a78bfa;font-family:monospace;font-size:12px">--:--:--</b></div>
+      <div class="clk-item" title="纽约时间 (NYC · 美盘主力)"><span style="opacity:.7">🇺🇸 纽约</span> <b id="clkNyc" style="color:#fb923c;font-family:monospace;font-size:12px">--:--:--</b></div>
+      <div class="clk-item" title="东京时间 (TYO · 亚盘开盘)"><span style="opacity:.7">🇯🇵 东京</span> <b id="clkTyo" style="color:#38bdf8;font-family:monospace;font-size:12px">--:--:--</b></div>
+    </div>
   </div>
-  <div class="btns" style="align-items:center">
-    <!-- 智能语音播报弹层 (收拢繁杂设置，大幅释放页眉横向空间) -->
-    <details class="header-dropdown" id="voiceDropdownDetails" style="position:relative">
-      <summary style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:4px 9px;border:1px solid var(--bd);border-radius:7px;background:var(--card2);font-size:12px;font-weight:700;height:30px;box-sizing:border-box;user-select:none" title="点击展开智能语音风控播报设置">
-        <span id="btnVoiceToggle">🔊 语音: 开</span>
-        <span id="voiceHeaderBadge" class="pill RANGE" style="font-size:10px;padding:1px 5px">Lv1</span>
-        <span style="font-size:9px;opacity:.6">▾</span>
-      </summary>
-      <div style="position:absolute;top:calc(100% + 6px);right:0;background:rgba(15,20,30,0.98);border:1.5px solid var(--bd);border-radius:10px;padding:12px 14px;box-shadow:0 12px 30px rgba(0,0,0,0.7);z-index:100;min-width:260px;backdrop-filter:blur(14px)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--bd)">
-          <b style="color:#fff;font-size:12.5px">🔊 智能语音风控播报</b>
-          <button class="sm" onclick="toggleVoiceAlert()" style="padding:2px 8px;font-size:11px">切换开/关</button>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span class="mut xs">报警敏感度:</span>
-            <select id="voiceSensSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:var(--gold);border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px;font-weight:700">
-              <option value="1">Lv1 仅极高危保命 (推荐)</option>
-              <option value="2">Lv2 中高危均衡报警</option>
-              <option value="3">Lv3 高灵敏盯盘模式</option>
-              <option value="0">Lv0 仅手动重磅锁</option>
-            </select>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span class="mut xs">防打扰冷却:</span>
-            <select id="voiceCoolSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:#cbd5e1;border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px">
-              <option value="15">15分钟</option>
-              <option value="5">5分钟</option>
-              <option value="30">30分钟</option>
-              <option value="60">60分钟</option>
-            </select>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.06)">
-            <span class="xs mut">检测设备扬声器</span>
-            <button class="sm" onclick="testVoiceAlert()" style="padding:2px 8px;font-size:11px">🔈 试听声音</button>
-          </div>
-        </div>
-      </div>
-    </details>
 
-    <button id="btnMt4Guide" onclick="toggleMt4Guide()" style="border-color:rgba(56,189,248,0.5);color:#38bdf8;font-weight:700" title="点击打开 MT4 实盘数据同步中心">🔌 MT4同步</button>
-    <button id="btnEaParamGuide" onclick="if(window.toggleEaParamGuide)toggleEaParamGuide(true);document.getElementById('eaParamGuideSec').scrollIntoView({behavior:'smooth'})" style="border-color:rgba(52,211,153,0.6);color:#34d399;font-weight:700" title="查看 XAUUSD M1 马丁策略震荡加剧调参指南与优化配置">⚙️ 调参指南</button>
-    <button id="btnFast" title="立即极速刷新 1M~4H 实时行情与震荡指数">⚡ 刷新</button>
-    <button class="pri" id="btnFetch" title="全量刷新所有数据（含日线kNN/金十周历）">🔄 全量</button>
-    <button class="pri" id="btnCopy" title="一键复制全站决策分析发给AI">📋 复制给AI</button>
+  <!-- 第二行：系统元信息状态 + 核心操作工具栏 -->
+  <div class="header-row header-row-bot">
+    <div class="sub" id="meta" style="flex:1;min-width:0">加载中…</div>
+    <div class="btns" style="align-items:center">
+      <!-- 智能语音播报弹层 (收拢繁杂设置，大幅释放页眉横向空间) -->
+      <details class="header-dropdown" id="voiceDropdownDetails" style="position:relative">
+        <summary style="display:flex;align-items:center;gap:5px;cursor:pointer;padding:4px 9px;border:1px solid var(--bd);border-radius:7px;background:var(--card2);font-size:12px;font-weight:700;height:30px;box-sizing:border-box;user-select:none" title="点击展开智能语音风控播报设置">
+          <span id="btnVoiceToggle">🔊 语音: 开</span>
+          <span id="voiceHeaderBadge" class="pill RANGE" style="font-size:10px;padding:1px 5px">Lv1</span>
+          <span style="font-size:9px;opacity:.6">▾</span>
+        </summary>
+        <div style="position:absolute;top:calc(100% + 6px);right:0;background:rgba(15,20,30,0.98);border:1.5px solid var(--bd);border-radius:10px;padding:12px 14px;box-shadow:0 12px 30px rgba(0,0,0,0.7);z-index:100;min-width:260px;backdrop-filter:blur(14px)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--bd)">
+            <b style="color:#fff;font-size:12.5px">🔊 智能语音风控播报</b>
+            <button class="sm" onclick="toggleVoiceAlert()" style="padding:2px 8px;font-size:11px">切换开/关</button>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span class="mut xs">报警敏感度:</span>
+              <select id="voiceSensSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:var(--gold);border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px;font-weight:700">
+                <option value="1">Lv1 仅极高危保命 (推荐)</option>
+                <option value="2">Lv2 中高危均衡报警</option>
+                <option value="3">Lv3 高灵敏盯盘模式</option>
+                <option value="0">Lv0 仅手动重磅锁</option>
+              </select>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span class="mut xs">防打扰冷却:</span>
+              <select id="voiceCoolSelect" onchange="updateVoiceCfg()" style="background:var(--bg);color:#cbd5e1;border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px">
+                <option value="15">15分钟</option>
+                <option value="5">5分钟</option>
+                <option value="30">30分钟</option>
+                <option value="60">60分钟</option>
+              </select>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.06)">
+              <span class="xs mut">检测设备扬声器</span>
+              <button class="sm" onclick="testVoiceAlert()" style="padding:2px 8px;font-size:11px">🔈 试听声音</button>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <button id="btnMt4Guide" onclick="toggleMt4Guide()" style="border-color:rgba(56,189,248,0.5);color:#38bdf8;font-weight:700" title="点击打开 MT4 实盘数据同步中心">🔌 MT4同步</button>
+      <button id="btnEaParamGuide" onclick="if(window.toggleEaParamGuide)toggleEaParamGuide(true);document.getElementById('eaParamGuideSec').scrollIntoView({behavior:'smooth'})" style="border-color:rgba(52,211,153,0.6);color:#34d399;font-weight:700" title="查看 XAUUSD M1 马丁策略震荡加剧调参指南与优化配置">⚙️ 调参指南</button>
+      <button id="btnFast" title="立即极速刷新 1M~4H 实时行情与震荡指数">⚡ 刷新</button>
+      <button class="pri" id="btnFetch" title="全量刷新所有数据（含日线kNN/金十周历）">🔄 全量</button>
+      <button class="pri" id="btnCopy" title="一键复制全站决策分析发给AI">📋 复制给AI</button>
+    </div>
   </div>
 </header>
 <div class="layout">
@@ -728,6 +747,52 @@ const $ = (id) => document.getElementById(id);
 const fmtBJ = (ts) => new Date(ts * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-');
 const f2 = (v) => v == null || isNaN(v) ? '-' : Number(v).toFixed(2);
 const toast = (m) => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 1800); };
+
+// ========== 常用世界时区时钟 (北京/伦敦/纽约/东京) 每秒精准跳动 ==========
+function updateWorldClocks() {
+  const now = new Date();
+  const fmt = (tz) => {
+    try {
+      return now.toLocaleTimeString('zh-CN', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch (e) {
+      return '--:--:--';
+    }
+  };
+  const bjt = fmt('Asia/Shanghai');
+  const lon = fmt('Europe/London');
+  const nyc = fmt('America/New_York');
+  const tyo = fmt('Asia/Tokyo');
+
+  const elBjt = $('clkBjt'); if (elBjt) elBjt.textContent = bjt;
+  const elLon = $('clkLon'); if (elLon) elLon.textContent = lon;
+  const elNyc = $('clkNyc'); if (elNyc) elNyc.textContent = nyc;
+  const elTyo = $('clkTyo'); if (elTyo) elTyo.textContent = tyo;
+
+  const bjH = Number(bjt.slice(0, 2)) || 0;
+  const uDay = now.getUTCDay(), uH = now.getUTCHours();
+  const isWeekend = (uDay === 6 && uH >= 3) || (uDay === 0) || (uDay === 1 && uH < 1);
+  const badge = $('clkSessionBadge');
+  if (badge) {
+    if (isWeekend) {
+      badge.textContent = '💤 周末休市';
+      badge.className = 'pill NEUT';
+    } else if (bjH >= 20 || bjH < 4) {
+      badge.textContent = '🗽 美盘主力期';
+      badge.className = 'pill TREND';
+    } else if (bjH >= 15 && bjH < 20) {
+      badge.textContent = '🌍 欧盘活跃期';
+      badge.className = 'pill MIXED';
+    } else if (bjH >= 8 && bjH < 15) {
+      badge.textContent = '🌏 亚盘震荡期';
+      badge.className = 'pill RANGE';
+    } else {
+      badge.textContent = '🌙 隔夜清淡期';
+      badge.className = 'pill NEUT';
+    }
+  }
+}
+setInterval(updateWorldClocks, 1000);
+setTimeout(updateWorldClocks, 10);
 
 function clamp(x, a = 0, b = 100) { return Math.max(a, Math.min(b, x)); }
 function r1(x) { return Math.round(x * 10) / 10; }
@@ -4845,12 +4910,161 @@ window.clearMt4Data = async function() {
 };
 
 // ========== MT4 实盘账户深度联动决策引擎 + 长期历史归档/峰值纪念碑/浮亏阶梯统计/入金测算 ==========
-const MT4_CHART_STATE = { pts: null, mode: 'fast' }; // 'fast' (近2小时·30秒粒度) | 'long' (7~30天长周期·15分钟极值桶)
-const MT4_DD_TIERS_DEF = [50, 100, 150, 200, 300, 400, 600, 800, 1000, 1500, 2000];
+const MT4_CHART_STATE = {
+  pts: null,
+  tf: '4H',            // '4H' | '24H' | '7D' | 'ALL'
+  mode: 'fast',        // 兼容模式
+  panOffset: 0,        // 水平平移偏移量 (点数, 0 为最新)
+  windowSize: 100,     // 单屏展现的点数 (用于拖拽平移)
+  isDragging: false,
+  dragStartX: 0,
+  dragStartOffset: 0,
+  hasMoved: false,
+  fullCount: 0
+};
+const MT4_DD_TIERS_DEF = [50, 100, 150, 200, 300, 400, 600, 800, 1000, 1500, 2000, 3000, 4000];
+
+// ========== 浮亏高危时段热力表日期范围筛选状态 ==========
+const HEATMAP_FILTER = {
+  preset: 'all', // 'all' | 'today' | 'yesterday' | '3d' | '7d' | 'custom'
+  startDate: '',
+  endDate: ''
+};
+
+// 长期归档本地缓存 & 服务端拉取
+window.MT4_ARCHIVE = null;
+let _mt4ArchiveLoading = false;
+async function fetchMt4Archive(force = false) {
+  if (!force && window.MT4_ARCHIVE) return window.MT4_ARCHIVE;
+  if (_mt4ArchiveLoading) return;
+  _mt4ArchiveLoading = true;
+  try {
+    const r = await fetch('/api/mt4?archive=1');
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.ok && j.archive) {
+        window.MT4_ARCHIVE = j.archive;
+        try { localStorage.setItem('gold_mt4_archive_cache', JSON.stringify(j.archive)); } catch(e){}
+      }
+    }
+  } catch(e) {}
+  finally { _mt4ArchiveLoading = false; }
+  return window.MT4_ARCHIVE;
+}
+try {
+  const c = localStorage.getItem('gold_mt4_archive_cache');
+  if (c) window.MT4_ARCHIVE = JSON.parse(c);
+} catch(e) {}
+fetchMt4Archive();
+
+window.setMt4CurveTf = function(tf) {
+  MT4_CHART_STATE.tf = tf;
+  MT4_CHART_STATE.mode = (tf === '4H') ? 'fast' : 'long';
+  MT4_CHART_STATE.panOffset = 0; // 切换周期重置到最新
+  if (tf === 'ALL' && (!window.MT4_ARCHIVE || !window.MT4_ARCHIVE.hist1h)) {
+    fetchMt4Archive(true).then(() => { if (D) render(); });
+  }
+  if (D) render();
+};
 
 window.setMt4CurveMode = function(m) {
-  MT4_CHART_STATE.mode = m;
+  window.setMt4CurveTf(m === 'fast' ? '4H' : '7D');
+};
+
+window.panMt4Chart = function(step) {
+  const maxOffset = Math.max(0, (MT4_CHART_STATE.fullCount || 0) - (MT4_CHART_STATE.pts ? MT4_CHART_STATE.pts.arr.length : 100));
+  MT4_CHART_STATE.panOffset = Math.max(0, Math.min(maxOffset, (MT4_CHART_STATE.panOffset || 0) + step));
   if (D) render();
+};
+
+window.resetMt4ChartPan = function() {
+  MT4_CHART_STATE.panOffset = 0;
+  if (D) render();
+};
+
+function getMt4CurveDataset(tf, historyFast, historyLong) {
+  const now = Date.now();
+  if (tf === '4H') {
+    const cutoff = now - 4 * 3600 * 1000;
+    const fastPts = (historyFast || []).filter(p => (p.t || 0) >= cutoff);
+    if (fastPts.length >= 8) return fastPts;
+    return (historyFast && historyFast.length) ? historyFast.slice(-480) : (historyLong || []).slice(-16);
+  } else if (tf === '24H') {
+    const cutoff = now - 24 * 3600 * 1000;
+    const longPts = (historyLong || []).filter(p => (p.t || 0) >= cutoff);
+    if (longPts.length >= 10) return longPts;
+    return (historyLong && historyLong.length) ? historyLong.slice(-96) : (historyFast || []);
+  } else if (tf === '7D') {
+    const cutoff = now - 7 * 86400 * 1000;
+    const longPts = (historyLong || []).filter(p => (p.t || 0) >= cutoff);
+    if (longPts.length >= 10) return longPts;
+    return (historyLong && historyLong.length) ? historyLong.slice(-672) : (historyFast || []);
+  } else {
+    // ALL: 长期持续记录
+    let all = [];
+    if (window.MT4_ARCHIVE && Array.isArray(window.MT4_ARCHIVE.hist1h) && window.MT4_ARCHIVE.hist1h.length) {
+      const arcH1 = window.MT4_ARCHIVE.hist1h.map(p => ({
+        t: (p.t < 1e11 ? p.t * 1000 : p.t),
+        bal: p.bal, eq: p.eq, eqMin: p.eqMin, dd: p.dd, ddMax: p.dd, mar: p.mar, marMax: p.mar, pnl: p.pnl, px: p.px
+      }));
+      const lastArcT = arcH1[arcH1.length - 1].t;
+      const recentLong = (historyLong || []).filter(p => (p.t || 0) > lastArcT);
+      all = arcH1.concat(recentLong);
+    }
+    if (!all.length) {
+      all = (historyLong && historyLong.length) ? historyLong : (historyFast || []);
+    }
+    return all;
+  }
+}
+
+window.setHeatmapPreset = function(preset) {
+  HEATMAP_FILTER.preset = preset;
+  const now = new Date(Date.now() + 8 * 3600000);
+  const toIso = (d) => d.toISOString().slice(0, 10);
+  if (preset === 'today') {
+    HEATMAP_FILTER.startDate = toIso(now);
+    HEATMAP_FILTER.endDate = toIso(now);
+  } else if (preset === 'yesterday') {
+    const yest = new Date(now.getTime() - 86400000);
+    HEATMAP_FILTER.startDate = toIso(yest);
+    HEATMAP_FILTER.endDate = toIso(yest);
+  } else if (preset === '3d') {
+    const d3 = new Date(now.getTime() - 2 * 86400000);
+    HEATMAP_FILTER.startDate = toIso(d3);
+    HEATMAP_FILTER.endDate = toIso(now);
+  } else if (preset === '7d') {
+    const d7 = new Date(now.getTime() - 6 * 86400000);
+    HEATMAP_FILTER.startDate = toIso(d7);
+    HEATMAP_FILTER.endDate = toIso(now);
+  } else if (preset === 'all') {
+    HEATMAP_FILTER.startDate = '';
+    HEATMAP_FILTER.endDate = '';
+  }
+  if (!window.MT4_ARCHIVE) {
+    fetchMt4Archive(true).then(() => { if (D) render(); });
+  }
+  if (D) render();
+};
+
+window.applyHeatmapCustomDate = function() {
+  const s = $('heatStartDate') ? $('heatStartDate').value : '';
+  const e = $('heatEndDate') ? $('heatEndDate').value : '';
+  if (!s || !e) {
+    toast('请选择开始和结束日期');
+    return;
+  }
+  HEATMAP_FILTER.preset = 'custom';
+  HEATMAP_FILTER.startDate = s <= e ? s : e;
+  HEATMAP_FILTER.endDate = s <= e ? e : s;
+  if (!window.MT4_ARCHIVE) {
+    fetchMt4Archive(true).then(() => { if (D) render(); });
+  }
+  if (D) render();
+};
+
+window.resetHeatmapFilter = function() {
+  window.setHeatmapPreset('all');
 };
 
 function fmtDuration(sec) {
@@ -5010,7 +5224,7 @@ function getMergedMt4History(mt4) {
     px: curPx
   };
   addFastPt(nowPt);
-  const mergedFast = Array.from(fastMap.values()).sort((a, b) => a.t - b.t).slice(-240);
+  const mergedFast = Array.from(fastMap.values()).sort((a, b) => a.t - b.t).slice(-480);
   try { localStorage.setItem(accFastKey, JSON.stringify(mergedFast)); } catch (e) {}
 
   // 2) 合并长周期 15 分钟极值归档序列 (historyLong，最多保存 720 个桶 = 7.5天 ~ 10个交易日)
@@ -5549,7 +5763,14 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   const vMin = +(bMin - padV).toFixed(1);
   const vMax = +(bMax + padV).toFixed(1);
 
-  let pMin = Math.min(0, -10, -pkMaxDd), pMax = Math.max(0, 10);
+  // 关键：严格基于【当前图表视窗下 (arr)】计算局部最大浮亏，杜绝历史全局极值拉扯扭曲 Y 轴
+  let localPeakDd = 0;
+  arr.forEach((p) => {
+    const dd = p.ddMax != null ? p.ddMax : (p.dd != null ? p.dd : Math.max(0, -(p.pnl || 0)));
+    if (dd > localPeakDd) localPeakDd = dd;
+  });
+
+  let pMin = Math.min(0, -10, -localPeakDd), pMax = Math.max(0, 10);
   arr.forEach((p) => {
     const netRet = r2((p.eq || 0) - initBal);
     const fl = p.ddMax != null ? -p.ddMax : r2(p.pnl || 0);
@@ -5597,7 +5818,7 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   const lastEqY = yTop(last.eq).toFixed(1);
   const eqColor = last.eq >= last.bal ? '#34d399' : '#38bdf8';
 
-  // 下面板：0轴 + 浮动盈亏柱状图 + 综合净收益折线 + 历史最大浮亏峰值水平红线
+  // 下面板：0轴 + 浮动盈亏柱状图 + 综合净收益折线 + 视窗局部峰值浮亏水平红线
   const yZero = yBot(0).toFixed(1);
   const botTicks = [0, 0.5, 1].map((f) => {
     const val = pMin + (1 - f) * (pMax - pMin);
@@ -5607,17 +5828,17 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   }).join('');
 
   let maxDdLineSvg = '';
-  if (pkMaxDd > 0 && -pkMaxDd >= pMin && -pkMaxDd <= pMax) {
-    const ydd = yBot(-pkMaxDd).toFixed(1);
+  if (localPeakDd > 0 && -localPeakDd >= pMin && -localPeakDd <= pMax) {
+    const ydd = yBot(-localPeakDd).toFixed(1);
     maxDdLineSvg = `
       <line x1="${L}" y1="${ydd}" x2="${W - R}" y2="${ydd}" stroke="#f43f5e" stroke-width="1.3" stroke-dasharray="4,3"/>
-      <text x="${W - R + 6}" y="${+ydd + 4}" fill="#fb7185" font-size="10.5" font-weight="800">🔥 浮亏峰值 -$${pkMaxDd.toFixed(2)}</text>`;
+      <text x="${W - R + 6}" y="${+ydd + 4}" fill="#fb7185" font-size="10.5" font-weight="800">🔥 视窗峰值浮亏 -$${localPeakDd.toFixed(2)}</text>`;
   }
 
   const bw = Math.max(2.5, Math.min(9, cw / Math.max(8, n) * 0.62));
   const pnlBars = arr.map((p, i) => {
     const x = xOf(i);
-    const fl = mode === 'long' && p.ddMax != null ? -p.ddMax : (p.pnl || 0);
+    const fl = p.ddMax != null ? -p.ddMax : (p.pnl || 0);
     const yVal = yBot(fl);
     const y0 = yBot(0);
     const yt = Math.min(yVal, y0).toFixed(1);
@@ -5637,14 +5858,24 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   for (let i = 0; i < n; i += xStep) {
     const x = xOf(i).toFixed(1);
     const dObj = new Date(arr[i].t);
-    const tm = mode === 'long'
+    const tm = (mode === '7D' || mode === 'ALL' || mode === 'long')
       ? dObj.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-')
       : dObj.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
     xTicks += `<line x1="${x}" y1="${topTop}" x2="${x}" y2="${botBot}" stroke="#262d3b" stroke-width="1" opacity="0.45"/>
       <text x="${x}" y="${H - 12}" text-anchor="middle" fill="#94a3b8" font-size="11">${tm}</text>`;
   }
 
-  return `<svg class="big-svg" id="svg-mt4-curve" style="height:415px;min-height:370px;max-height:460px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onMt4ChartMove(event)" onmouseleave="onMt4ChartLeave()">
+  const tfLabel = mode === '4H' ? '近4小时 (高频30s)' : mode === '24H' ? '近24小时' : mode === '7D' ? '近7天 (长周期归档)' : '长期持续记录 (全量)';
+
+  return `<svg class="big-svg" id="svg-mt4-curve" style="height:415px;min-height:370px;max-height:460px;cursor:grab;user-select:none" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+    onmousedown="onMt4ChartMouseDown(event)"
+    onmousemove="onMt4ChartMouseMove(event)"
+    onmouseup="onMt4ChartMouseUp(event)"
+    onmouseleave="onMt4ChartMouseLeave(event)"
+    ontouchstart="onMt4ChartTouchStart(event)"
+    ontouchmove="onMt4ChartTouchMove(event)"
+    ontouchend="onMt4ChartTouchEnd(event)"
+    onwheel="onMt4ChartWheel(event)">
     <defs>
       <linearGradient id="mt4EqGrad" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stop-color="${eqColor}" stop-opacity="0.28"/>
@@ -5653,7 +5884,7 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
     </defs>
 
     <!-- 上面板：余额 & 净值 (自适应动态刻度，告别横向直线) -->
-    <text x="${L + 6}" y="${topTop - 7}" fill="#fbbf24" font-size="12.5" font-weight="bold">💰 账户实时余额 (金实线) vs 实时净值走势 (青蓝折线·自适应聚焦) [当前已用预付款: $${curMar.toFixed(2)} · 预付款比例: ${mt4.marginLevel ? mt4.marginLevel.toFixed(1) + '%' : '-'}] [${mode === 'long' ? `长周期归档·${arr.length}点` : `高频实时流·${arr.length}点`}]</text>
+    <text x="${L + 6}" y="${topTop - 7}" fill="#fbbf24" font-size="12.5" font-weight="bold">💰 账户实时余额 (金实线) vs 实时净值走势 (青蓝折线·自适应聚焦) [当前预付款: $${curMar.toFixed(2)} · 预付款比: ${mt4.marginLevel ? mt4.marginLevel.toFixed(1) + '%' : '-'}] [${tfLabel} · 视窗${arr.length}点 · 左右拖拽平移]</text>
     ${topTicks}
     ${marginLineSvg}
     <polygon points="${eqArea}" fill="url(#mt4EqGrad)"/>
@@ -5664,9 +5895,9 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
     <text x="${W - R + 6}" y="${+lastBalY + 4}" fill="#fbbf24" font-size="11.5" font-weight="800">余额 $${last.bal.toFixed(2)}</text>
     <text x="${W - R + 6}" y="${Math.abs(lastEqY - lastBalY) < 14 ? (+lastBalY + 18) : (+lastEqY + 4)}" fill="${eqColor}" font-size="11.5" font-weight="800">净值 $${last.eq.toFixed(2)}</text>
 
-    <!-- 下面板：实时收益曲线 & 浮亏柱状图 & 浮亏峰值红线 -->
+    <!-- 下面板：实时收益曲线 & 浮亏柱状图 & 浮亏峰值红线 (局部自适应，不被全局历史极值压缩) -->
     <line x1="${L}" y1="${topBot + 14}" x2="${W - R}" y2="${topBot + 14}" stroke="#262d3b" stroke-width="1.5"/>
-    <text x="${L + 6}" y="${botTop - 7}" fill="#38bdf8" font-size="12.5" font-weight="bold">📈 收益与浮亏极值轨迹：已落袋收益(金虚线 ${lastClosed >= 0 ? '+' : ''}$${lastClosed.toFixed(2)}) · 综合净收益(紫线 ${lastRet >= 0 ? '+' : ''}$${lastRet.toFixed(2)}) · 浮动盈亏(红绿柱) · 历史最大浮亏(-$${pkMaxDd.toFixed(2)})</text>
+    <text x="${L + 6}" y="${botTop - 7}" fill="#38bdf8" font-size="12.5" font-weight="bold">📈 收益与浮亏极值轨迹：已落袋收益(金虚线 ${lastClosed >= 0 ? '+' : ''}$${lastClosed.toFixed(2)}) · 综合净收益(紫线 ${lastRet >= 0 ? '+' : ''}$${lastRet.toFixed(2)}) · 浮动盈亏(红绿柱) · 视窗内峰值浮亏(-$${localPeakDd.toFixed(2)})</text>
     ${botTicks}
     <line x1="${L}" y1="${yZero}" x2="${W - R}" y2="${yZero}" stroke="#64748b" stroke-width="1.2" stroke-dasharray="4,2"/>
     ${maxDdLineSvg}
@@ -5690,7 +5921,95 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   </svg>`;
 }
 
-window.onMt4ChartMove = function(ev) {
+// ========== MT4 图表平移拖拽与准星交互逻辑 ==========
+window.onMt4ChartMouseDown = function(ev) {
+  if (ev.button !== 0) return;
+  MT4_CHART_STATE.isDragging = true;
+  MT4_CHART_STATE.dragStartX = ev.clientX;
+  MT4_CHART_STATE.dragStartOffset = MT4_CHART_STATE.panOffset || 0;
+  MT4_CHART_STATE.hasMoved = false;
+  const svg = $('svg-mt4-curve');
+  if (svg) svg.style.cursor = 'grabbing';
+};
+
+window.onMt4ChartMouseMove = function(ev) {
+  const cfg = MT4_CHART_STATE.pts;
+  if (!cfg) return;
+  if (MT4_CHART_STATE.isDragging) {
+    const dx = ev.clientX - MT4_CHART_STATE.dragStartX;
+    if (Math.abs(dx) > 4) MT4_CHART_STATE.hasMoved = true;
+    const pxPerPt = Math.max(1.5, cfg.cw / Math.max(10, cfg.arr.length));
+    const deltaPts = Math.round(dx / pxPerPt);
+    const maxOffset = Math.max(0, (MT4_CHART_STATE.fullCount || 0) - cfg.arr.length);
+    const newOffset = Math.max(0, Math.min(maxOffset, MT4_CHART_STATE.dragStartOffset + deltaPts));
+    if (newOffset !== MT4_CHART_STATE.panOffset) {
+      MT4_CHART_STATE.panOffset = newOffset;
+      if (D) render();
+    }
+    return;
+  }
+  window.onMt4ChartHover(ev);
+};
+
+window.onMt4ChartMouseUp = function(ev) {
+  MT4_CHART_STATE.isDragging = false;
+  const svg = $('svg-mt4-curve');
+  if (svg) svg.style.cursor = 'grab';
+};
+
+window.onMt4ChartMouseLeave = function() {
+  MT4_CHART_STATE.isDragging = false;
+  const svg = $('svg-mt4-curve');
+  if (svg) svg.style.cursor = 'grab';
+  const g = $('xh-mt4');
+  if (g) g.style.display = 'none';
+};
+
+window.onMt4ChartTouchStart = function(ev) {
+  if (ev.touches.length === 1) {
+    MT4_CHART_STATE.isDragging = true;
+    MT4_CHART_STATE.dragStartX = ev.touches[0].clientX;
+    MT4_CHART_STATE.dragStartOffset = MT4_CHART_STATE.panOffset || 0;
+  }
+};
+
+window.onMt4ChartTouchMove = function(ev) {
+  if (MT4_CHART_STATE.isDragging && ev.touches.length === 1) {
+    ev.preventDefault();
+    const cfg = MT4_CHART_STATE.pts;
+    if (!cfg) return;
+    const dx = ev.touches[0].clientX - MT4_CHART_STATE.dragStartX;
+    const pxPerPt = Math.max(1.5, cfg.cw / Math.max(10, cfg.arr.length));
+    const deltaPts = Math.round(dx / pxPerPt);
+    const maxOffset = Math.max(0, (MT4_CHART_STATE.fullCount || 0) - cfg.arr.length);
+    const newOffset = Math.max(0, Math.min(maxOffset, MT4_CHART_STATE.dragStartOffset + deltaPts));
+    if (newOffset !== MT4_CHART_STATE.panOffset) {
+      MT4_CHART_STATE.panOffset = newOffset;
+      if (D) render();
+    }
+  }
+};
+
+window.onMt4ChartTouchEnd = function() {
+  MT4_CHART_STATE.isDragging = false;
+};
+
+window.onMt4ChartWheel = function(ev) {
+  const cfg = MT4_CHART_STATE.pts;
+  if (!cfg) return;
+  const delta = ev.deltaX !== 0 ? ev.deltaX : ev.deltaY;
+  if (Math.abs(delta) < 2) return;
+  ev.preventDefault();
+  const step = delta > 0 ? -5 : 5;
+  const maxOffset = Math.max(0, (MT4_CHART_STATE.fullCount || 0) - cfg.arr.length);
+  const newOffset = Math.max(0, Math.min(maxOffset, (MT4_CHART_STATE.panOffset || 0) + step));
+  if (newOffset !== MT4_CHART_STATE.panOffset) {
+    MT4_CHART_STATE.panOffset = newOffset;
+    if (D) render();
+  }
+};
+
+window.onMt4ChartHover = function(ev) {
   const cfg = MT4_CHART_STATE.pts;
   const svg = $('svg-mt4-curve'), g = $('xh-mt4');
   if (!cfg || !svg || !g) return;
@@ -5728,20 +6047,68 @@ window.onMt4ChartMove = function(ev) {
   t2.textContent = `💰 已平仓落袋: ${closedPnl >= 0 ? '+' : ''}$${f2(closedPnl)}  |  浮动盈亏: ${p.pnl >= 0 ? '+' : ''}$${f2(p.pnl)}  |  综合净收益: ${netRet >= 0 ? '+' : ''}$${f2(netRet)}`;
   t3.textContent = `📊 持仓敞口: 买${f2(p.buyLots)}手 / 卖${f2(p.sellLots)}手 (净敞口 ${p.netLots >= 0 ? '+' : ''}${f2(p.netLots)}手)  |  最低预付款比例: ${f2(p.ml)}%`;
 };
+window.onMt4ChartMove = window.onMt4ChartMouseMove;
+window.onMt4ChartLeave = window.onMt4ChartMouseLeave;
 
-window.onMt4ChartLeave = function() {
-  const g = $('xh-mt4');
-  if (g) g.style.display = 'none';
-};
-
-// ========== 24 小时 (北京时间) 浮亏高危时段热力表：行=浮亏阶梯，列=小时，一眼看出哪些时段容易被深套 ==========
+// ========== 24 小时 (北京时间) 浮亏高危时段热力表：行=浮亏阶梯，列=小时，支持自定义日期范围与3000/4000高危档 ==========
 function buildMt4HourHeatmap(stats, mt4Dec) {
-  const hourly = (stats && Array.isArray(stats.hourly) && stats.hourly.length === 24) ? stats.hourly : null;
-  if (!hourly) return '<div class="xs mut">时段档案正在建立中，下一次实盘推送后即开始按小时累计…</div>';
   const TH = MT4_DD_TIERS_DEF;
   const bjNowH = new Date(Date.now() + 8 * 3600000).getUTCHours();
   const bjNowM = new Date(Date.now() + 8 * 3600000).getUTCMinutes();
   const sessOf = (h) => h >= 8 && h < 15 ? ['亚盘', '#38bdf8'] : h >= 15 && h < 20 ? ['欧盘', '#a78bfa'] : h >= 20 || h < 4 ? ['美盘', '#fb923c'] : ['清淡', '#64748b'];
+
+  const preset = HEATMAP_FILTER.preset || 'all';
+  const startDate = HEATMAP_FILTER.startDate || '';
+  const endDate = HEATMAP_FILTER.endDate || '';
+
+  let activeHourly = null;
+  let rangeLabel = '';
+  const arc = window.MT4_ARCHIVE;
+
+  if (arc && arc.daily && typeof arc.daily === 'object') {
+    const allDates = Object.keys(arc.daily).sort();
+    if (allDates.length > 0) {
+      let filterDates = allDates;
+      if (preset === 'today' && startDate) {
+        filterDates = allDates.filter(d => d === startDate);
+        rangeLabel = `今日 (${startDate})`;
+      } else if (preset === 'yesterday' && startDate) {
+        filterDates = allDates.filter(d => d === startDate);
+        rangeLabel = `昨日 (${startDate})`;
+      } else if ((preset === '3d' || preset === '7d' || preset === 'custom') && startDate && endDate) {
+        filterDates = allDates.filter(d => d >= startDate && d <= endDate);
+        rangeLabel = `${startDate} ~ ${endDate} (共 ${filterDates.length} 天样本)`;
+      } else {
+        rangeLabel = `全部历史 (${allDates[0]} ~ ${allDates[allDates.length - 1]} · 共 ${allDates.length} 天)`;
+      }
+
+      if (filterDates.length > 0) {
+        activeHourly = Array.from({ length: 24 }, () => ({
+          s: 0, dd: 0, mar: 0,
+          w: TH.map(() => 0),
+          d: TH.map(() => 0)
+        }));
+        filterDates.forEach(dateKey => {
+          const dObj = arc.daily[dateKey] || {};
+          for (let h = 0; h < 24; h++) {
+            const slot = dObj[h];
+            if (!slot) continue;
+            activeHourly[h].s += slot.s || 0;
+            if ((slot.dd || 0) > activeHourly[h].dd) activeHourly[h].dd = slot.dd;
+            if ((slot.mar || 0) > activeHourly[h].mar) activeHourly[h].mar = slot.mar;
+            TH.forEach((th, k) => {
+              activeHourly[h].w[k] += (slot.w && slot.w[k]) || 0;
+              activeHourly[h].d[k] += (slot.d && slot.d[k]) || 0;
+            });
+          }
+        });
+      }
+    }
+  }
+
+  const hourly = activeHourly || ((stats && Array.isArray(stats.hourly) && stats.hourly.length === 24) ? stats.hourly : null);
+  if (!hourly) return '<div class="xs mut">时段档案正在建立中，下一次实盘推送后即开始按小时累计…</div>';
+  if (!rangeLabel) rangeLabel = '全天候累计';
 
   // 每小时风险分：阶梯越深权重越高 (独立发生次数×th/50) + 峰值浮亏/50 + 深套停留分钟/10
   const rows = hourly.map((h, i) => {
@@ -5780,17 +6147,17 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
       else if (wv === 0 && dv === 0) { bg = 'rgba(16,185,129,0.08)'; txt = '0'; col = '#4b5d52'; }
       else {
         const inten = Math.min(1, 0.25 + wv * 0.18 + dv / 3600);
-        bg = (th >= 400 ? 'rgba(244,63,94,' : th >= 200 ? 'rgba(249,115,22,' : 'rgba(245,158,11,') + inten.toFixed(2) + ')';
+        bg = (th >= 3000 ? 'rgba(225,29,72,' : th >= 1000 ? 'rgba(244,63,94,' : th >= 200 ? 'rgba(249,115,22,' : 'rgba(245,158,11,') + inten.toFixed(2) + ')';
         txt = wv > 0 ? String(wv) : '~'; col = '#fff';
       }
       const tip = r.s < 60 ? '该小时尚无持仓监测数据' : (String(r.hour).padStart(2, '0') + '时 浮亏≥$' + th + ': 独立发生' + wv + '次, 累计停留' + fmtDuration(dv));
       return '<td title="' + tip + '" style="text-align:center;padding:3px 0;font-size:12px;font-weight:800;background:' + bg + ';color:' + col + ';' + (r.hour === bjNowH ? 'outline:1px solid #38bdf8;' : '') + '">' + txt + '</td>';
     }).join('');
-    return '<tr><td style="padding:3px 8px;white-space:nowrap;font-weight:800;color:' + (th >= 400 ? '#fb7185' : th >= 200 ? '#fb923c' : '#fbbf24') + '">浮亏 ≥ $' + th + '</td>' + cells + '</tr>';
+    return '<tr><td style="padding:3px 8px;white-space:nowrap;font-weight:800;color:' + (th >= 3000 ? '#f43f5e' : th >= 1000 ? '#fb7185' : th >= 200 ? '#fb923c' : '#fbbf24') + '">浮亏 ≥ $' + th + '</td>' + cells + '</tr>';
   }).join('');
 
   const numRow = (label, fn, colFn) => '<tr><td style="padding:3px 8px;white-space:nowrap;font-size:11.5px;color:#94a3b8">' + label + '</td>' + rows.map((r) => '<td style="text-align:center;font-size:11px;padding:3px 0;' + (r.hour === bjNowH ? 'outline:1px solid #38bdf8;' : '') + 'color:' + colFn(r) + '">' + fn(r) + '</td>').join('') + '</tr>';
-  const ddRow = numRow('时段最大浮亏 $', (r) => r.s < 60 ? '·' : (r.dd > 0 ? Math.round(r.dd) : '0'), (r) => r.dd >= 200 ? '#fb7185' : r.dd >= 100 ? '#fb923c' : r.dd > 0 ? '#fbbf24' : '#64748b');
+  const ddRow = numRow('时段最大浮亏 $', (r) => r.s < 60 ? '·' : (r.dd > 0 ? Math.round(r.dd) : '0'), (r) => r.dd >= 300 ? '#fb7185' : r.dd >= 100 ? '#fb923c' : r.dd > 0 ? '#fbbf24' : '#64748b');
   const marRow = numRow('时段最高预付款 $', (r) => r.s < 60 ? '·' : (r.mar > 0 ? Math.round(r.mar) : '0'), () => '#94a3b8');
   const monRow = numRow('累计监测(分钟)', (r) => r.s < 60 ? '·' : Math.round(r.s / 60), () => '#64748b');
   const lvRow = '<tr><td style="padding:4px 8px;white-space:nowrap;font-weight:800;color:#fff">综合风险评级</td>' + rows.map((r) => { const L = level(r); return '<td title="风险分 ' + r.score + '" style="text-align:center;font-size:13px;padding:4px 0;' + (r.hour === bjNowH ? 'outline:1px solid #38bdf8;' : '') + '">' + L.e + '</td>'; }).join('') + '</tr>';
@@ -5822,11 +6189,30 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
     : '<span class="xs mut">目前各时段尚未出现明显深套 (浮亏≥$50)，数据积累越久越准</span>';
 
   return '<div id="mt4HeatSec" style="margin-top:12px;background:linear-gradient(135deg,rgba(244,63,94,0.08),rgba(15,20,30,0.95));border:1.5px solid rgba(244,63,94,0.4);border-radius:10px;padding:11px 13px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><b style="color:#fff;font-size:13.5px">🕒 浮亏高危时段热力表 (北京时间 24 小时 × 浮亏阶梯 · 格内数字=该小时独立深套发生次数，颜色越红越危险)</b><span class="xs">' + curMsg + '</span></div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><b style="color:#fff;font-size:13.5px">🕒 浮亏高危时段热力表 (北京时间 24 小时 × 浮亏阶梯 · 支持阶梯至$4000 &amp; 自定义日期筛选)</b><span class="xs">' + curMsg + '</span></div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px;background:rgba(15,23,42,0.7);padding:6px 10px;border-radius:8px;border:1px solid rgba(244,63,94,0.25)">'
+    + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+    + '<span style="font-size:12px;font-weight:700;color:var(--gold)">🗓️ 时段范围:</span>'
+    + '<button class="sm ' + (preset === 'all' ? 'on' : '') + '" onclick="setHeatmapPreset(\'all\')">⚡ 全部历史</button>'
+    + '<button class="sm ' + (preset === 'today' ? 'on' : '') + '" onclick="setHeatmapPreset(\'today\')">今日</button>'
+    + '<button class="sm ' + (preset === 'yesterday' ? 'on' : '') + '" onclick="setHeatmapPreset(\'yesterday\')">昨日</button>'
+    + '<button class="sm ' + (preset === '3d' ? 'on' : '') + '" onclick="setHeatmapPreset(\'3d\')">近3天</button>'
+    + '<button class="sm ' + (preset === '7d' ? 'on' : '') + '" onclick="setHeatmapPreset(\'7d\')">近7天</button>'
+    + '</div>'
+    + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+    + '<span class="xs mut">自定义:</span>'
+    + '<input type="date" id="heatStartDate" value="' + startDate + '" style="background:#0b0f17;color:#fff;border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px">'
+    + '<span class="xs mut">至</span>'
+    + '<input type="date" id="heatEndDate" value="' + endDate + '" style="background:#0b0f17;color:#fff;border:1px solid var(--bd);border-radius:5px;padding:3px 6px;font-size:11.5px">'
+    + '<button class="sm pri" onclick="applyHeatmapCustomDate()" style="padding:3px 8px;font-size:11.5px">应用日期</button>'
+    + (preset !== 'all' ? '<button class="sm" onclick="resetHeatmapFilter()" style="padding:3px 8px;font-size:11.5px">清空</button>' : '')
+    + '<span class="xs" style="color:#38bdf8;margin-left:4px">📅 ' + rangeLabel + '</span>'
+    + '</div>'
+    + '</div>'
     + '<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center"><b class="xs" style="color:#fbbf24">🚫 建议避开开仓的高危时段榜：</b>' + rankHtml + '</div>'
-    + '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr><th style="text-align:left;padding:3px 8px;color:#94a3b8;font-size:11px">阶梯 \ 时(北京)</th>' + head + '</tr></thead><tbody>' + tierRows + ddRow + marRow + monRow + lvRow + '</tbody></table></div>'
+    + '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr><th style="text-align:left;padding:3px 8px;color:#94a3b8;font-size:11px">阶梯 \\ 时(北京)</th>' + head + '</tr></thead><tbody>' + tierRows + ddRow + marRow + monRow + lvRow + '</tbody></table></div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:9px">' + sessCards + '</div>'
-    + '<div class="xs mut" style="margin-top:6px">说明：以持仓期间每 5 秒采样累计；「·」=该小时尚无持仓数据，「~」=该级曾停留但未新增波次；蓝框=当前小时。风险分 = 深套次数×阶梯权重 + 深套停留时长 + 峰值浮亏，已统计 ' + monitored.length + '/24 个小时。数据随运行天数增加越来越有参考价值。</div>'
+    + '<div class="xs mut" style="margin-top:6px">说明：以持仓期间每 5 秒采样累计；「·」=该小时尚无持仓数据，「~」=该级曾停留但未新增波次；蓝框=当前小时。支持至 $4000 极端深套阶梯，可随时按天筛选。</div>'
     + '</div>';
 }
 
@@ -6151,9 +6537,22 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
   const closedPct = initBal > 0 ? r1((closedProfit / initBal) * 100) : 0;
   const netRetPct = initBal > 0 ? r1((netTotalProfit / initBal) * 100) : 0;
 
-  const mode = MT4_CHART_STATE.mode || 'fast';
-  const useHist = mode === 'long' && historyLong.length ? historyLong : history;
-  const chartSvg = buildMt4AccountChartSvg(useHist, mt4, mt4Dec, initBal, stats, mode);
+  const tf = MT4_CHART_STATE.tf || (MT4_CHART_STATE.mode === 'long' ? '7D' : '4H');
+  const fullData = getMt4CurveDataset(tf, history, historyLong);
+  const totalPts = fullData.length;
+  MT4_CHART_STATE.fullCount = totalPts;
+
+  // 窗口切片逻辑：像股票K线图一样拖动平移
+  const isPannable = totalPts > 60;
+  const wSize = (!isPannable || (tf === '4H' && totalPts <= 120)) ? totalPts : Math.min(totalPts, MT4_CHART_STATE.windowSize || 100);
+  const maxOffset = Math.max(0, totalPts - wSize);
+  let offset = Math.max(0, Math.min(maxOffset, MT4_CHART_STATE.panOffset || 0));
+  MT4_CHART_STATE.panOffset = offset;
+  const startIdx = Math.max(0, totalPts - wSize - offset);
+  const endIdx = totalPts - offset;
+  const visibleArr = fullData.slice(startIdx, endIdx);
+
+  const chartSvg = buildMt4AccountChartSvg(visibleArr, mt4, mt4Dec, initBal, stats, tf);
 
   const pk = (stats && stats.peaks) || {
     maxDd: { val: mt4Dec.ddUsd, pct: mt4Dec.ddPct, ts: mt4.ts, px: mt4Dec.curPx, buyCount: mt4.buyCount, buyLots: mt4.buyLots, sellCount: mt4.sellCount, sellLots: mt4.sellLots, netLots: mt4Dec.absNetLots, margin: mt4.margin, ml: mt4Dec.ml },
@@ -6202,7 +6601,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
   const tierRowsHtml = tiers.map((t) => {
     const isHitEver = (t.waves || 0) > 0 || (t.durSec || 0) > 0;
     const isNowActive = mt4Dec.ddUsd >= t.th;
-    const isKeyMilestone = [100, 200, 400, 600, 800, 1000, 1500, 2000].includes(t.th);
+    const isKeyMilestone = [100, 200, 400, 600, 800, 1000, 1500, 2000, 3000, 4000].includes(t.th);
     const needCapForThisTier = Math.ceil((t.th * 1.2 + Math.max(t.maxMar || obsMaxMar, t.th * 0.55) * 1.5) / 20) * 20;
     const canCurrentBalSurvive = curBal >= (t.th + (t.maxMar || obsMaxMar) * 0.5);
     const rowBg = isNowActive
@@ -6212,7 +6611,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       : 'transparent';
     return `<tr style="background:${rowBg};${isKeyMilestone ? 'font-weight:700;' : ''}">
       <td>
-        <span style="color:${t.th >= 400 ? '#fb7185' : t.th >= 200 ? '#fbbf24' : '#38bdf8'};font-weight:800">浮亏 ≥ $${t.th}</span>
+        <span style="color:${t.th >= 3000 ? '#e11d48' : t.th >= 1000 ? '#fb7185' : t.th >= 200 ? '#fbbf24' : '#38bdf8'};font-weight:800">浮亏 ≥ $${t.th}</span>
         ${isNowActive ? `<span class="pill TREND" style="margin-left:4px;padding:1px 6px;font-size:10px">🔥 当前正处此级</span>` : ''}
       </td>
       <td><b style="font-size:14.5px;color:${(t.waves || 0) > 0 ? '#fbbf24' : '#64748b'}">${t.waves || 0} 次</b></td>
@@ -6261,8 +6660,6 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
         <span class="xs mut">📦 云端 Redis 永久归档 + 本地双备份 · 已累计监测 <b>${stats ? (stats.totalSamples || 1) : 1}</b> 次实盘切片 (自 ${stats ? fmtSecTime(stats.sinceTs) : '今日'} 起)</span>
       </div>
       <div class="btns">
-        <button class="sm ${mode === 'fast' ? 'on' : ''}" onclick="setMt4CurveMode('fast')">⚡ 高频曲线 (近2小时)</button>
-        <button class="sm ${mode === 'long' ? 'on' : ''}" onclick="setMt4CurveMode('long')">📅 长周期历史归档 (7~30天)</button>
         <button class="sm pri" onclick="resetMt4AfterDeposit()" title="入金/出金/调整测试金额后点击：抹平跳空断层，收益从当前余额平稳起算，历史峰值完全保留">🔄 入金/加资金一键规整图表</button>
         <button class="sm" onclick="resetMt4AllStats()" style="color:#94a3b8" title="峰值受系统锁保护">🛡️ 峰值档案永久保护</button>
       </div>
@@ -6369,6 +6766,27 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
             • <b>稳健推荐配置本金</b>: <b style="color:#34d399">$${capTier2}</b> ${gapTier2 > 0 ? `(建议补 <b style="color:var(--gold)">+$${f2(gapTier2)}</b>)` : '(✅已达标)'}
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 实时曲线时间周期切换栏 + 股票K线式拖动平移控制器 (严格置于图表正上方) -->
+    <div style="margin-top:14px;margin-bottom:8px;background:rgba(15,20,30,0.85);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="font-weight:800;font-size:12.5px;color:var(--gold)">⏱️ 曲线周期切换:</span>
+        <button class="sm ${tf === '4H' ? 'on' : ''}" onclick="setMt4CurveTf('4H')" style="${tf === '4H' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">⚡ 近4小时 (高频30s)</button>
+        <button class="sm ${tf === '24H' ? 'on' : ''}" onclick="setMt4CurveTf('24H')" style="${tf === '24H' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">🕒 近24小时</button>
+        <button class="sm ${tf === '7D' ? 'on' : ''}" onclick="setMt4CurveTf('7D')" style="${tf === '7D' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">📅 近7天 (长周期)</button>
+        <button class="sm ${tf === 'ALL' ? 'on' : ''}" onclick="setMt4CurveTf('ALL')" style="${tf === 'ALL' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">📜 长期持续记录 (全量)</button>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <button class="sm" onclick="panMt4Chart(25)" title="向左平移查看更早历史">◀ 往左移</button>
+        <button class="sm" onclick="panMt4Chart(-25)" title="向右平移查看最新数据">往右移 ▶</button>
+        <button class="sm ${offset === 0 ? '' : 'pri'}" onclick="resetMt4ChartPan()" title="复位到最新数据">⏮ 回到最新</button>
+        <span class="xs" style="color:#94a3b8;margin-left:4px">
+          ${totalPts > 0 ? `视窗: <b>${fmtSecTime(visibleArr[0] && visibleArr[0].t)}</b> ~ <b>${fmtSecTime(visibleArr[visibleArr.length - 1] && visibleArr[visibleArr.length - 1].t)}</b> (${visibleArr.length}/${totalPts}点${offset > 0 ? ` · 回溯${offset}点` : ' · 实时'})` : '暂无数据'}
+        </span>
+        <span class="xs" style="color:var(--gold);opacity:.85" title="像股票软件一样，用鼠标左键拖拽或触摸滑动图表即可自由平移">💡 支持图表左右按住拖拽</span>
       </div>
     </div>
 

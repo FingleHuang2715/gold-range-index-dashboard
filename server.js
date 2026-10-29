@@ -1625,7 +1625,127 @@ async function mt4Redis(cmd) {
 // 1) 单键聚合存储：实时状态 + 2小时高频曲线(history) + 7~10天长周期极值归档(historyLong) + 历史峰值与浮亏阶梯统计(stats) 全部封装在唯一键 gold_mt4_live_v1 中，零额外命令开销；
 // 2) 永久持久化（不设1小时短TTL过期），即使周末休市或关闭MT4，历史浮亏峰值、预付款峰值、各阶梯次数与历史曲线永久保留；
 // 3) 智能节流写入：服务端在内存中对每 5 秒一次的推送 100% 实时计算极值与阶梯；仅当【刷新历史峰值 / 突破新浮亏阶梯 / 开平仓层数或余额变化】时立即写 Redis，普通浮亏微动每 25 秒合并写一次 Redis（全天24h仅耗约 3400 条命令，不足免费额度的 12%）。
-const MT4_DD_TIERS = [50, 100, 150, 200, 300, 400, 600, 800, 1000, 1500, 2000];
+const MT4_DD_TIERS = [50, 100, 150, 200, 300, 400, 600, 800, 1000, 1500, 2000, 3000, 4000];
+const MT4_FAST_KEEP = 480; // 30秒粒度 × 480 = 近4小时
+const MT4_LONG_KEEP = 720; // 15分钟粒度 × 720 = 7.5天
+
+// ===== 长期归档（独立 Redis 键，低频写入，按需读取）：1小时K线式账户曲线 + 按日期×小时的浮亏热力明细 =====
+// 结构: { account, hist1h:[{t,bal,eq,eqMin,dd,mar,pnl,px}], daily:{ 'YYYY-MM-DD': { 'H': {s,dd,mar,w:[],d:[]} } }, savedAt }
+const MT4_ARCHIVE_KEY = 'gold_mt4_archive_v1';
+const MT4_ARCHIVE_FILE = path.join(os.tmpdir(), 'gold_mt4_archive_v1.json');
+const MT4_ARCHIVE_H1_KEEP = 24 * 400;   // 约 400 天小时级曲线
+const MT4_ARCHIVE_DAYS_KEEP = 400;      // 约 400 天按日热力明细
+let _mt4Archive = null, _mt4ArchiveLoaded = false, _mt4ArchiveLastSave = 0, _mt4ArchiveLastHour = 0;
+
+const bjDateHour = (sec) => {
+  const d = new Date((sec + 8 * 3600) * 1000);
+  return { date: d.toISOString().slice(0, 10), hour: d.getUTCHours() };
+};
+
+async function loadMt4Archive() {
+  if (_mt4ArchiveLoaded && _mt4Archive) return _mt4Archive;
+  let arc = null;
+  if (MT4_REDIS_URL && MT4_REDIS_TOKEN) {
+    const raw = await mt4Redis(['GET', MT4_ARCHIVE_KEY]);
+    if (raw) { try { arc = JSON.parse(raw); } catch (e) {} }
+  }
+  if (!arc) {
+    try { if (fs.existsSync(MT4_ARCHIVE_FILE)) arc = JSON.parse(fs.readFileSync(MT4_ARCHIVE_FILE, 'utf8')); } catch (e) {}
+  }
+  _mt4Archive = arc && typeof arc === 'object' ? arc : null;
+  _mt4ArchiveLoaded = true;
+  return _mt4Archive;
+}
+
+async function saveMt4Archive(force = false) {
+  if (!_mt4Archive) return;
+  const now = Date.now();
+  if (!force && now - _mt4ArchiveLastSave < 10 * 60 * 1000) return;
+  _mt4ArchiveLastSave = now;
+  _mt4Archive.savedAt = now;
+  const txt = JSON.stringify(_mt4Archive);
+  fs.promises.writeFile(MT4_ARCHIVE_FILE, txt, 'utf8').catch(() => {});
+  await mt4Redis(['SET', MT4_ARCHIVE_KEY, txt]);
+}
+
+function mkArcHour() { return { s: 0, dd: 0, mar: 0, w: MT4_DD_TIERS.map(() => 0), d: MT4_DD_TIERS.map(() => 0) }; }
+
+function arcHourSlot(arc, sec) {
+  const { date, hour } = bjDateHour(sec);
+  if (!arc.daily[date]) arc.daily[date] = {};
+  let H = arc.daily[date][hour];
+  if (!H) { H = mkArcHour(); arc.daily[date][hour] = H; }
+  if (!Array.isArray(H.w) || H.w.length !== MT4_DD_TIERS.length) H.w = MT4_DD_TIERS.map((_, i) => (H.w || [])[i] || 0);
+  if (!Array.isArray(H.d) || H.d.length !== MT4_DD_TIERS.length) H.d = MT4_DD_TIERS.map((_, i) => (H.d || [])[i] || 0);
+  return H;
+}
+
+function arcAddH1(arc, sec, p) {
+  const bt = Math.floor(sec / 3600) * 3600;
+  const last = arc.hist1h[arc.hist1h.length - 1];
+  if (last && last.t === bt) {
+    last.bal = p.bal; last.eq = p.eq; last.px = p.px;
+    last.eqMin = Math.min(last.eqMin ?? p.eq, p.eqMin ?? p.eq);
+    last.dd = Math.max(last.dd || 0, p.dd || 0);
+    last.mar = Math.max(last.mar || 0, p.mar || 0);
+    last.pnl = Math.min(last.pnl ?? 0, p.pnl ?? 0);
+  } else if (!last || bt > last.t) {
+    arc.hist1h.push({ t: bt, bal: p.bal, eq: p.eq, eqMin: p.eqMin ?? p.eq, dd: p.dd || 0, mar: p.mar || 0, pnl: p.pnl || 0, px: p.px || 0 });
+    if (arc.hist1h.length > MT4_ARCHIVE_H1_KEEP) arc.hist1h = arc.hist1h.slice(-MT4_ARCHIVE_H1_KEEP);
+  }
+}
+
+// 用已有 15 分钟长周期归档回填（首次启用归档时）
+function backfillMt4Archive(arc, historyLong) {
+  if (!Array.isArray(historyLong) || !historyLong.length) return;
+  const active = MT4_DD_TIERS.map(() => false);
+  for (const b of historyLong) {
+    const bt = (b.t || 0) < 1e11 ? (b.t || 0) : Math.floor((b.t || 0) / 1000);
+    if (!bt) continue;
+    const dd = b.ddMax != null ? b.ddMax : Math.max(0, -(b.pnl || 0));
+    const mar = b.marMax != null ? b.marMax : (b.mar || 0);
+    arcAddH1(arc, bt, { bal: b.bal, eq: b.eq ?? b.eqMin, eqMin: b.eqMin ?? b.eq, dd, mar, pnl: b.pnl, px: b.px });
+    const H = arcHourSlot(arc, bt);
+    if (mar > 0 || dd > 0) H.s += 900;
+    H.dd = Math.max(H.dd, dd); H.mar = Math.max(H.mar, mar);
+    MT4_DD_TIERS.forEach((th, i) => {
+      if (dd >= th) { H.d[i] += 900; if (!active[i]) { active[i] = true; H.w[i] += 1; } }
+      else if (dd < Math.min(20, th * 0.3)) active[i] = false;
+    });
+  }
+}
+
+function pruneMt4ArchiveDays(arc) {
+  const days = Object.keys(arc.daily).sort();
+  if (days.length > MT4_ARCHIVE_DAYS_KEEP) days.slice(0, days.length - MT4_ARCHIVE_DAYS_KEEP).forEach((k) => delete arc.daily[k]);
+}
+
+async function updateMt4Archive(prevState, snap, info) {
+  await loadMt4Archive();
+  const acc = snap.accStr || '';
+  if (!_mt4Archive || (_mt4Archive.account && _mt4Archive.account !== acc)) {
+    _mt4Archive = { account: acc, hist1h: [], daily: {}, savedAt: 0 };
+    if (prevState && prevState.account === acc) backfillMt4Archive(_mt4Archive, prevState.historyLong);
+  }
+  if (!Array.isArray(_mt4Archive.hist1h)) _mt4Archive.hist1h = [];
+  if (!_mt4Archive.daily || typeof _mt4Archive.daily !== 'object') _mt4Archive.daily = {};
+  _mt4Archive.account = acc;
+  const { nowSec } = snap;
+  arcAddH1(_mt4Archive, nowSec, { bal: snap.balVal, eq: snap.eqVal, eqMin: snap.eqVal, dd: info.ddUsd, mar: snap.marVal, pnl: snap.totalPnlVal, px: snap.bid });
+  const H = arcHourSlot(_mt4Archive, nowSec);
+  if (info.hasPos) {
+    H.s += info.dtSec;
+    if (info.ddUsd > H.dd) H.dd = info.ddUsd;
+    if (snap.marVal > H.mar) H.mar = snap.marVal;
+    MT4_DD_TIERS.forEach((th, i) => { if (info.ddUsd >= th) H.d[i] += info.dtSec; });
+  }
+  (info.newWaveTiers || []).forEach((th) => { const i = MT4_DD_TIERS.indexOf(th); if (i >= 0) H.w[i] += 1; });
+  pruneMt4ArchiveDays(_mt4Archive);
+  const curHour = Math.floor(nowSec / 3600);
+  const hourRolled = _mt4ArchiveLastHour && curHour !== _mt4ArchiveLastHour;
+  _mt4ArchiveLastHour = curHour;
+  await saveMt4Archive(hourRolled || (info.newWaveTiers || []).length > 0);
+}
 let _mt4LastWriteTs = 0, _mt4LastSig = '', _mt4ReadTs = 0, _mt4ReadVal = null;
 
 async function mt4RemoteSet(state, forceImmediate = false) {
@@ -1805,6 +1925,7 @@ function updateMt4StatsAndHistory(prevState, snap) {
   const HR = stats.hourly[bjHour];
   if (HR.w.length !== MT4_DD_TIERS.length) { HR.w = MT4_DD_TIERS.map((_, i) => HR.w[i] || 0); HR.d = MT4_DD_TIERS.map((_, i) => HR.d[i] || 0); }
   const dtSec = Math.max(1, Math.min(60, nowSec - (stats.lastTickTs || (nowSec - 5))));
+  const newWaveTiers = [];
   if (buyCount + sellCount > 0) {
     HR.s += dtSec;
     if (ddUsd > HR.dd) HR.dd = ddUsd;
@@ -1930,6 +2051,7 @@ function updateMt4StatsAndHistory(prevState, snap) {
           tier.active = true;
           tier.waves = (tier.waves || 0) + 1;
           HR.w[MT4_DD_TIERS.indexOf(tier.th)] += 1;
+          newWaveTiers.push(tier.th);
           brokenPeakOrTier = true;
           if (stats.activeWave && !stats.activeWave.tiersHit.includes(tier.th)) {
             stats.activeWave.tiersHit.push(tier.th);
@@ -1942,7 +2064,7 @@ function updateMt4StatsAndHistory(prevState, snap) {
     }
   }
 
-  const prevFast = (sameAcc && Array.isArray(prevState.history)) ? prevState.history.slice(-240) : [];
+  const prevFast = (sameAcc && Array.isArray(prevState.history)) ? prevState.history.slice(-MT4_FAST_KEEP) : [];
   const fastBucketTs = Math.floor(nowSec / 30) * 30;
   const newFastPt = {
     t: nowSec,
@@ -1982,9 +2104,9 @@ function updateMt4StatsAndHistory(prevState, snap) {
       };
     }
   }
-  const history = prevFast.slice(-240);
+  const history = prevFast.slice(-MT4_FAST_KEEP);
 
-  const prevLong = (sameAcc && Array.isArray(prevState.historyLong)) ? prevState.historyLong.slice(-672) : [];
+  const prevLong = (sameAcc && Array.isArray(prevState.historyLong)) ? prevState.historyLong.slice(-MT4_LONG_KEEP) : [];
   const longBucketTs = Math.floor(nowSec / 900) * 900;
   if (!prevLong.length && history.length) {
     for (const hp of history) {
@@ -2052,9 +2174,9 @@ function updateMt4StatsAndHistory(prevState, snap) {
       lastL.px = bid;
     }
   }
-  const historyLong = prevLong.slice(-672);
+  const historyLong = prevLong.slice(-MT4_LONG_KEEP);
 
-  return { stats, history, historyLong, brokenPeakOrTier };
+  return { stats, history, historyLong, brokenPeakOrTier, archInfo: { ddUsd, dtSec, hasPos: buyCount + sellCount > 0, newWaveTiers } };
 }
 
 async function handleApiMt4(req, res) {
@@ -2070,6 +2192,11 @@ async function handleApiMt4(req, res) {
   }
   try {
     const u = new URL(req.url || '/api/mt4', 'http://localhost');
+    if (u.searchParams.get('archive') === '1') {
+      const arc = await loadMt4Archive();
+      res.writeHead(200, corsHeaders);
+      return res.end(JSON.stringify({ ok: true, tiers: MT4_DD_TIERS, archive: arc || null }));
+    }
     if (u.searchParams.get('clear') === '1') {
       latestMt4State = null;
       if (cache) delete cache.mt4;
@@ -2204,10 +2331,16 @@ async function handleApiMt4(req, res) {
       const buyCount = Math.round(num('buyCnt'));
       const sellCount = Math.round(num('sellCnt'));
 
-      const { stats, history, historyLong, brokenPeakOrTier } = updateMt4StatsAndHistory(latestMt4State, {
+      const prevStateForArc = latestMt4State;
+      const { stats, history, historyLong, brokenPeakOrTier, archInfo } = updateMt4StatsAndHistory(latestMt4State, {
         nowSec, accStr, balVal, eqVal, marVal, freeMVal, mlVal,
         buyCount, buyLots, sellCount, sellLots, netLots, totalPnlVal, bid
       });
+      if (!isMock) {
+        try {
+          await updateMt4Archive(prevStateForArc, { nowSec, accStr, balVal, eqVal, marVal, totalPnlVal, bid }, archInfo);
+        } catch (e) { console.error('[MT4] archive update failed', e.message); }
+      }
 
       const initBal = (latestMt4State && latestMt4State.account === accStr && latestMt4State.initBal > 0)
         ? latestMt4State.initBal
@@ -2385,5 +2518,6 @@ if (require.main === module && !process.env.VERCEL) {
 
 module.exports = appHandler;
 module.exports.handleApiData = handleApiData;
+module.exports.handleApiMt4 = handleApiMt4;
 module.exports.refresh = refresh;
 module.exports.refreshFast = refreshFast;
