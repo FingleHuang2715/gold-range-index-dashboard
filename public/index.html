@@ -5032,6 +5032,7 @@ window.clearMt4Data = async function() {
 const MT4_CHART_STATE = {
   pts: null,
   tf: '4H',            // '4H' | '24H' | '7D' | 'ALL'
+  chartStyle: localStorage.getItem('mt4_chart_style') || 'candle', // 'candle' | 'line' | 'both'
   mode: 'fast',        // 兼容模式
   panOffset: 0,        // 水平平移偏移量 (点数, 0 为最新)
   windowSize: 100,     // 单屏展现的点数 (用于拖拽平移)
@@ -5163,6 +5164,12 @@ window.setMt4CurveTf = function(tf) {
 
 window.setMt4CurveMode = function(m) {
   window.setMt4CurveTf(m === 'fast' ? '4H' : '7D');
+};
+
+window.setMt4ChartStyle = function(st) {
+  MT4_CHART_STATE.chartStyle = st;
+  try { localStorage.setItem('mt4_chart_style', st); } catch (e) {}
+  if (D) render();
 };
 
 window.panMt4Chart = function(step) {
@@ -5907,30 +5914,93 @@ function calcMt4LiveDecision(d, mt4, pb, adjMap, lkNow, martingaleScore) {
   };
 }
 
+// ========== 账户净值/收益蜡烛柱聚合引擎 ==========
+function aggregateMt4Candles(arr, targetCount = 42) {
+  if (!arr || !arr.length) return [];
+  const n = arr.length;
+  const groupSize = Math.max(1, Math.ceil(n / targetCount));
+  const candles = [];
+  for (let i = 0; i < n; i += groupSize) {
+    const chunk = arr.slice(i, Math.min(n, i + groupSize));
+    if (!chunk.length) continue;
+    const startIdx = i;
+    const endIdx = Math.min(n, i + groupSize) - 1;
+    const midIdx = (startIdx + endIdx) / 2;
+    const open = chunk[0].eq != null ? Number(chunk[0].eq) : Number(chunk[0].bal || 0);
+    const close = chunk[chunk.length - 1].eq != null ? Number(chunk[chunk.length - 1].eq) : Number(chunk[chunk.length - 1].bal || 0);
+    let high = -Infinity, low = Infinity;
+    let balEnd = chunk[chunk.length - 1].bal || open;
+    let maxDd = 0;
+    chunk.forEach((p) => {
+      const b = Number(p.bal) || 0;
+      const e = Number(p.eq) || b;
+      const eMin = p.eqMin != null ? Number(p.eqMin) : Math.min(b, e);
+      const bMax = p.balMax != null ? Number(p.balMax) : Math.max(b, e);
+      const dd = p.ddMax != null ? Number(p.ddMax) : (p.dd != null ? Number(p.dd) : Math.max(0, -(p.pnl || 0)));
+      if (bMax > high) high = bMax;
+      if (e > high) high = e;
+      if (b > high) high = b;
+      if (eMin < low) low = eMin;
+      if (e < low) low = e;
+      if (b - dd > 0 && b - dd < low) low = b - dd;
+      if (dd > maxDd) maxDd = dd;
+    });
+    if (high < Math.max(open, close)) high = Math.max(open, close);
+    if (low > Math.min(open, close)) low = Math.min(open, close);
+    const midT = chunk[Math.floor(chunk.length / 2)].t;
+    candles.push({
+      idx: candles.length,
+      startIdx,
+      endIdx,
+      midIdx,
+      t: midT,
+      o: +open.toFixed(2),
+      h: +high.toFixed(2),
+      l: +low.toFixed(2),
+      c: +close.toFixed(2),
+      bal: +balEnd.toFixed(2),
+      maxDd: +maxDd.toFixed(2),
+      isBull: close >= open,
+      raw: chunk[chunk.length - 1]
+    });
+  }
+  return candles;
+}
+
 function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
-  if (!hist || !hist.length) return '<div class="mut">正在采集 MT4 实盘余额与净值时序数据...</div>';
+  if (!hist || !hist.length) return '<div class="mut" style="padding:40px;text-align:center">正在采集 MT4 实盘余额与净值时序数据...</div>';
   const arr = hist.length === 1
     ? [{ ...hist[0], t: hist[0].t - 30000 }, hist[0]]
     : hist;
 
-  const W = 1200, H = 450, L = 68, R = 156, T = 26, B = 38;
+  // 画布全面升级扩容：高度从 450 提升至 740，CSS 高度从 415px 提升至 670px，上下双面板纵深彻底拉开！
+  const W = 1200, H = 740, L = 72, R = 175, T = 28, B = 40;
   const cw = W - L - R, n = arr.length;
   const xOf = (i) => L + (i / Math.max(1, n - 1)) * cw;
 
-  // 上面板 (topTop ~ topBot): 账户余额 (Balance) + 实时净值 (Equity) + 已用预付款曲线 (Margin 橙线) + 历史最高预付款虚线
-  // 下面板 (botTop ~ botBot): 综合净收益折线 + 浮动盈亏/最大浮亏柱状图 + 历史最大浮亏峰值红线
-  const topTop = T, topH = 215, topBot = topTop + topH;
-  const botTop = topBot + 38, botH = H - B - botTop, botBot = botTop + botH;
+  // 上面板 (40 ~ 365, 高度 325px, 提升 51%): 余额(金实线) + 净值(青蓝实线) + 净值蜡烛K线 + 预付款水平线
+  // 下面板 (420 ~ 670, 高度 250px, 提升 88%): 周期阶段收益折线(紫线) + 周期落袋折线(金虚线) + 浮动盈亏红绿柱 + 视窗谷底峰值红线
+  const topTop = T + 12;      // 40
+  const topH = 325;           // 325px
+  const topBot = topTop + topH; // 365
+
+  const botTop = topBot + 55; // 420
+  const botH = 250;           // 250px
+  const botBot = botTop + botH; // 670
 
   const curMar = Number(mt4.margin) || 0;
   const pkMaxMar = (stats && stats.peaks && stats.peaks.maxMargin && stats.peaks.maxMargin.val) || curMar;
-  const pkMaxDd = (stats && stats.peaks && stats.peaks.maxDd && stats.peaks.maxDd.val) || 0;
+  const chartStyle = MT4_CHART_STATE.chartStyle || 'candle'; // 'candle' | 'line' | 'both'
+  const candles = aggregateMt4Candles(arr, Math.min(50, Math.max(18, Math.round(cw / 24))));
 
-  // 1) 上面板 Y 轴：专门针对【账户余额与实时净值】的自适应聚焦坐标轴（绝不从 0 开始，彻底解决 $10000 账户横向平直横线问题）
+  // 1) 上面板 Y 轴：严格聚焦当前视窗 (arr) 的真实局部极值，绝不引入全局 initBal 造成尺度严重压缩失衡！
   let bMin = Infinity, bMax = -Infinity;
   arr.forEach((p) => {
     const b = Number(p.bal) || 0;
     const e = Number(p.eq) || b;
+    const eLow = p.eqMin != null ? Number(p.eqMin) : Math.min(b, e);
+    const bHigh = p.balMax != null ? Number(p.balMax) : Math.max(b, e);
+    const dd = p.ddMax != null ? Number(p.ddMax) : (p.dd != null ? Number(p.dd) : Math.max(0, -(p.pnl || 0)));
     if (b > 0) {
       if (b < bMin) bMin = b;
       if (b > bMax) bMax = b;
@@ -5939,67 +6009,109 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
       if (e < bMin) bMin = e;
       if (e > bMax) bMax = e;
     }
+    if (eLow > 0 && eLow < bMin) bMin = eLow;
+    if (b - dd > 0 && b - dd < bMin) bMin = b - dd;
+    if (bHigh > 0 && bHigh > bMax) bMax = bHigh;
   });
-  if (initBal > 0) {
-    if (initBal < bMin) bMin = initBal;
-    if (initBal > bMax) bMax = initBal;
+  if (candles.length > 0) {
+    candles.forEach((c) => {
+      if (c.l > 0 && c.l < bMin) bMin = c.l;
+      if (c.h > bMax) bMax = c.h;
+    });
   }
   if (!isFinite(bMin) || !isFinite(bMax) || bMax <= bMin) {
     const curB = Number(mt4.balance) || 10000;
-    bMax = curB + 20;
-    bMin = curB - 20;
+    bMax = curB + 10;
+    bMin = curB - 10;
   }
-  // 呼吸空间：根据当前资金量动态保留合理的振幅窗口，无论 300 还是 10000 账户，每一笔浮亏和盈利都能生动起伏呈现
-  const rawSpan = bMax - bMin;
-  const minSpan = Math.max(25, bMax * 0.0035); // 10000 账户默认至少展现 35$ 跨度视野，避免极小波动贴边
-  const effSpan = Math.max(rawSpan, minSpan);
-  const padV = Math.max(4, effSpan * 0.18);
-  const vMin = +(bMin - padV).toFixed(1);
-  const vMax = +(bMax + padV).toFixed(1);
 
-  // 关键：严格基于【当前图表视窗下 (arr)】计算局部最大浮亏，杜绝历史全局极值拉扯扭曲 Y 轴
+  // 动态呼吸边距：仅保留 8% 上下舒展空间，不论几千还是上万账户，视窗内哪怕 $5~$20 的波动都能饱满起伏！
+  const rawSpan = bMax - bMin;
+  const minSpan = Math.max(12, bMax * 0.001); // 保证微小波动时至少有 $12 视野深度
+  const effSpan = Math.max(rawSpan, minSpan);
+  const padV = effSpan * 0.08;
+  const vMin = +(bMin - padV).toFixed(2);
+  const vMax = +(bMax + padV).toFixed(2);
+  const yTop = (v) => topTop + (1 - (v - vMin) / Math.max(1e-6, vMax - vMin)) * topH;
+
+  // 2) 下面板 Y 轴：聚焦当前周期的盈亏起伏轨迹 (相对视窗基准，彻底消除历史几千刀总收益造成的尺度畸变)
+  const cycleBaseBal = Number(arr[0].bal) || initBal;
+  const cycleBaseEq = Number(arr[0].eq) || cycleBaseBal;
+
   let localPeakDd = 0;
   arr.forEach((p) => {
-    const dd = p.ddMax != null ? p.ddMax : (p.dd != null ? p.dd : Math.max(0, -(p.pnl || 0)));
+    const dd = p.ddMax != null ? Number(p.ddMax) : (p.dd != null ? Number(p.dd) : Math.max(0, -(p.pnl || 0)));
     if (dd > localPeakDd) localPeakDd = dd;
   });
 
-  let pMin = Math.min(0, -10, -localPeakDd), pMax = Math.max(0, 10);
+  let pMin = 0, pMax = 0;
   arr.forEach((p) => {
-    const netRet = r2((p.eq || 0) - initBal);
+    const winNetRet = r2((p.eq || 0) - cycleBaseEq);
+    const winClosedRet = r2((p.bal || 0) - cycleBaseBal);
     const fl = p.ddMax != null ? -p.ddMax : r2(p.pnl || 0);
-    pMax = Math.max(pMax, netRet, fl);
-    pMin = Math.min(pMin, netRet, fl);
+    if (winNetRet < pMin) pMin = winNetRet;
+    if (winNetRet > pMax) pMax = winNetRet;
+    if (winClosedRet < pMin) pMin = winClosedRet;
+    if (winClosedRet > pMax) pMax = winClosedRet;
+    if (fl < pMin) pMin = fl;
+    if (fl > pMax) pMax = fl;
   });
-  const padP = Math.max(5, (pMax - pMin) * 0.15);
-  pMax += padP;
-  pMin -= padP;
+  if (localPeakDd > 0 && -localPeakDd < pMin) pMin = -localPeakDd;
 
-  const yTop = (v) => topTop + (1 - (v - vMin) / Math.max(1e-6, vMax - vMin)) * topH;
+  // 确保 0 轴居于视窗内，并保留至少 $10 纵深
+  pMin = Math.min(pMin, -5);
+  pMax = Math.max(pMax, 5);
+  const spanP = pMax - pMin;
+  const padP = Math.max(2, spanP * 0.10);
+  pMax = +(pMax + padP).toFixed(1);
+  pMin = +(pMin - padP).toFixed(1);
   const yBot = (v) => botTop + (1 - (v - pMin) / Math.max(1e-6, pMax - pMin)) * botH;
 
-  MT4_CHART_STATE.pts = { arr, W, H, L, R, T, B, cw, topTop, topH, topBot, botTop, botH, botBot, vMin, vMax, pMin, pMax, initBal, mode };
+  MT4_CHART_STATE.pts = {
+    arr, candles, W, H, L, R, T, B, cw,
+    topTop, topH, topBot,
+    botTop, botH, botBot,
+    vMin, vMax, pMin, pMax,
+    cycleBaseBal, cycleBaseEq,
+    initBal, mode, chartStyle
+  };
 
+  // 上面板 Y 轴刻度 (5档)
   const topTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const val = vMin + (1 - f) * (vMax - vMin);
     const y = (topTop + f * topH).toFixed(1);
     return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="#262d3b" stroke-width="1" stroke-dasharray="3,3"/>
-      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#94a3b8" font-size="11">$${val.toFixed(1)}</text>`;
+      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="#94a3b8" font-size="11">$${val.toFixed(2)}</text>`;
   }).join('');
 
-  // 100% 预付款警戒线 & 历史最高预付款峰值线 (若当前预付款在可视区间内才显示)
+  // 100% 预付款警戒线
   let marginLineSvg = '';
   if (curMar > 0 && curMar >= vMin && curMar <= vMax) {
     const ym = yTop(curMar).toFixed(1);
     marginLineSvg += `
       <line x1="${L}" y1="${ym}" x2="${W - R}" y2="${ym}" stroke="#f43f5e" stroke-width="1.4" stroke-dasharray="5,4"/>
-      <text x="${W - R + 6}" y="${+ym + 4}" fill="#fb7185" font-size="11" font-weight="700">🚨 当前预付款 $${curMar.toFixed(2)}</text>`;
+      <text x="${W - R + 6}" y="${+ym + 4}" fill="#fb7185" font-size="11" font-weight="700">🚨 占用预付款 $${curMar.toFixed(2)}</text>`;
   }
-  if (pkMaxMar > 0 && Math.abs(pkMaxMar - curMar) > 3 && pkMaxMar >= vMin && pkMaxMar <= vMax) {
-    const ypk = yTop(pkMaxMar).toFixed(1);
-    marginLineSvg += `
-      <line x1="${L}" y1="${ypk}" x2="${W - R}" y2="${ypk}" stroke="#fb923c" stroke-width="1.2" stroke-dasharray="2,3"/>
-      <text x="${W - R + 6}" y="${+ypk + 4}" fill="#fb923c" font-size="10.5" font-weight="700">🏦 峰值预付款 $${pkMaxMar.toFixed(2)}</text>`;
+
+  // 蜡烛K线渲染
+  let candleSvg = '';
+  if (chartStyle === 'candle' || chartStyle === 'both') {
+    const bw = Math.max(4, Math.min(18, (cw / Math.max(10, candles.length)) * 0.65));
+    candleSvg = candles.map((c) => {
+      const cx = (L + (c.midIdx / Math.max(1, n - 1)) * cw).toFixed(1);
+      const yH = yTop(c.h).toFixed(1);
+      const yL = yTop(c.l).toFixed(1);
+      const yO = yTop(c.o).toFixed(1);
+      const yC = yTop(c.c).toFixed(1);
+      const yBodyTop = Math.min(yO, yC).toFixed(1);
+      const bodyH = Math.max(2.5, Math.abs(yO - yC)).toFixed(1);
+      const strokeCol = c.isBull ? '#34d399' : '#fb7185';
+      const fillCol = c.isBull ? 'rgba(16,185,129,0.78)' : 'rgba(244,63,94,0.78)';
+      return `
+        <line x1="${cx}" y1="${yH}" x2="${cx}" y2="${yL}" stroke="${strokeCol}" stroke-width="1.3"/>
+        <rect x="${(cx - bw / 2).toFixed(1)}" y="${yBodyTop}" width="${bw.toFixed(1)}" height="${bodyH}" fill="${fillCol}" stroke="${strokeCol}" stroke-width="1.2" rx="1.5"/>
+      `;
+    }).join('');
   }
 
   const balPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yTop(p.bal).toFixed(1)}`).join(' ');
@@ -6012,9 +6124,18 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   const lastEqY = yTop(last.eq).toFixed(1);
   const eqColor = last.eq >= last.bal ? '#34d399' : '#38bdf8';
 
-  // 下面板：0轴 + 浮动盈亏柱状图 + 综合净收益折线 + 视窗局部峰值浮亏水平红线
+  let lineSvg = '';
+  if (chartStyle === 'line' || chartStyle === 'both') {
+    lineSvg = `
+      <polygon points="${eqArea}" fill="url(#mt4EqGrad)"/>
+      <polyline fill="none" stroke="${eqColor}" stroke-width="2.4" points="${eqPts}"/>
+    `;
+  }
+  const balPolySvg = `<polyline fill="none" stroke="#fbbf24" stroke-width="2.5" points="${balPts}"/>`;
+
+  // 下面板：0 轴 + 浮动盈亏柱 + 周期阶段净收益(紫线) + 周期阶段落袋(金虚线) + 视窗峰值浮亏红线
   const yZero = yBot(0).toFixed(1);
-  const botTicks = [0, 0.5, 1].map((f) => {
+  const botTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const val = pMin + (1 - f) * (pMax - pMin);
     const y = (botTop + f * botH).toFixed(1);
     return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="#262d3b" stroke-width="1" stroke-dasharray="3,3"/>
@@ -6025,29 +6146,32 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   if (localPeakDd > 0 && -localPeakDd >= pMin && -localPeakDd <= pMax) {
     const ydd = yBot(-localPeakDd).toFixed(1);
     maxDdLineSvg = `
-      <line x1="${L}" y1="${ydd}" x2="${W - R}" y2="${ydd}" stroke="#f43f5e" stroke-width="1.3" stroke-dasharray="4,3"/>
-      <text x="${W - R + 6}" y="${+ydd + 4}" fill="#fb7185" font-size="10.5" font-weight="800">🔥 视窗峰值浮亏 -$${localPeakDd.toFixed(2)}</text>`;
+      <line x1="${L}" y1="${ydd}" x2="${W - R}" y2="${ydd}" stroke="#f43f5e" stroke-width="1.4" stroke-dasharray="4,3"/>
+      <text x="${W - R + 6}" y="${+ydd + 4}" fill="#fb7185" font-size="11" font-weight="800">🔥 视窗谷底峰值浮亏 -$${localPeakDd.toFixed(2)}</text>`;
   }
 
-  const bw = Math.max(2.5, Math.min(9, cw / Math.max(8, n) * 0.62));
+  const bwPnl = Math.max(2.5, Math.min(10, (cw / Math.max(8, n)) * 0.62));
   const pnlBars = arr.map((p, i) => {
     const x = xOf(i);
     const fl = p.ddMax != null ? -p.ddMax : (p.pnl || 0);
     const yVal = yBot(fl);
-    const y0 = yBot(0);
+    const y0 = +yZero;
     const yt = Math.min(yVal, y0).toFixed(1);
     const bh = Math.max(1.5, Math.abs(yVal - y0)).toFixed(1);
-    const col = fl >= 0 ? '#34d399' : '#fb7185';
-    return `<rect x="${(x - bw / 2).toFixed(1)}" y="${yt}" width="${bw.toFixed(1)}" height="${bh}" fill="${col}" opacity="0.4" rx="1"/>`;
+    const col = fl >= 0 ? '#10b981' : '#f43f5e';
+    return `<rect x="${(x - bwPnl / 2).toFixed(1)}" y="${yt}" width="${bwPnl.toFixed(1)}" height="${bh}" fill="${col}" opacity="0.45" rx="1"/>`;
   }).join('');
 
-  const retPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yBot((p.eq || 0) - initBal).toFixed(1)}`).join(' ');
-  const closedPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yBot((p.bal || 0) - initBal).toFixed(1)}`).join(' ');
-  const lastRet = r2((last.eq || 0) - initBal);
-  const lastClosed = r2((last.bal || 0) - initBal);
+  const winRetPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yBot((p.eq || 0) - cycleBaseEq).toFixed(1)}`).join(' ');
+  const winClosedPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yBot((p.bal || 0) - cycleBaseBal).toFixed(1)}`).join(' ');
 
-  // X轴时间刻度
-  const xStep = Math.max(1, Math.floor((n - 1) / 6));
+  const lastWinNet = r2((last.eq || 0) - cycleBaseEq);
+  const lastWinClosed = r2((last.bal || 0) - cycleBaseBal);
+  const totalClosedProfit = r2((last.bal || 0) - initBal);
+  const totalNetProfit = r2((last.eq || 0) - initBal);
+
+  // X 轴时间刻度
+  const xStep = Math.max(1, Math.floor((n - 1) / 7));
   let xTicks = '';
   for (let i = 0; i < n; i += xStep) {
     const x = xOf(i).toFixed(1);
@@ -6060,8 +6184,9 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   }
 
   const tfLabel = mode === '4H' ? '近4小时 (高频30s)' : mode === '24H' ? '近24小时' : mode === '7D' ? '近7天 (长周期归档)' : '长期持续记录 (全量)';
+  const styleLabel = chartStyle === 'candle' ? '🕯️ 净值蜡烛K线' : chartStyle === 'both' ? '✨ 蜡烛+曲线综合' : '📈 曲线面积图';
 
-  return `<svg class="big-svg" id="svg-mt4-curve" style="height:415px;min-height:370px;max-height:460px;cursor:grab;user-select:none" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+  return `<svg class="big-svg" id="svg-mt4-curve" style="height:670px;min-height:580px;max-height:760px;cursor:grab;user-select:none" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
     onmousedown="onMt4ChartMouseDown(event)"
     onmousemove="onMt4ChartMouseMove(event)"
     onmouseup="onMt4ChartMouseUp(event)"
@@ -6072,34 +6197,35 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
     onwheel="onMt4ChartWheel(event)">
     <defs>
       <linearGradient id="mt4EqGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="${eqColor}" stop-opacity="0.28"/>
+        <stop offset="0%" stop-color="${eqColor}" stop-opacity="0.32"/>
         <stop offset="100%" stop-color="${eqColor}" stop-opacity="0.02"/>
       </linearGradient>
     </defs>
 
-    <!-- 上面板：余额 & 净值 (自适应动态刻度，告别横向直线) -->
-    <text x="${L + 6}" y="${topTop - 7}" fill="#fbbf24" font-size="12.5" font-weight="bold">💰 账户实时余额 (金实线) vs 实时净值走势 (青蓝折线·自适应聚焦) [当前预付款: $${curMar.toFixed(2)} · 预付款比: ${mt4.marginLevel ? mt4.marginLevel.toFixed(1) + '%' : '-'}] [${tfLabel} · 视窗${arr.length}点 · 左右拖拽平移]</text>
+    <!-- 上面板：账户实时余额 & 净值 (动态局部自适应聚焦 · 纵深扩展 325px) -->
+    <text x="${L + 6}" y="${topTop - 9}" fill="#fbbf24" font-size="13" font-weight="bold">💰 账户实时余额 (金实线) vs 实时净值 (青蓝折线/蜡烛) [当前预付款: $${curMar.toFixed(2)} · 预付款比: ${mt4.marginLevel ? mt4.marginLevel.toFixed(1) + '%' : '-'}] [${tfLabel} · ${styleLabel} · 视窗${arr.length}点 · 动态极值伸缩]</text>
     ${topTicks}
     ${marginLineSvg}
-    <polygon points="${eqArea}" fill="url(#mt4EqGrad)"/>
-    <polyline fill="none" stroke="#fbbf24" stroke-width="2.6" points="${balPts}"/>
-    <polyline fill="none" stroke="${eqColor}" stroke-width="2.4" points="${eqPts}"/>
+    ${lineSvg}
+    ${candleSvg}
+    ${balPolySvg}
     <circle cx="${lastX}" cy="${lastBalY}" r="5" fill="#fbbf24" stroke="#0f172a" stroke-width="1.5"/>
     <circle cx="${lastX}" cy="${lastEqY}" r="5.5" fill="${eqColor}" stroke="#0f172a" stroke-width="1.5"/>
-    <text x="${W - R + 6}" y="${+lastBalY + 4}" fill="#fbbf24" font-size="11.5" font-weight="800">余额 $${last.bal.toFixed(2)}</text>
-    <text x="${W - R + 6}" y="${Math.abs(lastEqY - lastBalY) < 14 ? (+lastBalY + 18) : (+lastEqY + 4)}" fill="${eqColor}" font-size="11.5" font-weight="800">净值 $${last.eq.toFixed(2)}</text>
+    <text x="${W - R + 6}" y="${+lastBalY + 4}" fill="#fbbf24" font-size="12" font-weight="800">余额 $${last.bal.toFixed(2)}</text>
+    <text x="${W - R + 6}" y="${Math.abs(lastEqY - lastBalY) < 14 ? (+lastBalY + 18) : (+lastEqY + 4)}" fill="${eqColor}" font-size="12" font-weight="800">净值 $${last.eq.toFixed(2)}</text>
 
-    <!-- 下面板：实时收益曲线 & 浮亏柱状图 & 浮亏峰值红线 (局部自适应，不被全局历史极值压缩) -->
-    <line x1="${L}" y1="${topBot + 14}" x2="${W - R}" y2="${topBot + 14}" stroke="#262d3b" stroke-width="1.5"/>
-    <text x="${L + 6}" y="${botTop - 7}" fill="#38bdf8" font-size="12.5" font-weight="bold">📈 收益与浮亏极值轨迹：已落袋收益(金虚线 ${lastClosed >= 0 ? '+' : ''}$${lastClosed.toFixed(2)}) · 综合净收益(紫线 ${lastRet >= 0 ? '+' : ''}$${lastRet.toFixed(2)}) · 浮动盈亏(红绿柱) · 视窗内峰值浮亏(-$${localPeakDd.toFixed(2)})</text>
+    <!-- 下面板：当前周期收益与浮亏极值轨迹 (高度扩展至 250px · 聚焦视窗变动 · 波动一览无余) -->
+    <line x1="${L}" y1="${topBot + 20}" x2="${W - R}" y2="${topBot + 20}" stroke="#334155" stroke-width="1.5"/>
+    <text x="${L + 6}" y="${botTop - 9}" fill="#38bdf8" font-size="13" font-weight="bold">📈 周期内收益与极值轨迹：阶段净变动(紫线 ${lastWinNet >= 0 ? '+' : ''}$${lastWinNet.toFixed(2)}) · 阶段落袋(金虚线 ${lastWinClosed >= 0 ? '+' : ''}$${lastWinClosed.toFixed(2)}) · 浮亏谷底(-$${localPeakDd.toFixed(2)}) [全期总落袋: +$${f2(totalClosedProfit)} · 全期净收益: ${totalNetProfit >= 0 ? '+' : ''}$${f2(totalNetProfit)}]</text>
     ${botTicks}
     <line x1="${L}" y1="${yZero}" x2="${W - R}" y2="${yZero}" stroke="#64748b" stroke-width="1.2" stroke-dasharray="4,2"/>
+    <text x="${W - R + 6}" y="${+yZero + 4}" fill="#94a3b8" font-size="10.5">基准 0.00</text>
     ${maxDdLineSvg}
     ${pnlBars}
-    <polyline fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="4,3" points="${closedPts}"/>
-    <polyline fill="none" stroke="#a78bfa" stroke-width="2.2" points="${retPts}"/>
-    <text x="${W - R + 6}" y="${yBot(lastClosed) + 4}" fill="#fbbf24" font-size="11" font-weight="700">已落袋 ${lastClosed >= 0 ? '+' : ''}$${lastClosed.toFixed(2)}</text>
-    <text x="${W - R + 6}" y="${Math.abs(yBot(lastRet) - yBot(lastClosed)) < 14 ? (yBot(lastClosed) + 17) : (yBot(lastRet) + 4)}" fill="#a78bfa" font-size="11" font-weight="700">净收益 ${lastRet >= 0 ? '+' : ''}$${lastRet.toFixed(2)}</text>
+    <polyline fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="4,3" points="${winClosedPts}"/>
+    <polyline fill="none" stroke="#a78bfa" stroke-width="2.3" points="${winRetPts}"/>
+    <text x="${W - R + 6}" y="${yBot(lastWinClosed) + 4}" fill="#fbbf24" font-size="11" font-weight="700">阶段落袋 ${lastWinClosed >= 0 ? '+' : ''}$${lastWinClosed.toFixed(2)}</text>
+    <text x="${W - R + 6}" y="${Math.abs(yBot(lastWinNet) - yBot(lastWinClosed)) < 14 ? (yBot(lastWinClosed) + 17) : (yBot(lastWinNet) + 4)}" fill="#a78bfa" font-size="11" font-weight="700">阶段净变动 ${lastWinNet >= 0 ? '+' : ''}$${lastWinNet.toFixed(2)}</text>
     ${xTicks}
 
     <!-- 十字准星浮窗 -->
@@ -6107,10 +6233,11 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
       <line id="xh-mt4-v" x1="0" y1="${topTop}" x2="0" y2="${botBot}" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,4" opacity="0.85"/>
       <circle id="xh-mt4-bal" cx="0" cy="0" r="5.5" fill="#fbbf24" stroke="#fff" stroke-width="1.8"/>
       <circle id="xh-mt4-eq" cx="0" cy="0" r="5.5" fill="#38bdf8" stroke="#fff" stroke-width="1.8"/>
-      <rect id="xh-mt4-box" x="0" y="0" width="510" height="70" rx="6" fill="rgba(15,18,24,0.95)" stroke="#38bdf8" stroke-width="1.2"/>
-      <text id="xh-mt4-t1" x="0" y="0" fill="#fbbf24" font-size="12.5" font-weight="bold"></text>
-      <text id="xh-mt4-t2" x="0" y="0" fill="#38bdf8" font-size="12.5" font-weight="bold"></text>
-      <text id="xh-mt4-t3" x="0" y="0" fill="#cbd5e1" font-size="12"></text>
+      <circle id="xh-mt4-ret" cx="0" cy="0" r="5" fill="#a78bfa" stroke="#fff" stroke-width="1.8"/>
+      <rect id="xh-mt4-box" x="0" y="0" width="540" height="78" rx="6" fill="rgba(15,18,24,0.96)" stroke="#38bdf8" stroke-width="1.2"/>
+      <text id="xh-mt4-t1" x="0" y="0" fill="#fbbf24" font-size="12" font-weight="bold"></text>
+      <text id="xh-mt4-t2" x="0" y="0" fill="#38bdf8" font-size="12" font-weight="bold"></text>
+      <text id="xh-mt4-t3" x="0" y="0" fill="#cbd5e1" font-size="11.5"></text>
     </g>
   </svg>`;
 }
@@ -6216,6 +6343,10 @@ window.onMt4ChartHover = function(ev) {
   const yBal = cfg.topTop + (1 - (p.bal - cfg.vMin) / Math.max(1e-6, cfg.vMax - cfg.vMin)) * cfg.topH;
   const yEq = cfg.topTop + (1 - (p.eq - cfg.vMin) / Math.max(1e-6, cfg.vMax - cfg.vMin)) * cfg.topH;
 
+  const winNetRet = r2((p.eq || 0) - cfg.cycleBaseEq);
+  const winClosedRet = r2((p.bal || 0) - cfg.cycleBaseBal);
+  const yRet = cfg.botTop + (1 - (winNetRet - cfg.pMin) / Math.max(1e-6, cfg.pMax - cfg.pMin)) * cfg.botH;
+
   g.style.display = 'block';
   $('xh-mt4-v').setAttribute('x1', x);
   $('xh-mt4-v').setAttribute('x2', x);
@@ -6223,23 +6354,42 @@ window.onMt4ChartHover = function(ev) {
   $('xh-mt4-bal').setAttribute('cy', yBal);
   $('xh-mt4-eq').setAttribute('cx', x);
   $('xh-mt4-eq').setAttribute('cy', yEq);
+  const retDot = $('xh-mt4-ret');
+  if (retDot) {
+    retDot.setAttribute('cx', x);
+    retDot.setAttribute('cy', yRet);
+  }
 
-  const boxW = 515, boxH = 70;
+  // 匹配蜡烛K线 (若有)
+  let candleInfo = null;
+  if (cfg.candles && cfg.candles.length > 0) {
+    candleInfo = cfg.candles.find((c) => idx >= c.startIdx && idx <= c.endIdx) || cfg.candles[0];
+  }
+
+  const boxW = 540, boxH = 78;
   const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
   const by = cfg.topTop + 8;
   const box = $('xh-mt4-box'), t1 = $('xh-mt4-t1'), t2 = $('xh-mt4-t2'), t3 = $('xh-mt4-t3');
-  box.setAttribute('x', bx); box.setAttribute('y', by);
-  t1.setAttribute('x', bx + 10); t1.setAttribute('y', by + 20);
-  t2.setAttribute('x', bx + 10); t2.setAttribute('y', by + 41);
-  t3.setAttribute('x', bx + 10); t3.setAttribute('y', by + 60);
+  box.setAttribute('x', bx); box.setAttribute('y', by); box.setAttribute('width', boxW); box.setAttribute('height', boxH);
+  t1.setAttribute('x', bx + 12); t1.setAttribute('y', by + 22);
+  t2.setAttribute('x', bx + 12); t2.setAttribute('y', by + 44);
+  t3.setAttribute('x', bx + 12); t3.setAttribute('y', by + 65);
 
   const tm = new Date(p.t).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-  const closedPnl = r2((p.bal || 0) - cfg.initBal);
-  const netRet = r2((p.eq || 0) - cfg.initBal);
+  const totalClosedPnl = r2((p.bal || 0) - cfg.initBal);
+  const totalNetRet = r2((p.eq || 0) - cfg.initBal);
   const pMar = p.marMax != null ? p.marMax : (p.mar || 0);
-  t1.textContent = `🕒 ${tm}  |  余额: $${f2(p.bal)}  |  最低净值: $${f2(p.eq)}  |  已用预付款: $${f2(pMar)}  |  金价: $${f2(p.px)}`;
-  t2.textContent = `💰 已平仓落袋: ${closedPnl >= 0 ? '+' : ''}$${f2(closedPnl)}  |  浮动盈亏: ${p.pnl >= 0 ? '+' : ''}$${f2(p.pnl)}  |  综合净收益: ${netRet >= 0 ? '+' : ''}$${f2(netRet)}`;
-  t3.textContent = `📊 持仓敞口: 买${f2(p.buyLots)}手 / 卖${f2(p.sellLots)}手 (净敞口 ${p.netLots >= 0 ? '+' : ''}${f2(p.netLots)}手)  |  最低预付款比例: ${f2(p.ml)}%`;
+
+  t1.textContent = `🕒 ${tm}  |  余额: $${f2(p.bal)}  |  实时净值: $${f2(p.eq)}  |  金价: $${f2(p.px)}`;
+
+  if (candleInfo) {
+    const isBull = candleInfo.c >= candleInfo.o;
+    t2.textContent = `🕯️ 蜡烛: 开 $${f2(candleInfo.o)} · 高 $${f2(candleInfo.h)} · 低 $${f2(candleInfo.l)} · 收 $${f2(candleInfo.c)} (${isBull ? '▲阳线' : '▼阴线'})  |  柱内探底浮亏: -$${f2(candleInfo.maxDd)}`;
+  } else {
+    t2.textContent = `💰 视窗净变动: ${winNetRet >= 0 ? '+' : ''}$${f2(winNetRet)}  |  实时浮盈亏: ${p.pnl >= 0 ? '+' : ''}$${f2(p.pnl)}  |  全期落袋: +$${f2(totalClosedPnl)}`;
+  }
+
+  t3.textContent = `📊 视窗落袋: ${winClosedRet >= 0 ? '+' : ''}$${f2(winClosedRet)}  |  预付款: $${f2(pMar)} (${f2(p.ml)}%)  |  买${f2(p.buyLots)}手/卖${f2(p.sellLots)}手  |  全期净收益: ${totalNetRet >= 0 ? '+' : ''}$${f2(totalNetRet)}`;
 };
 window.onMt4ChartMove = window.onMt4ChartMouseMove;
 window.onMt4ChartLeave = window.onMt4ChartMouseLeave;
@@ -6556,8 +6706,8 @@ function buildMScoreKlineSvg(candles, tf, curScore) {
   if (!candles || !candles.length) {
     return '<div class="mut sm" style="padding:40px;text-align:center">正在采集并合成 ' + tf + ' 马丁可做指数蜡烛图数据...</div>';
   }
-  // 核心：严格对齐上方 MT4 收益/浮亏极值图的绘制坐标轴 (W=1200, L=68, R=156)，确保时间轴上下完全像素级对齐！
-  const W = 1200, H = 290, L = 68, R = 156, T = 22, B = 35;
+  // 核心：严格对齐上方 MT4 收益/浮亏极值图的绘制坐标轴 (W=1200, L=72, R=175)，确保时间轴上下完全像素级对齐！
+  const W = 1200, H = 330, L = 72, R = 175, T = 22, B = 35;
   const cw = W - L - R, ch = H - T - B;
   const n = candles.length;
   const xOf = (i) => L + (i / Math.max(1, n - 1)) * cw;
@@ -7046,14 +7196,20 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       </div>
     </div>
 
-    <!-- 实时曲线时间周期切换栏 + 股票K线式拖动平移控制器 (严格置于图表正上方) -->
-    <div style="margin-top:14px;margin-bottom:8px;background:rgba(15,20,30,0.85);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <!-- 实时曲线时间周期切换栏 + 呈现形态切换 (蜡烛K线/折线) + 股票K线式拖动平移控制器 (严格置于图表正上方) -->
+    <div style="margin-top:14px;margin-bottom:8px;background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <span style="font-weight:800;font-size:12.5px;color:var(--gold)">⏱️ 曲线周期切换:</span>
+        <span style="font-weight:800;font-size:12.5px;color:var(--gold)">⏱️ 视窗周期:</span>
         <button class="sm ${tf === '4H' ? 'on' : ''}" onclick="setMt4CurveTf('4H')" style="${tf === '4H' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">⚡ 近4小时 (高频30s)</button>
         <button class="sm ${tf === '24H' ? 'on' : ''}" onclick="setMt4CurveTf('24H')" style="${tf === '24H' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">🕒 近24小时</button>
         <button class="sm ${tf === '7D' ? 'on' : ''}" onclick="setMt4CurveTf('7D')" style="${tf === '7D' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">📅 近7天 (长周期)</button>
-        <button class="sm ${tf === 'ALL' ? 'on' : ''}" onclick="setMt4CurveTf('ALL')" style="${tf === 'ALL' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">📜 长期持续记录 (全量)</button>
+        <button class="sm ${tf === 'ALL' ? 'on' : ''}" onclick="setMt4CurveTf('ALL')" style="${tf === 'ALL' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">📜 长期全量记录</button>
+
+        <span style="border-left:1px solid #334155;height:18px;margin:0 4px"></span>
+        <span style="font-weight:800;font-size:12.5px;color:#38bdf8">🎨 图表样式:</span>
+        <button class="sm ${(MT4_CHART_STATE.chartStyle || 'candle') === 'candle' ? 'on' : ''}" onclick="setMt4ChartStyle('candle')" style="${(MT4_CHART_STATE.chartStyle || 'candle') === 'candle' ? 'border-color:#38bdf8;color:#38bdf8;font-weight:800;' : ''}">🕯️ 净值蜡烛K线</button>
+        <button class="sm ${(MT4_CHART_STATE.chartStyle || 'candle') === 'line' ? 'on' : ''}" onclick="setMt4ChartStyle('line')" style="${(MT4_CHART_STATE.chartStyle || 'candle') === 'line' ? 'border-color:#38bdf8;color:#38bdf8;font-weight:800;' : ''}">📈 平滑折线图</button>
+        <button class="sm ${(MT4_CHART_STATE.chartStyle || 'candle') === 'both' ? 'on' : ''}" onclick="setMt4ChartStyle('both')" style="${(MT4_CHART_STATE.chartStyle || 'candle') === 'both' ? 'border-color:#38bdf8;color:#38bdf8;font-weight:800;' : ''}">✨ 蜡烛+曲线综合</button>
       </div>
 
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -7063,7 +7219,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
         <span class="xs" style="color:#94a3b8;margin-left:4px">
           ${totalPts > 0 ? `视窗: <b>${fmtSecTime(visibleArr[0] && visibleArr[0].t)}</b> ~ <b>${fmtSecTime(visibleArr[visibleArr.length - 1] && visibleArr[visibleArr.length - 1].t)}</b> (${visibleArr.length}/${totalPts}点${offset > 0 ? ` · 回溯${offset}点` : ' · 实时'})` : '暂无数据'}
         </span>
-        <span class="xs" style="color:var(--gold);opacity:.85" title="像股票软件一样，用鼠标左键拖拽或触摸滑动图表即可自由平移">💡 支持图表左右按住拖拽</span>
+        <span class="xs" style="color:var(--gold);opacity:.85" title="像股票软件一样，用鼠标左键拖拽或触摸滑动图表即可自由平移">💡 支持图表左右按住拖拽 · 滚轮缩放</span>
       </div>
     </div>
 
