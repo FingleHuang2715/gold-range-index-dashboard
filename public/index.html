@@ -5035,7 +5035,7 @@ const MT4_CHART_STATE = {
   chartStyle: localStorage.getItem('mt4_chart_style') || 'candle', // 'candle' | 'line' | 'both'
   mode: 'fast',        // 兼容模式
   panOffset: 0,        // 水平平移偏移量 (点数, 0 为最新)
-  windowSize: 100,     // 单屏展现的点数 (用于拖拽平移)
+  windowSize: null,    // 单屏展现的点数 (null 表示默认一屏全景看全所选周期，可通过放大/缩小调整)
   isDragging: false,
   dragStartX: 0,
   dragStartOffset: 0,
@@ -5156,6 +5156,7 @@ window.setMt4CurveTf = function(tf) {
   MT4_CHART_STATE.tf = tf;
   MT4_CHART_STATE.mode = (tf === '4H') ? 'fast' : 'long';
   MT4_CHART_STATE.panOffset = 0; // 切换周期重置到最新
+  MT4_CHART_STATE.windowSize = null; // 切换周期默认一屏看全该周期全部历史
   if (tf === 'ALL' && (!window.MT4_ARCHIVE || !window.MT4_ARCHIVE.hist1h)) {
     fetchMt4Archive(true).then(() => { if (D) render(); });
   }
@@ -5173,12 +5174,49 @@ window.setMt4ChartStyle = function(st) {
 };
 
 window.panMt4Chart = function(step) {
-  const maxOffset = Math.max(0, (MT4_CHART_STATE.fullCount || 0) - (MT4_CHART_STATE.pts ? MT4_CHART_STATE.pts.arr.length : 100));
+  const total = MT4_CHART_STATE.fullCount || (MT4_CHART_STATE.pts ? MT4_CHART_STATE.pts.arr.length : 100);
+  const wSize = MT4_CHART_STATE.windowSize || (MT4_CHART_STATE.pts ? MT4_CHART_STATE.pts.arr.length : total);
+  const maxOffset = Math.max(0, total - wSize);
   MT4_CHART_STATE.panOffset = Math.max(0, Math.min(maxOffset, (MT4_CHART_STATE.panOffset || 0) + step));
   if (D) render();
 };
 
 window.resetMt4ChartPan = function() {
+  MT4_CHART_STATE.panOffset = 0;
+  if (D) render();
+};
+
+// 放大缩小图表：dir > 0 放大查看微观细节，dir < 0 缩小在同一屏幕展现更长时间段数据
+window.zoomMt4Chart = function(dir) {
+  const total = MT4_CHART_STATE.fullCount || (MT4_CHART_STATE.pts ? MT4_CHART_STATE.pts.arr.length : 100);
+  let curW = MT4_CHART_STATE.windowSize || (MT4_CHART_STATE.pts ? MT4_CHART_STATE.pts.arr.length : total);
+  if (curW > total) curW = total;
+  let newW;
+  if (dir > 0) {
+    // 放大 (Zoom In): 减少展现点数，波段细节更丰富
+    newW = Math.max(20, Math.round(curW * 0.68));
+  } else {
+    // 缩小 (Zoom Out): 增加展现点数，同一屏幕看到更长时间段数据
+    newW = Math.min(total, Math.max(curW + 25, Math.round(curW * 1.48)));
+  }
+  MT4_CHART_STATE.windowSize = newW;
+  const maxOffset = Math.max(0, total - newW);
+  MT4_CHART_STATE.panOffset = Math.max(0, Math.min(maxOffset, MT4_CHART_STATE.panOffset || 0));
+  if (D) render();
+};
+
+// 一屏全览：100% 查看所选周期的全部时间段
+window.fitAllMt4Chart = function() {
+  const total = MT4_CHART_STATE.fullCount || 100;
+  MT4_CHART_STATE.windowSize = total;
+  MT4_CHART_STATE.panOffset = 0;
+  if (D) render();
+};
+
+// 恢复适中标准视野 (约 100~120 点)
+window.resetMt4ChartZoom = function() {
+  const total = MT4_CHART_STATE.fullCount || 100;
+  MT4_CHART_STATE.windowSize = Math.min(total, 120);
   MT4_CHART_STATE.panOffset = 0;
   if (D) render();
 };
@@ -6318,15 +6356,16 @@ window.onMt4ChartTouchEnd = function() {
 window.onMt4ChartWheel = function(ev) {
   const cfg = MT4_CHART_STATE.pts;
   if (!cfg) return;
-  const delta = ev.deltaX !== 0 ? ev.deltaX : ev.deltaY;
-  if (Math.abs(delta) < 2) return;
   ev.preventDefault();
-  const step = delta > 0 ? -5 : 5;
-  const maxOffset = Math.max(0, (MT4_CHART_STATE.fullCount || 0) - cfg.arr.length);
-  const newOffset = Math.max(0, Math.min(maxOffset, (MT4_CHART_STATE.panOffset || 0) + step));
-  if (newOffset !== MT4_CHART_STATE.panOffset) {
-    MT4_CHART_STATE.panOffset = newOffset;
-    if (D) render();
+  const delta = ev.deltaY !== 0 ? ev.deltaY : ev.deltaX;
+  if (Math.abs(delta) < 2) return;
+  if (ev.shiftKey) {
+    // 按住 Shift 滚轮水平平移
+    const step = delta > 0 ? 15 : -15;
+    window.panMt4Chart(step);
+  } else {
+    // 鼠标滚轮缩放：向上滚动(delta < 0)放大，向下滚动(delta > 0)缩小展现更长时间段数据
+    window.zoomMt4Chart(delta < 0 ? 1 : -1);
   }
 };
 
@@ -6955,9 +6994,13 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
   const totalPts = fullData.length;
   MT4_CHART_STATE.fullCount = totalPts;
 
-  // 窗口切片逻辑：像股票K线图一样拖动平移
-  const isPannable = totalPts > 60;
-  const wSize = (!isPannable || (tf === '4H' && totalPts <= 120)) ? totalPts : Math.min(totalPts, MT4_CHART_STATE.windowSize || 100);
+  // 窗口切片逻辑：支持放大/缩小与股票K线式拖拽平移
+  // 默认 windowSize 为 null 时展现全部数据 (在同一屏幕看全当前周期的更长跨度数据)
+  let wSize = MT4_CHART_STATE.windowSize || totalPts;
+  if (wSize > totalPts) wSize = totalPts;
+  if (wSize < 20) wSize = Math.min(totalPts, 20);
+  MT4_CHART_STATE.windowSize = wSize;
+
   const maxOffset = Math.max(0, totalPts - wSize);
   let offset = Math.max(0, Math.min(maxOffset, MT4_CHART_STATE.panOffset || 0));
   MT4_CHART_STATE.panOffset = offset;
@@ -7196,7 +7239,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       </div>
     </div>
 
-    <!-- 实时曲线时间周期切换栏 + 呈现形态切换 (蜡烛K线/折线) + 股票K线式拖动平移控制器 (严格置于图表正上方) -->
+    <!-- 实时曲线时间周期切换栏 + 呈现形态切换 (蜡烛K线/折线) + 视窗放大缩小与平移控制器 (严格置于图表正上方) -->
     <div style="margin-top:14px;margin-bottom:8px;background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <span style="font-weight:800;font-size:12.5px;color:var(--gold)">⏱️ 视窗周期:</span>
@@ -7206,20 +7249,29 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
         <button class="sm ${tf === 'ALL' ? 'on' : ''}" onclick="setMt4CurveTf('ALL')" style="${tf === 'ALL' ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">📜 长期全量记录</button>
 
         <span style="border-left:1px solid #334155;height:18px;margin:0 4px"></span>
-        <span style="font-weight:800;font-size:12.5px;color:#38bdf8">🎨 图表样式:</span>
+        <span style="font-weight:800;font-size:12.5px;color:#38bdf8">🎨 展现样式:</span>
         <button class="sm ${(MT4_CHART_STATE.chartStyle || 'candle') === 'candle' ? 'on' : ''}" onclick="setMt4ChartStyle('candle')" style="${(MT4_CHART_STATE.chartStyle || 'candle') === 'candle' ? 'border-color:#38bdf8;color:#38bdf8;font-weight:800;' : ''}">🕯️ 净值蜡烛K线</button>
         <button class="sm ${(MT4_CHART_STATE.chartStyle || 'candle') === 'line' ? 'on' : ''}" onclick="setMt4ChartStyle('line')" style="${(MT4_CHART_STATE.chartStyle || 'candle') === 'line' ? 'border-color:#38bdf8;color:#38bdf8;font-weight:800;' : ''}">📈 平滑折线图</button>
-        <button class="sm ${(MT4_CHART_STATE.chartStyle || 'candle') === 'both' ? 'on' : ''}" onclick="setMt4ChartStyle('both')" style="${(MT4_CHART_STATE.chartStyle || 'candle') === 'both' ? 'border-color:#38bdf8;color:#38bdf8;font-weight:800;' : ''}">✨ 蜡烛+曲线综合</button>
+        <button class="sm ${(MT4_CHART_STATE.chartStyle || 'candle') === 'both' ? 'on' : ''}" onclick="setMt4ChartStyle('both')" style="${(MT4_CHART_STATE.chartStyle || 'candle') === 'both' ? 'border-color:#38bdf8;color:#38bdf8;font-weight:800;' : ''}">✨ 蜡烛+曲线融合</button>
       </div>
 
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <!-- 放大/缩小与全景控制器 -->
+        <span style="font-weight:800;font-size:12px;color:var(--gold)">🔍 缩放:</span>
+        <button class="sm" onclick="zoomMt4Chart(1)" title="放大：减少同屏点数，查看更精细波动细节" style="font-weight:700">🔍+ 放大</button>
+        <button class="sm" onclick="zoomMt4Chart(-1)" title="缩小：增加同屏点数，在同一屏幕展现更长时间段数据" style="font-weight:700">🔍- 缩小 (看更长)</button>
+        <button class="sm ${wSize >= totalPts ? 'on' : ''}" onclick="fitAllMt4Chart()" title="一屏全景：100% 完整展示当前周期的全部数据" style="${wSize >= totalPts ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">🌐 一屏看全</button>
+
+        <span style="border-left:1px solid #334155;height:18px;margin:0 3px"></span>
+        <!-- 左右平移与复位控制器 -->
         <button class="sm" onclick="panMt4Chart(25)" title="向左平移查看更早历史">◀ 往左移</button>
         <button class="sm" onclick="panMt4Chart(-25)" title="向右平移查看最新数据">往右移 ▶</button>
         <button class="sm ${offset === 0 ? '' : 'pri'}" onclick="resetMt4ChartPan()" title="复位到最新数据">⏮ 回到最新</button>
+
         <span class="xs" style="color:#94a3b8;margin-left:4px">
-          ${totalPts > 0 ? `视窗: <b>${fmtSecTime(visibleArr[0] && visibleArr[0].t)}</b> ~ <b>${fmtSecTime(visibleArr[visibleArr.length - 1] && visibleArr[visibleArr.length - 1].t)}</b> (${visibleArr.length}/${totalPts}点${offset > 0 ? ` · 回溯${offset}点` : ' · 实时'})` : '暂无数据'}
+          ${totalPts > 0 ? `同屏: <b>${visibleArr.length}</b>/${totalPts}点 (${Math.round((visibleArr.length / Math.max(1, totalPts)) * 100)}% · <b>${fmtSecTime(visibleArr[0] && visibleArr[0].t)}</b> ~ <b>${fmtSecTime(visibleArr[visibleArr.length - 1] && visibleArr[visibleArr.length - 1].t)}</b>${offset > 0 ? ` · 回溯${offset}点` : ' · 实时'})` : '暂无数据'}
         </span>
-        <span class="xs" style="color:var(--gold);opacity:.85" title="像股票软件一样，用鼠标左键拖拽或触摸滑动图表即可自由平移">💡 支持图表左右按住拖拽 · 滚轮缩放</span>
+        <span class="xs" style="color:var(--gold);opacity:.85" title="滚轮缩放时间跨度，左键拖拽自由平移">💡 滚轮直接缩放 · 拖拽自由平移</span>
       </div>
     </div>
 
