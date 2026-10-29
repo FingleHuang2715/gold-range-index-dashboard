@@ -2550,6 +2550,7 @@ window.toggleCandle = function(tf) {
 
 function render() {
   if (!D) return;
+  window.D = D;
   const d = D;
   const mt4 = d.mt4 && d.mt4.balance > 0 && (Date.now() - d.mt4.ts < 3600000) ? d.mt4 : null;
   if (mt4) {
@@ -6244,7 +6245,7 @@ window.onMt4ChartMove = window.onMt4ChartMouseMove;
 window.onMt4ChartLeave = window.onMt4ChartMouseLeave;
 
 // ========== 24 小时 (北京时间) 浮亏高危时段热力表：行=浮亏阶梯，列=小时，支持自定义日期范围与3000/4000高危档 ==========
-function buildMt4HourHeatmap(stats, mt4Dec) {
+function buildMt4HourHeatmap(stats, mt4Dec, passedHistoryLong, mt4Obj) {
   const TH = MT4_DD_TIERS_DEF;
   const bjNowH = new Date(Date.now() + 8 * 3600000).getUTCHours();
   const bjNowM = new Date(Date.now() + 8 * 3600000).getUTCMinutes();
@@ -6255,7 +6256,11 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
   const endDate = HEATMAP_FILTER.endDate || '';
 
   const arc = window.MT4_ARCHIVE;
-  const historyLong = (window.D && window.D.mt4 && Array.isArray(window.D.mt4.historyLong)) ? window.D.mt4.historyLong : [];
+  const historyLong = (Array.isArray(passedHistoryLong) && passedHistoryLong.length > 0)
+    ? passedHistoryLong
+    : ((mt4Obj && Array.isArray(mt4Obj.historyLong) && mt4Obj.historyLong.length > 0)
+      ? mt4Obj.historyLong
+      : ((window.D && window.D.mt4 && Array.isArray(window.D.mt4.historyLong)) ? window.D.mt4.historyLong : []));
 
   const activeHourly = Array.from({ length: 24 }, () => ({
     s: 0, dd: 0, mar: 0,
@@ -6290,7 +6295,40 @@ function buildMt4HourHeatmap(stats, mt4Dec) {
     });
   }
 
-  // 2) 补充 arc.daily 中更早的历史天数样本
+  // 2) 融合 stats.hourly 历史统计（仅在全部历史模式下取两者最大值，确保任意早期已统计波次绝不遗漏）
+  if ((!startDate && !endDate && preset === 'all') && stats && Array.isArray(stats.hourly) && stats.hourly.length === 24) {
+    stats.hourly.forEach((sh, h) => {
+      if ((sh.s || 0) > activeHourly[h].s) activeHourly[h].s = sh.s;
+      if ((sh.dd || 0) > activeHourly[h].dd) activeHourly[h].dd = sh.dd;
+      if ((sh.mar || 0) > activeHourly[h].mar) activeHourly[h].mar = sh.mar;
+      TH.forEach((th, k) => {
+        const sw = (sh.w && sh.w[k]) || 0;
+        const sd = (sh.d && sh.d[k]) || 0;
+        if (sw > activeHourly[h].w[k]) activeHourly[h].w[k] = sw;
+        if (sd > activeHourly[h].d[k]) activeHourly[h].d[k] = sd;
+      });
+    });
+  }
+
+  // 3) 实时当前未收柱或正在持仓的最新瞬时浮亏 (确保最新走动的这一小时绝不漏统)
+  if (mt4Dec && mt4Dec.ddUsd > 0) {
+    const todayStr = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+    const inRange = (!startDate || todayStr >= startDate) && (!endDate || todayStr <= endDate);
+    if (inRange) {
+      const curH = activeHourly[bjNowH];
+      if (mt4Dec.ddUsd > curH.dd) curH.dd = mt4Dec.ddUsd;
+      if ((mt4Dec.margin || 0) > curH.mar) curH.mar = mt4Dec.margin || 0;
+      curH.s = Math.max(curH.s, 60);
+      TH.forEach((th, k) => {
+        if (mt4Dec.ddUsd >= th && curH.w[k] === 0) {
+          curH.w[k] += 1;
+          curH.d[k] += 60;
+        }
+      });
+    }
+  }
+
+  // 4) 补充 arc.daily 中更早的历史天数样本
   if (arc && arc.daily && typeof arc.daily === 'object') {
     const allArcDates = Object.keys(arc.daily).sort();
     allArcDates.forEach(dateKey => {
@@ -6845,16 +6883,6 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
     // 稳健推荐本金 (250% 充裕维持率，防范极端单边连加 2-3 层)
     const capRec = Math.ceil((t.th * 1.45 + estMar * 2.8) / 50) * 50;
 
-    let safetyBadge = '';
-    if (curBal >= capRec) {
-      safetyBadge = `<span class="pill RANGE" style="font-size:10.5px;padding:2px 6px">🟢 资金充裕 (+${Math.round(curBal - capRec)}$)</span>`;
-    } else if (curBal >= capMin) {
-      safetyBadge = `<span class="pill MIXED" style="font-size:10.5px;padding:2px 6px">🟡 临界抗险 (防爆但忌加仓)</span>`;
-    } else {
-      safetyBadge = `<span class="pill TREND" style="font-size:10.5px;padding:2px 6px">🔴 存在强平风险 (缺 $${Math.round(capMin - curBal)})</span>`;
-    }
-
-    const recPct = t.waves > 0 ? Math.round(((t.recovered || 0) / t.waves) * 100) : 100;
     const rowBg = isNowActive ? 'rgba(244,63,94,0.18)' : isHitEver ? 'rgba(245,158,11,0.06)' : 'transparent';
 
     return `<tr style="background:${rowBg};${isKeyMilestone ? 'font-weight:700;' : ''}">
@@ -6866,13 +6894,11 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
         <b>第 ${matchedLayer.n} 层</b> · 累 <b>${matchedLayer.cumLot}</b> 手 · 预估预付款 <b>$${estMar.toFixed(0)}</b>
       </td>
       <td><b style="font-size:14px;color:${(t.waves || 0) > 0 ? '#fbbf24' : '#64748b'}">${t.waves || 0} 次</b></td>
-      <td><span style="color:#34d399;font-weight:700">${t.recovered || 0} 次 (${recPct}%)</span></td>
       <td>${t.durSec > 0 ? `<b style="color:#e2e8f0">${fmtDuration(t.durSec)}</b>` : '<span class="mut">0秒</span>'}</td>
       <td>
         <span style="font-size:11px;color:#94a3b8">保底防爆:</span> <b style="color:#fbbf24;font-size:12px">$${capMin}</b>
-        <span style="font-size:11px;color:#94a3b8;margin-left:6px">稳健推荐:</span> <b style="color:var(--gold);font-size:12px">$${capRec}</b>
+        <span style="font-size:11px;color:#94a3b8;margin-left:8px">稳健推荐:</span> <b style="color:var(--gold);font-size:12px">$${capRec}</b>
       </td>
-      <td>${safetyBadge}</td>
       <td class="xs">${t.lastTs ? `${fmtSecTime(t.lastTs)} · $${f2(t.lastPx)}` : '<span class="mut">未曾触及</span>'}</td>
     </tr>`;
   }).join('');
@@ -7050,7 +7076,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
     </div>
 
     <!-- 第三排半：24小时浮亏高危时段热力表 -->
-    ${buildMt4HourHeatmap(stats, mt4Dec)}
+    ${buildMt4HourHeatmap(stats, mt4Dec, historyLong, mt4)}
 
     <!-- 第四排：📊 浮亏分阶段突破次数统计表 ($50 ~ $2000) & 💰 后期账户放多少钱决策测算器 -->
     <div style="display:grid;grid-template-columns:1.45fr 1fr;gap:12px;margin-top:12px">
@@ -7066,10 +7092,8 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
               <th>浮亏阶梯</th>
               <th>EA加仓推演 (层数/手数/预估保证金)</th>
               <th>发生频次</th>
-              <th>成功解套率</th>
               <th>累计停留时长</th>
               <th>科学抗险所需本金</th>
-              <th>当前账户安全度 (余额 $${f2(curBal)})</th>
               <th>最近一次触发</th>
             </tr>
           </thead>

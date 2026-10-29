@@ -1985,6 +1985,38 @@ function createEmptyMt4Stats(nowSec, balVal, eqVal) {
   return s;
 }
 
+// 基于全部 historyLong 15分钟样本全量校准 24 小时热力分布 (只要该阶段超过即计入一次)
+function syncHourlyFromHistoryLong(stats, historyLong, curBjHour = -1, curDdUsd = 0, curMarVal = 0) {
+  if (!stats || !Array.isArray(historyLong) || !historyLong.length) return;
+  const mkHour = () => ({ s: 0, dd: 0, mar: 0, w: MT4_DD_TIERS.map(() => 0), d: MT4_DD_TIERS.map(() => 0) });
+  const hourly = Array.from({ length: 24 }, mkHour);
+  for (const b of historyLong) {
+    const bt = (b.t || 0) < 1e11 ? (b.t || 0) : Math.floor((b.t || 0) / 1000);
+    const hh = new Date((bt + 8 * 3600) * 1000).getUTCHours();
+    const H = hourly[hh];
+    const dd = b.ddMax != null ? b.ddMax : Math.max(0, -(b.pnl || 0));
+    const mar = b.marMax != null ? b.marMax : (b.mar || 0);
+    H.s += 900;
+    if (dd > H.dd) H.dd = dd;
+    if (mar > H.mar) H.mar = mar;
+    MT4_DD_TIERS.forEach((th, i) => {
+      if (dd >= th) {
+        H.w[i] += 1;
+        H.d[i] += 900;
+      }
+    });
+  }
+  if (curBjHour >= 0 && curDdUsd > 0) {
+    const curH = hourly[curBjHour];
+    if (curDdUsd > curH.dd) curH.dd = curDdUsd;
+    if (curMarVal > curH.mar) curH.mar = curMarVal;
+    MT4_DD_TIERS.forEach((th, i) => {
+      if (curDdUsd >= th && curH.w[i] === 0) curH.w[i] += 1;
+    });
+  }
+  stats.hourly = hourly;
+}
+
 function updateMt4StatsAndHistory(prevState, snap) {
   const {
     nowSec, accStr, balVal, eqVal, marVal, freeMVal, mlVal,
@@ -2304,6 +2336,11 @@ function updateMt4StatsAndHistory(prevState, snap) {
   }
   const historyLong = prevLong.slice(-MT4_LONG_KEEP);
 
+  // 关键：基于全部 historyLong 15分钟样本全量校准 24 小时热力分布 (只要该阶段超过即计入一次)
+  if (historyLong.length > 0) {
+    syncHourlyFromHistoryLong(stats, historyLong, bjHour, (buyCount + sellCount > 0 ? ddUsd : 0), marVal);
+  }
+
   return { stats, history, historyLong, brokenPeakOrTier, archInfo: { ddUsd, dtSec, hasPos: buyCount + sellCount > 0, newWaveTiers } };
 }
 
@@ -2542,6 +2579,9 @@ async function handleApiMt4(req, res) {
         latestMt4State.history = history;
         latestMt4State.historyLong = historyLong;
       }
+      if (latestMt4State && latestMt4State.stats && Array.isArray(latestMt4State.historyLong) && latestMt4State.historyLong.length > 0) {
+        syncHourlyFromHistoryLong(latestMt4State.stats, latestMt4State.historyLong, new Date(Date.now() + 8 * 3600000).getUTCHours(), latestMt4State.dd || 0, latestMt4State.margin || 0);
+      }
     }
     res.writeHead(200, corsHeaders);
     return res.end(JSON.stringify({ ok: true, redisOk: !!(MT4_REDIS_URL && MT4_REDIS_TOKEN), connected: !!latestMt4State, mt4: latestMt4State }));
@@ -2589,7 +2629,12 @@ async function handleApiData(req, res) {
 
     const mt4Live = await mt4RemoteGet();
     if (mt4Live) latestMt4State = mt4Live;
-    if (latestMt4State) data.mt4 = latestMt4State;
+    if (latestMt4State) {
+      if (latestMt4State.stats && Array.isArray(latestMt4State.historyLong) && latestMt4State.historyLong.length > 0) {
+        syncHourlyFromHistoryLong(latestMt4State.stats, latestMt4State.historyLong, new Date(Date.now() + 8 * 3600000).getUTCHours(), latestMt4State.dd || 0, latestMt4State.margin || 0);
+      }
+      data.mt4 = latestMt4State;
+    }
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(data));
   } catch (e) {
