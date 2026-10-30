@@ -1986,26 +1986,40 @@ function createEmptyMt4Stats(nowSec, balVal, eqVal) {
   return s;
 }
 
-// 严格统计各个浮亏阶梯的最短解套时间(minDurSec)、最长解套时间(maxDurSec)、平均解套时间(avgDurSec)
-// 准则：必须网格彻底完结（全部平仓）才计入，且统计时长严格取「开仓 ➔ 浮亏达标 ➔ 最终止盈平仓」的全生命周期
+// 严格按最大浮亏落入的专属极值区间(Mutually Exclusive Bracket)归类统计解套时间
+// 准则：必须网格彻底完结（全部平仓）才计入；浮亏达到 50 但未达到 100，解套后只算 50~100 区间的最短/平均/最长解套时间；
+// 浮亏冲上 1000，则只算 1000 级，不再混入 50~100 等前面低级区间，避免重复计算，确保真实反映“浮亏越大、解套耗时越长”
 function enrichTierRecoveryStats(stats) {
   if (!stats || !Array.isArray(stats.tiers)) return;
   const waves = Array.isArray(stats.waveLog) ? stats.waveLog : [];
   const completedWaves = waves.filter((w) => w.status === 'RECOVERED' && (w.durSec || 0) >= 20);
 
-  for (const t of stats.tiers) {
+  const tiersDef = stats.tiers.map((t) => t.th);
+
+  for (let idx = 0; idx < stats.tiers.length; idx++) {
+    const t = stats.tiers[idx];
+    const nextTh = tiersDef[idx + 1] || Infinity;
+
+    // 仅匹配最大浮亏峰值严格归属于本区间 [t.th, nextTh) 的已完结战役
     const matchingWaves = completedWaves.filter((w) => {
-      const hitInList = Array.isArray(w.tiersHit) && w.tiersHit.includes(t.th);
-      const hitByPeak = (w.peakDd || 0) >= t.th;
-      return hitInList || hitByPeak;
+      const p = w.peakDd || 0;
+      return p >= t.th && p < nextTh;
     });
+
     const durs = matchingWaves.map((w) => w.durSec).filter((d) => d >= 20);
     if (durs.length > 0) {
       t.minDurSec = Math.min(...durs);
       t.maxDurSec = Math.max(...durs);
       t.avgDurSec = Math.round(durs.reduce((a, b) => a + b, 0) / durs.length);
+      t.bracketWaves = matchingWaves.length;
       t.recovered = matchingWaves.length;
       t.totalRecDur = t.avgDurSec * t.recovered;
+    } else {
+      t.minDurSec = 0;
+      t.maxDurSec = 0;
+      t.avgDurSec = 0;
+      t.bracketWaves = 0;
+      t.recovered = 0;
     }
   }
 }

@@ -7854,7 +7854,9 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
     ? stats.tiers
     : MT4_DD_TIERS_DEF.map((th) => ({ th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-' }));
 
-  const tierRowsHtml = tiers.map((t) => {
+  const tiersDef = tiers.map((t) => t.th);
+  const tierRowsHtml = tiers.map((t, idx) => {
+    const nextTh = tiersDef[idx + 1];
     const isHitEver = (t.waves || 0) > 0 || (t.durSec || 0) > 0;
     const isNowActive = mt4Dec.ddUsd >= t.th;
     const isKeyMilestone = [100, 200, 400, 600, 800, 1000, 1500, 2000, 3000, 4000].includes(t.th);
@@ -7870,17 +7872,14 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
     }
 
     const estMar = matchedLayer.estMargin || Math.max(6, t.th * 0.08);
-    // 保底防爆线 (净值保持在 100% 维持率，不触发 50% 强平)
-    const capMin = Math.ceil((t.th + estMar * 1.2) / 10) * 10;
-    // 稳健推荐本金 (250% 充裕维持率，防范极端单边连加 2-3 层)
-    const capRec = Math.ceil((t.th * 1.45 + estMar * 2.8) / 50) * 50;
 
-    // 各亏损阶段已完结解套时间统计（严密规则：必须当前网格彻底全部平仓完结才算解套，时长取「开仓 ➔ 浮亏达标 ➔ 最终止盈平仓」全过程）
+    // 各亏损阶段已完结解套时间统计（严格按最大浮亏落入的专属区间 [t.th, nextTh) 归类，杜绝低级别重复计入高级别深套）
     const waves = (stats && Array.isArray(stats.waveLog)) ? stats.waveLog : [];
     const completedMatchingWaves = waves.filter(function (w) {
       const isCompleted = (w.status === 'RECOVERED') || (w.endTs && w.endTs > w.startTs);
-      const isHit = (w.tiersHit && w.tiersHit.includes(t.th)) || (w.peakDd >= t.th);
-      return isCompleted && isHit && (w.durSec >= 20);
+      const p = w.peakDd || 0;
+      const inBracket = p >= t.th && (nextTh ? p < nextTh : true);
+      return isCompleted && inBracket && (w.durSec >= 20);
     });
 
     const waveDurs = completedMatchingWaves.map(function (w) { return w.durSec; }).filter(function (d) { return d >= 20; });
@@ -7895,49 +7894,60 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       avgDur = Math.round(waveDurs.reduce(function (a, b) { return a + b; }, 0) / waveDurs.length);
     }
 
-    // 当前阶段存续时间 (当前持仓若触及此阶梯，从开仓至今经历了多久，方便与最短/最长解套时间直观对比)
-    let liveDurationHtml = '<span class="mut" style="font-size:11.5px">-</span>';
+    const bracketWavesCount = completedMatchingWaves.length;
+
+    // 当前阶段存续时间：当前正在持仓扛单的最大浮亏所处的极值区间
+    let liveDurationHtml = '<span class="mut xs">-</span>';
     const hasLivePositions = (mt4.buyCount || 0) + (mt4.sellCount || 0) > 0;
     if (hasLivePositions && stats && stats.activeWave) {
-      const isWaveHitThisTier = (stats.activeWave.tiersHit && stats.activeWave.tiersHit.includes(t.th)) || (stats.activeWave.peakDd >= t.th) || isNowActive;
-      if (isWaveHitThisTier) {
+      const curPeak = stats.activeWave.peakDd || 0;
+      const isCurrentPeakStage = curPeak >= t.th && (nextTh ? curPeak < nextTh : true);
+      const isBreachedPast = curPeak >= (nextTh || Infinity);
+
+      if (isCurrentPeakStage) {
         const liveSec = Math.max(1, Math.floor(Date.now() / 1000) - stats.activeWave.startTs);
         const isOverAvg = avgDur > 0 && liveSec > avgDur;
         const isOverMax = maxDur > 0 && liveSec > maxDur;
         liveDurationHtml = `
-          <div style="display:inline-flex;flex-direction:column;gap:2px">
-            <span class="pill TREND" style="font-size:11px;padding:2px 8px;font-weight:800">⏳ 进行中: ${fmtDuration(liveSec)}</span>
-            ${isOverMax ? `<span style="color:#fb7185;font-size:10px;font-weight:800">🚨 已破历史最长!</span>` : isOverAvg ? `<span style="color:#fbbf24;font-size:10px">⚠️ 已超平均时长</span>` : `<span style="color:#34d399;font-size:10px">✅ 在常态均值内</span>`}
+          <div style="display:inline-flex;flex-direction:column;gap:1px;line-height:1.2">
+            <span class="pill TREND" style="font-size:10.5px;padding:2px 6px;font-weight:800">⏳ 进行中: ${fmtDuration(liveSec)}</span>
+            ${isOverMax ? `<span style="color:#fb7185;font-size:9.5px;font-weight:800">🚨 破历史最长!</span>` : isOverAvg ? `<span style="color:#fbbf24;font-size:9.5px">⚠️ 超过平均</span>` : `<span style="color:#34d399;font-size:9.5px">✅ 在均值内</span>`}
           </div>
         `;
+      } else if (isBreachedPast) {
+        liveDurationHtml = '<span class="xs mut" style="color:#64748b">已穿过上行</span>';
       } else {
-        liveDurationHtml = '<span class="mut" style="font-size:11px">本轮未触及</span>';
+        liveDurationHtml = '<span class="xs mut" style="color:#475569">本轮未触及</span>';
       }
     } else {
-      liveDurationHtml = '<span class="mut" style="font-size:11px">已全部平仓</span>';
+      liveDurationHtml = '<span class="xs mut" style="color:#475569">已全部平仓</span>';
     }
 
-    const rowBg = isNowActive ? 'rgba(244,63,94,0.18)' : isHitEver ? 'rgba(245,158,11,0.06)' : 'transparent';
+    const isCurrentActiveBracket = stats && stats.activeWave && (stats.activeWave.peakDd >= t.th && (nextTh ? stats.activeWave.peakDd < nextTh : true));
+    const rowBg = isCurrentActiveBracket
+      ? 'rgba(244,63,94,0.18)'
+      : isHitEver ? 'rgba(245,158,11,0.05)' : 'transparent';
+
+    const bracketRangeLabel = nextTh ? `$${t.th} ~ $${nextTh}` : `≥ $${t.th}`;
 
     return `<tr style="background:${rowBg};${isKeyMilestone ? 'font-weight:700;' : ''}">
-      <td>
-        <span style="color:${t.th >= 3000 ? '#e11d48' : t.th >= 1000 ? '#fb7185' : t.th >= 200 ? '#fbbf24' : '#38bdf8'};font-weight:800">浮亏 ≥ $${t.th}</span>
-        ${isNowActive ? `<span class="pill TREND" style="margin-left:4px;padding:1px 6px;font-size:10px">🔥 当前正处此级</span>` : ''}
+      <td style="padding:6px 8px">
+        <span style="color:${t.th >= 3000 ? '#e11d48' : t.th >= 1000 ? '#fb7185' : t.th >= 200 ? '#fbbf24' : '#38bdf8'};font-weight:800;font-size:12.5px">${bracketRangeLabel}</span>
       </td>
-      <td style="font-size:11.5px">
-        <b>第 ${matchedLayer.n} 层</b> · 累 <b>${matchedLayer.cumLot}</b> 手 · 预估预付款 <b>$${estMar.toFixed(0)}</b>
+      <td style="padding:6px 8px;line-height:1.35">
+        <b>第 ${matchedLayer.n} 层</b> (累 ${matchedLayer.cumLot} 手)<br>
+        <span class="xs mut">预估预付款: $${estMar.toFixed(0)}</span>
       </td>
-      <td><b style="font-size:14px;color:${(t.waves || 0) > 0 ? '#fbbf24' : '#64748b'}">${t.waves || 0} 次</b></td>
-      <td>${minDur > 0 ? `<b style="color:#34d399">${fmtDuration(minDur)}</b>` : '<span class="mut">-</span>'}</td>
-      <td>${avgDur > 0 ? `<b style="color:#38bdf8">${fmtDuration(avgDur)}</b>` : '<span class="mut">-</span>'}</td>
-      <td>${maxDur > 0 ? `<b style="color:#fb7185">${fmtDuration(maxDur)}</b>` : '<span class="mut">-</span>'}</td>
-      <td style="background:rgba(245,158,11,0.05)">${liveDurationHtml}</td>
-      <td>${t.durSec > 0 ? `<b style="color:#e2e8f0">${fmtDuration(t.durSec)}</b>` : '<span class="mut">0秒</span>'}</td>
-      <td>
-        <span style="font-size:11px;color:#94a3b8">保底防爆:</span> <b style="color:#fbbf24;font-size:12px">$${capMin}</b>
-        <span style="font-size:11px;color:#94a3b8;margin-left:8px">稳健推荐:</span> <b style="color:var(--gold);font-size:12px">$${capRec}</b>
+      <td style="padding:6px 8px;text-align:center">
+        <b style="font-size:13px;color:${bracketWavesCount > 0 ? '#fbbf24' : '#64748b'}">${bracketWavesCount} 次</b>
+        ${(t.waves || 0) > bracketWavesCount ? `<br><span class="xs mut" title="历史上曾触及本阶梯的累计战役次数">累及${t.waves}次</span>` : ''}
       </td>
-      <td class="xs">${t.lastTs ? `${fmtSecTime(t.lastTs)} · $${f2(t.lastPx)}` : '<span class="mut">未曾触及</span>'}</td>
+      <td style="padding:6px 8px">${minDur > 0 ? `<b style="color:#34d399">${fmtDuration(minDur)}</b>` : '<span class="mut xs">-</span>'}</td>
+      <td style="padding:6px 8px">${avgDur > 0 ? `<b style="color:#38bdf8">${fmtDuration(avgDur)}</b>` : '<span class="mut xs">-</span>'}</td>
+      <td style="padding:6px 8px">${maxDur > 0 ? `<b style="color:#fb7185">${fmtDuration(maxDur)}</b>` : '<span class="mut xs">-</span>'}</td>
+      <td style="padding:6px 8px;background:rgba(245,158,11,0.04)">${liveDurationHtml}</td>
+      <td style="padding:6px 8px">${t.durSec > 0 ? `<b style="color:#e2e8f0">${fmtDuration(t.durSec)}</b>` : '<span class="mut xs">0秒</span>'}</td>
+      <td style="padding:6px 8px;font-size:11px;line-height:1.3">${t.lastTs ? `${fmtSecTime(t.lastTs).replace(' ', '<br>')}<br><span class="mut xs">$${f2(t.lastPx)}</span>` : '<span class="mut xs">未曾触及</span>'}</td>
     </tr>`;
   }).join('');
 
@@ -8141,28 +8151,27 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       ${buildMt4ParetoFibonacciChartHtml(tiers, ea, curBal, stats, pk)}
     </div>
 
-    <!-- 第四排：📊 账户浮亏分阶段突破次数与科学抗险推演表（全宽独立大表，排版宽敞舒展） -->
-    <div id="mt4TierSec" style="margin-top:14px;background:rgba(15,20,30,0.95);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;overflow-x:auto">
+    <!-- 第四排：📊 账户浮亏分阶段极值解套时间与推演表（全宽紧凑自适应，长文本智能换行不超屏） -->
+    <div id="mt4TierSec" style="margin-top:14px;background:rgba(15,20,30,0.95);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;overflow-x:auto">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <b style="color:var(--gold);font-size:14.5px">🪜 账户浮亏分阶段突破次数与科学抗险推演表 ($50 ~ $4000)</b>
-          <span class="pill NEUT" style="font-size:11px">⏱️ 解套时间统计规则：仅在当前网格彻底完结（全部平仓）后统计（自开仓建仓 ➔ 最大浮亏 ➔ 全仓止盈平仓）</span>
+          <b style="color:var(--gold);font-size:14px">🪜 账户浮亏分阶段极值解套时间与推演表 ($50 ~ $4000)</b>
+          <span class="pill NEUT" style="font-size:11px">⏱️ 专属极值区间归类：浮亏达到 50~100 仅计入该区间；若冲上 1000 则专属归入 1000 级，彻底避免前段重复虚高，真实呈现“浮亏越深解套越久”</span>
         </div>
-        <span class="xs mut">基于当前 EA 策略参数 (首单 0.02 / 倍率 1.38 / 封顶 1.32) 严格推演对应层数、持仓手数及所需抗险本金</span>
+        <span class="xs mut">基于当前 EA 策略参数 (首单 0.02 / 倍率 1.38 / 封顶 1.32) 严格推演对应各层持仓与预付款</span>
       </div>
-      <table class="tbl" style="font-size:12px;width:100%;white-space:nowrap">
+      <table class="tbl" style="font-size:12px;width:100%;border-collapse:collapse;line-height:1.4">
         <thead>
           <tr>
-            <th style="min-width:110px">浮亏阶梯</th>
-            <th style="min-width:180px">EA加仓推演 (层数/手数/预估保证金)</th>
-            <th style="min-width:70px">发生频次</th>
-            <th style="min-width:90px">最短解套时间</th>
-            <th style="min-width:90px">平均解套时间</th>
-            <th style="min-width:90px">最长解套时间</th>
-            <th style="min-width:150px;background:rgba(245,158,11,0.08);color:var(--gold)">⏳ 当前阶段存续时间</th>
-            <th style="min-width:90px">历史累计停留</th>
-            <th style="min-width:180px">科学抗险所需本金</th>
-            <th style="min-width:140px">最近一次触发</th>
+            <th style="padding:7px 8px">浮亏区间<br><span style="font-size:10px;font-weight:normal;color:#94a3b8">(极值归属)</span></th>
+            <th style="padding:7px 8px">EA加仓推演<br><span style="font-size:10px;font-weight:normal;color:#94a3b8">(层数/手数/保证金)</span></th>
+            <th style="padding:7px 8px;text-align:center">战役频次<br><span style="font-size:10px;font-weight:normal;color:#94a3b8">(峰值落入)</span></th>
+            <th style="padding:7px 8px">最短解套<br><span style="font-size:10px;font-weight:normal;color:#94a3b8">时间</span></th>
+            <th style="padding:7px 8px">平均解套<br><span style="font-size:10px;font-weight:normal;color:#94a3b8">时间</span></th>
+            <th style="padding:7px 8px">最长解套<br><span style="font-size:10px;font-weight:normal;color:#94a3b8">时间</span></th>
+            <th style="padding:7px 8px;background:rgba(245,158,11,0.08);color:var(--gold)">⏳ 当前阶段存续<br><span style="font-size:10px;font-weight:normal;color:#fbbf24">与历史对照</span></th>
+            <th style="padding:7px 8px">历史累计<br><span style="font-size:10px;font-weight:normal;color:#94a3b8">停留时长</span></th>
+            <th style="padding:7px 8px">最近触发<br><span style="font-size:10px;font-weight:normal;color:#94a3b8">(时间 / 金价)</span></th>
           </tr>
         </thead>
         <tbody>
