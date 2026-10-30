@@ -2580,7 +2580,8 @@ async function handleApiMt4(req, res) {
         latestMt4State.historyLong = historyLong;
       }
       if (latestMt4State && latestMt4State.stats && Array.isArray(latestMt4State.historyLong) && latestMt4State.historyLong.length > 0) {
-        syncHourlyFromHistoryLong(latestMt4State.stats, latestMt4State.historyLong, new Date(Date.now() + 8 * 3600000).getUTCHours(), latestMt4State.dd || 0, latestMt4State.margin || 0);
+        const curDd = Math.max(0, -(latestMt4State.totalPnl || 0));
+        syncHourlyFromHistoryLong(latestMt4State.stats, latestMt4State.historyLong, new Date(Date.now() + 8 * 3600000).getUTCHours(), curDd, latestMt4State.margin || 0);
       }
     }
     res.writeHead(200, corsHeaders);
@@ -2631,7 +2632,8 @@ async function handleApiData(req, res) {
     if (mt4Live) latestMt4State = mt4Live;
     if (latestMt4State) {
       if (latestMt4State.stats && Array.isArray(latestMt4State.historyLong) && latestMt4State.historyLong.length > 0) {
-        syncHourlyFromHistoryLong(latestMt4State.stats, latestMt4State.historyLong, new Date(Date.now() + 8 * 3600000).getUTCHours(), latestMt4State.dd || 0, latestMt4State.margin || 0);
+        const curDd = Math.max(0, -(latestMt4State.totalPnl || 0));
+        syncHourlyFromHistoryLong(latestMt4State.stats, latestMt4State.historyLong, new Date(Date.now() + 8 * 3600000).getUTCHours(), curDd, latestMt4State.margin || 0);
       }
       data.mt4 = latestMt4State;
     }

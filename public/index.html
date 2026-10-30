@@ -6451,6 +6451,10 @@ function buildMt4HourHeatmap(stats, mt4Dec, passedHistoryLong, mt4Obj) {
       ? mt4Obj.historyLong
       : ((window.D && window.D.mt4 && Array.isArray(window.D.mt4.historyLong)) ? window.D.mt4.historyLong : []));
 
+  const historyFast = (mt4Obj && Array.isArray(mt4Obj.history) && mt4Obj.history.length > 0)
+    ? mt4Obj.history
+    : ((window.D && window.D.mt4 && Array.isArray(window.D.mt4.history)) ? window.D.mt4.history : []);
+
   const activeHourly = Array.from({ length: 24 }, () => ({
     s: 0, dd: 0, mar: 0,
     w: TH.map(() => 0),
@@ -6479,6 +6483,30 @@ function buildMt4HourHeatmap(stats, mt4Dec, passedHistoryLong, mt4Obj) {
         if (dd >= th) {
           activeHourly[h].w[k] += 1;
           activeHourly[h].d[k] += 900;
+        }
+      });
+    });
+  }
+
+  // 1.5) 扫描近 4 小时高频 30 秒实盘采样 (毫秒级插针与瞬时突破 100% 捕获，绝不等待15分钟收柱)
+  if (historyFast.length > 0) {
+    historyFast.forEach(p => {
+      const pt = (p.t || 0) < 1e11 ? (p.t || 0) * 1000 : (p.t || 0);
+      if (!pt) return;
+      const dt = new Date(pt + 8 * 3600000);
+      const dateStr = dt.toISOString().slice(0, 10);
+      if (startDate && dateStr < startDate) return;
+      if (endDate && dateStr > endDate) return;
+      datesSet.add(dateStr);
+      const h = dt.getUTCHours();
+      const dd = p.dd != null ? p.dd : Math.max(0, -(p.pnl || 0));
+      const mar = p.mar || 0;
+      if (activeHourly[h].s === 0) activeHourly[h].s = 300;
+      if (dd > activeHourly[h].dd) activeHourly[h].dd = dd;
+      if (mar > activeHourly[h].mar) activeHourly[h].mar = mar;
+      TH.forEach((th, k) => {
+        if (dd >= th && activeHourly[h].w[k] === 0) {
+          activeHourly[h].w[k] = 1;
         }
       });
     });
