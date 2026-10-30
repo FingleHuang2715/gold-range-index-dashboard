@@ -7875,28 +7875,46 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
     // 稳健推荐本金 (250% 充裕维持率，防范极端单边连加 2-3 层)
     const capRec = Math.ceil((t.th * 1.45 + estMar * 2.8) / 50) * 50;
 
-    // 各亏损阶段解套时间统计（结合历史战役 waveLog 与服务端 tier 统计，得出真实的最短、最长与平均解套时长）
+    // 各亏损阶段已完结解套时间统计（严密规则：必须当前网格彻底全部平仓完结才算解套，时长取「开仓 ➔ 浮亏达标 ➔ 最终止盈平仓」全过程）
     const waves = (stats && Array.isArray(stats.waveLog)) ? stats.waveLog : [];
-    const matchingWaves = waves.filter(function (w) {
-      return (w.tiersHit && w.tiersHit.includes(t.th)) || (w.peakDd >= t.th);
+    const completedMatchingWaves = waves.filter(function (w) {
+      const isCompleted = (w.status === 'RECOVERED') || (w.endTs && w.endTs > w.startTs);
+      const isHit = (w.tiersHit && w.tiersHit.includes(t.th)) || (w.peakDd >= t.th);
+      return isCompleted && isHit && (w.durSec >= 20);
     });
-    const waveDurs = matchingWaves.map(function (w) { return w.durSec; }).filter(function (d) { return d > 0; });
+
+    const waveDurs = completedMatchingWaves.map(function (w) { return w.durSec; }).filter(function (d) { return d >= 20; });
 
     let minDur = t.minDurSec || 0;
     let maxDur = t.maxDurSec || 0;
     let avgDur = t.avgDurSec || 0;
 
     if (waveDurs.length > 0) {
-      const minW = Math.min.apply(null, waveDurs);
-      const maxW = Math.max.apply(null, waveDurs);
-      const avgW = Math.round(waveDurs.reduce(function (a, b) { return a + b; }, 0) / waveDurs.length);
-      minDur = minDur > 0 ? Math.min(minDur, minW) : minW;
-      maxDur = maxDur > 0 ? Math.max(maxDur, maxW) : maxW;
-      if (!avgDur) avgDur = avgW;
-    } else if (isHitEver && (t.waves || 0) > 0 && (t.durSec || 0) > 0) {
-      if (!minDur) minDur = Math.max(5, Math.round(t.durSec / t.waves * 0.45));
-      if (!maxDur) maxDur = Math.round(t.durSec / t.waves * 1.6);
-      if (!avgDur) avgDur = Math.round(t.durSec / t.waves);
+      minDur = Math.min.apply(null, waveDurs);
+      maxDur = Math.max.apply(null, waveDurs);
+      avgDur = Math.round(waveDurs.reduce(function (a, b) { return a + b; }, 0) / waveDurs.length);
+    }
+
+    // 当前阶段存续时间 (当前持仓若触及此阶梯，从开仓至今经历了多久，方便与最短/最长解套时间直观对比)
+    let liveDurationHtml = '<span class="mut" style="font-size:11.5px">-</span>';
+    const hasLivePositions = (mt4.buyCount || 0) + (mt4.sellCount || 0) > 0;
+    if (hasLivePositions && stats && stats.activeWave) {
+      const isWaveHitThisTier = (stats.activeWave.tiersHit && stats.activeWave.tiersHit.includes(t.th)) || (stats.activeWave.peakDd >= t.th) || isNowActive;
+      if (isWaveHitThisTier) {
+        const liveSec = Math.max(1, Math.floor(Date.now() / 1000) - stats.activeWave.startTs);
+        const isOverAvg = avgDur > 0 && liveSec > avgDur;
+        const isOverMax = maxDur > 0 && liveSec > maxDur;
+        liveDurationHtml = `
+          <div style="display:inline-flex;flex-direction:column;gap:2px">
+            <span class="pill TREND" style="font-size:11px;padding:2px 8px;font-weight:800">⏳ 进行中: ${fmtDuration(liveSec)}</span>
+            ${isOverMax ? `<span style="color:#fb7185;font-size:10px;font-weight:800">🚨 已破历史最长!</span>` : isOverAvg ? `<span style="color:#fbbf24;font-size:10px">⚠️ 已超平均时长</span>` : `<span style="color:#34d399;font-size:10px">✅ 在常态均值内</span>`}
+          </div>
+        `;
+      } else {
+        liveDurationHtml = '<span class="mut" style="font-size:11px">本轮未触及</span>';
+      }
+    } else {
+      liveDurationHtml = '<span class="mut" style="font-size:11px">已全部平仓</span>';
     }
 
     const rowBg = isNowActive ? 'rgba(244,63,94,0.18)' : isHitEver ? 'rgba(245,158,11,0.06)' : 'transparent';
@@ -7911,8 +7929,9 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       </td>
       <td><b style="font-size:14px;color:${(t.waves || 0) > 0 ? '#fbbf24' : '#64748b'}">${t.waves || 0} 次</b></td>
       <td>${minDur > 0 ? `<b style="color:#34d399">${fmtDuration(minDur)}</b>` : '<span class="mut">-</span>'}</td>
-      <td>${maxDur > 0 ? `<b style="color:#fb7185">${fmtDuration(maxDur)}</b>` : '<span class="mut">-</span>'}</td>
       <td>${avgDur > 0 ? `<b style="color:#38bdf8">${fmtDuration(avgDur)}</b>` : '<span class="mut">-</span>'}</td>
+      <td>${maxDur > 0 ? `<b style="color:#fb7185">${fmtDuration(maxDur)}</b>` : '<span class="mut">-</span>'}</td>
+      <td style="background:rgba(245,158,11,0.05)">${liveDurationHtml}</td>
       <td>${t.durSec > 0 ? `<b style="color:#e2e8f0">${fmtDuration(t.durSec)}</b>` : '<span class="mut">0秒</span>'}</td>
       <td>
         <span style="font-size:11px;color:#94a3b8">保底防爆:</span> <b style="color:#fbbf24;font-size:12px">$${capMin}</b>
@@ -8122,84 +8141,86 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       ${buildMt4ParetoFibonacciChartHtml(tiers, ea, curBal, stats, pk)}
     </div>
 
-    <!-- 第四排：📊 浮亏分阶段突破次数统计表 ($50 ~ $2000) & 💰 后期账户放多少钱决策测算器 -->
-    <div style="display:grid;grid-template-columns:1.45fr 1fr;gap:12px;margin-top:12px">
-      <!-- 左侧：浮亏超过 50 / 100 / 200 / 400 / 600 / 800 / 1000... 阶段次数统计表 -->
-      <div id="mt4TierSec" style="background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:10px;padding:11px 13px;overflow-x:auto">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-          <b style="color:var(--gold);font-size:13.5px">🪜 账户浮亏分阶段突破次数与科学抗险推演表 ($50 ~ $4000)</b>
-          <span class="xs mut">基于当前 EA 策略参数 (首单 0.02 / 倍率 1.38 / 封顶 1.32) 严格推演对应层数、持仓手数及所需抗险本金</span>
+    <!-- 第四排：📊 账户浮亏分阶段突破次数与科学抗险推演表（全宽独立大表，排版宽敞舒展） -->
+    <div id="mt4TierSec" style="margin-top:14px;background:rgba(15,20,30,0.95);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;overflow-x:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <b style="color:var(--gold);font-size:14.5px">🪜 账户浮亏分阶段突破次数与科学抗险推演表 ($50 ~ $4000)</b>
+          <span class="pill NEUT" style="font-size:11px">⏱️ 解套时间统计规则：仅在当前网格彻底完结（全部平仓）后统计（自开仓建仓 ➔ 最大浮亏 ➔ 全仓止盈平仓）</span>
         </div>
-        <table class="tbl" style="font-size:12px;width:100%">
-          <thead>
-            <tr>
-              <th>浮亏阶梯</th>
-              <th>EA加仓推演 (层数/手数/预估保证金)</th>
-              <th>发生频次</th>
-              <th>最短解套时间</th>
-              <th>最长解套时间</th>
-              <th>平均解套时间</th>
-              <th>累计停留时长</th>
-              <th>科学抗险所需本金</th>
-              <th>最近一次触发</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tierRowsHtml}
-          </tbody>
-        </table>
+        <span class="xs mut">基于当前 EA 策略参数 (首单 0.02 / 倍率 1.38 / 封顶 1.32) 严格推演对应层数、持仓手数及所需抗险本金</span>
+      </div>
+      <table class="tbl" style="font-size:12px;width:100%;white-space:nowrap">
+        <thead>
+          <tr>
+            <th style="min-width:110px">浮亏阶梯</th>
+            <th style="min-width:180px">EA加仓推演 (层数/手数/预估保证金)</th>
+            <th style="min-width:70px">发生频次</th>
+            <th style="min-width:90px">最短解套时间</th>
+            <th style="min-width:90px">平均解套时间</th>
+            <th style="min-width:90px">最长解套时间</th>
+            <th style="min-width:150px;background:rgba(245,158,11,0.08);color:var(--gold)">⏳ 当前阶段存续时间</th>
+            <th style="min-width:90px">历史累计停留</th>
+            <th style="min-width:180px">科学抗险所需本金</th>
+            <th style="min-width:140px">最近一次触发</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tierRowsHtml}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 第五排：右侧内容移至下方并排双卡片展现（宽敞大气，彻底释放表格宽度） -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;margin-top:14px">
+      <!-- 下方左侧：💰 决策模型：根据您的实盘峰值，账户到底该放多少钱？ -->
+      <div id="mt4CapSec" style="background:linear-gradient(135deg,rgba(16,185,129,0.10),rgba(15,23,42,0.95));border:1px solid rgba(16,185,129,0.45);border-radius:10px;padding:14px 16px">
+        <b style="color:#34d399;font-size:14px">💰 决策模型：根据您的实盘峰值，账户到底该放多少钱？</b>
+        <div class="xs mut" style="margin:4px 0 8px">基于您实测录得的 <b>最大浮亏 (-$${f2(pk.maxDd.val)})</b> + <b>最高预付款 ($${f2(pk.maxMargin.val)})</b> 自动推演：</div>
+
+        <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+          <div style="padding:9px 12px;background:rgba(15,19,28,0.9);border-left:3px solid #fbbf24;border-radius:6px">
+            <div style="display:flex;justify-content:space-between">
+              <b>① 🛡️ 保底不断头本金（防100%预付款锁死）</b>
+              <b style="color:#fbbf24;font-size:14px">建议放 $${capTier1}</b>
+            </div>
+            <div class="xs mut" style="margin-top:2px">
+              可扛住历史最大浮亏再扩大 25%（约 -$${Math.round(obsMaxDd * 1.25)}）且预付款比例 ≥135% 不断开仓权。
+              ${gapTier1 > 0 ? `<b style="color:#fb7185">您当前余额 $${f2(curBal)}，至少需补 +$${f2(gapTier1)}！</b>` : `<b style="color:#34d399">您当前余额 $${f2(curBal)} 已满足此档！</b>`}
+            </div>
+          </div>
+
+          <div style="padding:9px 12px;background:rgba(15,19,28,0.9);border-left:3px solid #34d399;border-radius:6px">
+            <div style="display:flex;justify-content:space-between">
+              <b>② ⚖️ 稳健标准本金（推荐 · 扛住 $200~$350 阶梯）</b>
+              <b style="color:#34d399;font-size:14px">建议放 $${capTier2}</b>
+            </div>
+            <div class="xs mut" style="margin-top:2px">
+              当遭遇 7~8 层单边（浮亏达 $${Math.max(300, Math.round(obsMaxDd * 1.6))}、预付款达 $${Math.round(obsMaxMar * 1.5)}）时，预付款比例依然稳居 220%+，可从容等待 $2.7 反抽清仓。
+              ${gapTier2 > 0 ? `<span style="color:var(--gold)">距当前余额差 <b>+$${f2(gapTier2)}</b></span>` : `<b style="color:#34d399">已达标</b>`}
+            </div>
+          </div>
+
+          <div style="padding:9px 12px;background:rgba(15,19,28,0.9);border-left:3px solid #38bdf8;border-radius:6px">
+            <div style="display:flex;justify-content:space-between">
+              <b>③ 🏰 抗极端大单边本金（扛住 $400~$650+ 阶梯）</b>
+              <b style="color:#38bdf8;font-size:14px">建议放 $${capTier3}</b>
+            </div>
+            <div class="xs mut" style="margin-top:2px">
+              专为应对美盘 CPI/非农或无回调推土机行情（浮亏冲上 $400~$600 阶梯）设计，建议采用<b>「账户内放 $${capTier2} + 场外备付金 $${capTier3 - capTier2} 随时秒入金」</b>的隔离风控模式！
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- 右侧：💰 后期往账户放多少钱？三档本金配置决策器 + 历史深套战役档案 -->
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div id="mt4CapSec" style="background:linear-gradient(135deg,rgba(16,185,129,0.10),rgba(15,23,42,0.95));border:1px solid rgba(16,185,129,0.45);border-radius:10px;padding:11px 13px">
-          <b style="color:#34d399;font-size:13.5px">💰 决策模型：根据您的实盘峰值，账户到底该放多少钱？</b>
-          <div class="xs mut" style="margin:4px 0 8px">基于您实测录得的 <b>最大浮亏 (-$${f2(pk.maxDd.val)})</b> + <b>最高预付款 ($${f2(pk.maxMargin.val)})</b> 自动推演：</div>
-
-          <div style="display:flex;flex-direction:column;gap:7px;font-size:12px">
-            <div style="padding:8px 10px;background:rgba(15,19,28,0.9);border-left:3px solid #fbbf24;border-radius:6px">
-              <div style="display:flex;justify-content:space-between">
-                <b>① 🛡️ 保底不断头本金（防100%预付款锁死）</b>
-                <b style="color:#fbbf24;font-size:14px">建议放 $${capTier1}</b>
-              </div>
-              <div class="xs mut" style="margin-top:2px">
-                可扛住历史最大浮亏再扩大 25%（约 -$${Math.round(obsMaxDd * 1.25)}）且预付款比例 ≥135% 不断开仓权。
-                ${gapTier1 > 0 ? `<b style="color:#fb7185">您当前余额 $${f2(curBal)}，至少需补 +$${f2(gapTier1)}！</b>` : `<b style="color:#34d399">您当前余额 $${f2(curBal)} 已满足此档！</b>`}
-              </div>
-            </div>
-
-            <div style="padding:8px 10px;background:rgba(15,19,28,0.9);border-left:3px solid #34d399;border-radius:6px">
-              <div style="display:flex;justify-content:space-between">
-                <b>② ⚖️ 稳健标准本金（推荐 · 扛住 $200~$350 阶梯）</b>
-                <b style="color:#34d399;font-size:14px">建议放 $${capTier2}</b>
-              </div>
-              <div class="xs mut" style="margin-top:2px">
-                当遭遇 7~8 层单边（浮亏达 $${Math.max(300, Math.round(obsMaxDd * 1.6))}、预付款达 $${Math.round(obsMaxMar * 1.5)}）时，预付款比例依然稳居 220%+，可从容等待 $2.7 反抽清仓。
-                ${gapTier2 > 0 ? `<span style="color:var(--gold)">距当前余额差 <b>+$${f2(gapTier2)}</b></span>` : `<b style="color:#34d399">已达标</b>`}
-              </div>
-            </div>
-
-            <div style="padding:8px 10px;background:rgba(15,19,28,0.9);border-left:3px solid #38bdf8;border-radius:6px">
-              <div style="display:flex;justify-content:space-between">
-                <b>③ 🏰 抗极端大单边本金（扛住 $400~$650+ 阶梯）</b>
-                <b style="color:#38bdf8;font-size:14px">建议放 $${capTier3}</b>
-              </div>
-              <div class="xs mut" style="margin-top:2px">
-                专为应对美盘 CPI/非农或无回调推土机行情（浮亏冲上 $400~$600 阶梯）设计，建议采用<b>「账户内放 $${capTier2} + 场外备付金 $${capTier3 - capTier2} 随时秒入金」</b>的隔离风控模式！
-              </div>
-            </div>
-          </div>
+      <!-- 下方右侧：历史重大深套战役日志 -->
+      <div style="background:rgba(15,20,30,0.95);border:1px solid var(--bd);border-radius:10px;padding:14px 16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <b style="color:#fff;font-size:14px">📜 历次深套扛单战役档案 (浮亏 ≥ $30 自动立档)</b>
+          <span class="xs mut">共记录 ${waveItems.length} 场战役 (严格平仓才算解套)</span>
         </div>
-
-        <!-- 历史重大深套战役日志 -->
-        <div style="background:rgba(15,20,30,0.92);border:1px solid var(--bd);border-radius:10px;padding:11px 13px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <b style="color:#fff;font-size:13px">📜 历次深套扛单战役档案 (浮亏 ≥ $30 自动立档)</b>
-            <span class="xs mut">共记录 ${waveItems.length} 场战役</span>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:6px;max-height:210px;overflow-y:auto">
-            ${waveLogHtml}
-          </div>
+        <div style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto">
+          ${waveLogHtml}
         </div>
       </div>
     </div>

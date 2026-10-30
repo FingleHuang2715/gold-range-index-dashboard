@@ -1986,25 +1986,26 @@ function createEmptyMt4Stats(nowSec, balVal, eqVal) {
   return s;
 }
 
-// 自动丰富补充各个浮亏阶梯的最短解套时间(minDurSec)、最长解套时间(maxDurSec)、平均解套时间(avgDurSec)
+// 严格统计各个浮亏阶梯的最短解套时间(minDurSec)、最长解套时间(maxDurSec)、平均解套时间(avgDurSec)
+// 准则：必须网格彻底完结（全部平仓）才计入，且统计时长严格取「开仓 ➔ 浮亏达标 ➔ 最终止盈平仓」的全生命周期
 function enrichTierRecoveryStats(stats) {
   if (!stats || !Array.isArray(stats.tiers)) return;
   const waves = Array.isArray(stats.waveLog) ? stats.waveLog : [];
+  const completedWaves = waves.filter((w) => w.status === 'RECOVERED' && (w.durSec || 0) >= 20);
+
   for (const t of stats.tiers) {
-    const matchingWaves = waves.filter((w) => (w.tiersHit && w.tiersHit.includes(t.th)) || (w.peakDd >= t.th));
-    const durs = matchingWaves.map((w) => w.durSec).filter((d) => d > 0);
+    const matchingWaves = completedWaves.filter((w) => {
+      const hitInList = Array.isArray(w.tiersHit) && w.tiersHit.includes(t.th);
+      const hitByPeak = (w.peakDd || 0) >= t.th;
+      return hitInList || hitByPeak;
+    });
+    const durs = matchingWaves.map((w) => w.durSec).filter((d) => d >= 20);
     if (durs.length > 0) {
-      const minW = Math.min(...durs);
-      const maxW = Math.max(...durs);
-      const avgW = Math.round(durs.reduce((a, b) => a + b, 0) / durs.length);
-      t.minDurSec = t.minDurSec ? Math.min(t.minDurSec, minW) : minW;
-      t.maxDurSec = t.maxDurSec ? Math.max(t.maxDurSec, maxW) : maxW;
-      if (!t.avgDurSec) t.avgDurSec = avgW;
-      if (!t.totalRecDur && t.recovered) t.totalRecDur = t.avgDurSec * t.recovered;
-    } else if (t.durSec > 0 && t.waves > 0) {
-      if (!t.minDurSec) t.minDurSec = Math.max(5, Math.round(t.durSec / t.waves * 0.45));
-      if (!t.maxDurSec) t.maxDurSec = Math.round(t.durSec / t.waves * 1.6);
-      if (!t.avgDurSec) t.avgDurSec = Math.round(t.durSec / t.waves);
+      t.minDurSec = Math.min(...durs);
+      t.maxDurSec = Math.max(...durs);
+      t.avgDurSec = Math.round(durs.reduce((a, b) => a + b, 0) / durs.length);
+      t.recovered = matchingWaves.length;
+      t.totalRecDur = t.avgDurSec * t.recovered;
     }
   }
 }
@@ -2377,71 +2378,71 @@ function updateMt4StatsAndHistory(prevState, snap) {
     brokenPeakOrTier = true;
   }
 
-  const isWaveCleared = ddUsd < 15 || (buyCount + sellCount === 0);
-  if (isWaveCleared) {
-    if (stats.activeWave && stats.activeWave.peakDd >= 35) {
+  const hasOpenPos = (buyCount + sellCount > 0);
+  if (!hasOpenPos) {
+    // 所有的持仓已经全部平仓！网格彻底完结/平仓解套
+    if (stats.activeWave && stats.activeWave.peakDd >= 30) {
       const doneWave = {
         ...stats.activeWave,
         endTs: nowSec,
-        durSec: Math.max(5, nowSec - stats.activeWave.startTs),
+        durSec: Math.max(15, nowSec - stats.activeWave.startTs),
         status: 'RECOVERED',
         endBal: balVal
       };
-      stats.waveLog = [doneWave, ...(stats.waveLog || [])].slice(0, 40);
+      if (!stats.waveLog || !stats.waveLog.some((w) => w.id === doneWave.id)) {
+        stats.waveLog = [doneWave, ...(stats.waveLog || [])].slice(0, 45);
+      }
       brokenPeakOrTier = true;
     }
     stats.activeWave = null;
     for (const tier of stats.tiers) {
       if (tier.active) {
-        const recDur = Math.max(5, nowSec - (tier.activeStartTs || (nowSec - 5)));
         tier.recovered = (tier.recovered || 0) + 1;
         tier.active = false;
         tier.activeStartTs = 0;
-        if (!tier.minDurSec || recDur < tier.minDurSec) tier.minDurSec = recDur;
-        if (!tier.maxDurSec || recDur > tier.maxDurSec) tier.maxDurSec = recDur;
-        tier.totalRecDur = (tier.totalRecDur || 0) + recDur;
-        tier.avgDurSec = Math.round(tier.totalRecDur / tier.recovered);
       }
     }
+    enrichTierRecoveryStats(stats);
   } else {
-    if (ddUsd >= 30) {
-      if (!stats.activeWave) {
-        stats.activeWave = {
-          id: 'w_' + nowSec,
-          startTs: nowSec,
-          peakTs: nowSec,
-          peakDd: ddUsd,
-          peakDdPct: ddPct,
-          peakMargin: marVal,
-          minMl: mlVal > 0 ? mlVal : 9999,
-          minFreeMargin: freeMVal,
-          maxLayers: maxSideLayers,
-          maxLots: totalLots,
-          maxNetLots: netLots,
-          peakPx: bid,
-          posAtPeak: posSummary,
-          tiersHit: []
-        };
-      } else {
-        const w = stats.activeWave;
-        if (ddUsd >= w.peakDd) {
-          w.peakDd = ddUsd;
-          w.peakDdPct = ddPct;
-          w.peakTs = nowSec;
-          w.peakPx = bid;
-          w.posAtPeak = posSummary;
-        }
-        if (marVal > w.peakMargin) w.peakMargin = marVal;
-        if (mlVal > 0 && mlVal < w.minMl) {
-          w.minMl = mlVal;
-          w.minFreeMargin = freeMVal;
-        }
-        if (maxSideLayers > w.maxLayers) w.maxLayers = maxSideLayers;
-        if (totalLots > w.maxLots) w.maxLots = totalLots;
-        if (netLots > w.maxNetLots) w.maxNetLots = netLots;
+    // 仍在持仓中（网格尚未完结）
+    if (!stats.activeWave) {
+      // 开仓：开启新一轮网格战役
+      stats.activeWave = {
+        id: 'w_' + nowSec,
+        startTs: nowSec,
+        peakTs: nowSec,
+        peakDd: ddUsd,
+        peakDdPct: ddPct,
+        peakMargin: marVal,
+        minMl: mlVal > 0 ? mlVal : 9999,
+        minFreeMargin: freeMVal,
+        maxLayers: maxSideLayers,
+        maxLots: totalLots,
+        maxNetLots: netLots,
+        peakPx: bid,
+        posAtPeak: posSummary,
+        tiersHit: []
+      };
+    } else {
+      const w = stats.activeWave;
+      if (ddUsd >= w.peakDd) {
+        w.peakDd = ddUsd;
+        w.peakDdPct = ddPct;
+        w.peakTs = nowSec;
+        w.peakPx = bid;
+        w.posAtPeak = posSummary;
       }
+      if (marVal > w.peakMargin) w.peakMargin = marVal;
+      if (mlVal > 0 && mlVal < w.minMl) {
+        w.minMl = mlVal;
+        w.minFreeMargin = freeMVal;
+      }
+      if (maxSideLayers > w.maxLayers) w.maxLayers = maxSideLayers;
+      if (totalLots > w.maxLots) w.maxLots = totalLots;
+      if (netLots > w.maxNetLots) w.maxNetLots = netLots;
     }
 
+    // 检查突破的浮亏阶梯
     for (const tier of stats.tiers) {
       if (ddUsd >= tier.th) {
         tier.durSec = (tier.durSec || 0) + dtSec;
@@ -2452,25 +2453,17 @@ function updateMt4StatsAndHistory(prevState, snap) {
         tier.lastPos = posSummary;
         if (!tier.active) {
           tier.active = true;
-          tier.activeStartTs = nowSec;
+          tier.activeStartTs = stats.activeWave.startTs || nowSec; // 从开仓时间算起
           tier.waves = (tier.waves || 0) + 1;
           HR.w[MT4_DD_TIERS.indexOf(tier.th)] += 1;
           newWaveTiers.push(tier.th);
           brokenPeakOrTier = true;
-          if (stats.activeWave && !stats.activeWave.tiersHit.includes(tier.th)) {
-            stats.activeWave.tiersHit.push(tier.th);
-          }
         }
-      } else if (tier.active && ddUsd < Math.min(20, tier.th * 0.30)) {
-        const recDur = Math.max(5, nowSec - (tier.activeStartTs || (nowSec - 5)));
-        tier.recovered = (tier.recovered || 0) + 1;
-        tier.active = false;
-        tier.activeStartTs = 0;
-        if (!tier.minDurSec || recDur < tier.minDurSec) tier.minDurSec = recDur;
-        if (!tier.maxDurSec || recDur > tier.maxDurSec) tier.maxDurSec = recDur;
-        tier.totalRecDur = (tier.totalRecDur || 0) + recDur;
-        tier.avgDurSec = Math.round(tier.totalRecDur / tier.recovered);
+        if (stats.activeWave && !stats.activeWave.tiersHit.includes(tier.th)) {
+          stats.activeWave.tiersHit.push(tier.th);
+        }
       }
+      // 准则：只要当前持仓未完全平仓，严禁提前将 tier.active 记作平仓解套
     }
   }
 
