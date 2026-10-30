@@ -2009,25 +2009,29 @@ function enrichTierRecoveryStats(stats) {
   }
 }
 
-// ===== 浮亏前瞻预测与滚动回测验证系统 (AI Forward Risk Forecast & Rolling Verification) =====
-function simAdverseExcursionLoss(curDd, netLots, adversePriceMove, isStress) {
-  const dP = isStress ? adversePriceMove * 2.1 : adversePriceMove;
+// ===== 浮亏前瞻预测与自适应偏离修正滚动验证系统 (AI Adaptive Risk Forecast & Self-Correcting Engine) =====
+function simAdverseExcursionLoss(curDd, netLots, adversePriceMove, isStress, adaptiveFactor = 1.0) {
+  const dP = isStress ? adversePriceMove * 1.55 : adversePriceMove;
   const baseLoss = dP * Math.max(0.02, netLots) * 100;
   let extraLayersLoss = 0;
   let addedLots = 0;
-  if (dP > 2.2) {
-    const k = Math.min(5, Math.floor((dP - 2.2) / 2.2) + 1);
-    let nextL = Math.max(0.02, netLots * 0.35);
+  if (dP > 2.8) {
+    const k = Math.min(3, Math.floor((dP - 2.8) / 2.8) + 1);
+    let nextL = Math.max(0.02, netLots * 0.28);
     for (let i = 1; i <= k; i++) {
-      const remP = dP - 2.2 - (i - 1) * 2.2;
+      const remP = dP - 2.8 - (i - 1) * 2.8;
       if (remP > 0) extraLayersLoss += remP * nextL * 100;
       addedLots += nextL;
       nextL = Math.min(1.32, +(nextL * 1.38).toFixed(2));
     }
   }
-  const pad = isStress ? Math.max(25, curDd * 0.22) : 10;
+  const pad = isStress ? Math.max(16, curDd * 0.16) : 8;
+  const rawMaxDd = Math.round(curDd + baseLoss + extraLayersLoss + pad);
+  const factor = typeof adaptiveFactor === 'number' && adaptiveFactor > 0 ? adaptiveFactor : 1.0;
+  const correctedMaxDd = Math.max(Math.round(curDd + 10), Math.round(rawMaxDd * factor));
   return {
-    maxDd: Math.round(curDd + baseLoss + extraLayersLoss + pad),
+    maxDd: correctedMaxDd,
+    rawMaxDd,
     addedLots: +(addedLots.toFixed(2)),
     addedMargin: Math.round(addedLots * 100 * 3980 / 1000)
   };
@@ -2049,60 +2053,49 @@ function computeDdForecastAndVerification(stats, snap, historyLong, historyFast)
   let sessionVol = 1.0;
   if (bjHour >= 8 && bjHour < 15) sessionVol = 0.8;
   else if (bjHour >= 15 && bjHour < 20) sessionVol = 1.1;
-  else if (bjHour >= 20 || bjHour < 1) sessionVol = 1.4;
+  else if (bjHour >= 20 || bjHour < 1) sessionVol = 1.35;
   else sessionVol = 0.85;
-
-  const tfConfigs = {
-    '15M': { moveNorm: +(4.5 * sessionVol).toFixed(1), moveStress: +(10.5 * sessionVol).toFixed(1), sec: 900 },
-    '1H':  { moveNorm: +(10.0 * sessionVol).toFixed(1), moveStress: +(21.0 * sessionVol).toFixed(1), sec: 3600 },
-    '2H':  { moveNorm: +(16.0 * sessionVol).toFixed(1), moveStress: +(32.0 * sessionVol).toFixed(1), sec: 7200 }
-  };
-
-  const current = {};
-  ['15M', '1H', '2H'].forEach((tf) => {
-    const cfg = tfConfigs[tf];
-    const normRes = simAdverseExcursionLoss(curDd, netLots, cfg.moveNorm, false);
-    const stressRes = simAdverseExcursionLoss(curDd, netLots, cfg.moveNorm, true);
-    const estTotMargin = curMar + stressRes.addedMargin;
-    const estStressEq = Math.max(0, curBal - stressRes.maxDd);
-    const estMl = estTotMargin > 0 ? Math.round((estStressEq / estTotMargin) * 100) : 9999;
-    current[tf] = {
-      tf,
-      targetTs: nowSec + cfg.sec,
-      worstMove: cfg.moveStress,
-      predNormal: normRes.maxDd,
-      predStress: stressRes.maxDd,
-      addedLots: stressRes.addedLots,
-      addedMargin: stressRes.addedMargin,
-      estMargin: estTotMargin,
-      estMl,
-      curDd
-    };
-  });
 
   const hl = Array.isArray(historyLong) ? historyLong : [];
   let hits15 = 0, tot15 = 0, hits1h = 0, tot1h = 0;
   const safeties = [];
   const series = [];
   const auditLog = [];
+  const recentRatios = [];
 
   for (let i = 0; i < hl.length - 1; i++) {
     const b = hl[i], nextB = hl[i + 1];
     const bDd = b.ddMax || 0;
     const bLots = b.netLots || 0.1;
-    const pNorm = simAdverseExcursionLoss(bDd, bLots, 4.5, false).maxDd;
-    const pStress = simAdverseExcursionLoss(bDd, bLots, 4.5, true).maxDd;
+
+    // 自适应偏离修正计算：利用最近 5~10 笔实盘/预测比例进行动态平滑修正
+    let adaptiveFactor = 1.0;
+    if (recentRatios.length >= 5) {
+      const avgRatio = recentRatios.reduce((a, b) => a + b, 0) / recentRatios.length;
+      // 保持适度防守缓冲 (乘 1.22)，将修正系数动态收敛在 0.72 ~ 1.0
+      adaptiveFactor = Math.max(0.72, Math.min(1.0, +(avgRatio * 1.22).toFixed(2)));
+    }
+
+    const normRes = simAdverseExcursionLoss(bDd, bLots, 3.2, false, adaptiveFactor);
+    const stressRes = simAdverseExcursionLoss(bDd, bLots, 5.0, true, adaptiveFactor);
+    const pNorm = normRes.maxDd;
+    const pStress = stressRes.maxDd;
     const act15 = nextB.ddMax || 0;
     const isHit = act15 <= pStress;
     if (isHit) hits15++;
     tot15++;
     safeties.push(pStress - act15);
 
+    const ratio = act15 / Math.max(10, pStress);
+    recentRatios.push(ratio);
+    if (recentRatios.length > 10) recentRatios.shift();
+
     let act1h = act15;
     for (let k = 1; k <= 4 && (i + k) < hl.length; k++) {
       if ((hl[i + k].ddMax || 0) > act1h) act1h = hl[i + k].ddMax;
     }
-    const pStress1h = simAdverseExcursionLoss(bDd, bLots, 10.0, true).maxDd;
+    const stress1hRes = simAdverseExcursionLoss(bDd, bLots, 10.5, true, adaptiveFactor);
+    const pStress1h = stress1hRes.maxDd;
     const is1hHit = act1h <= pStress1h;
     if (is1hHit) hits1h++;
     tot1h++;
@@ -2134,6 +2127,45 @@ function computeDdForecastAndVerification(stats, snap, historyLong, historyFast)
       });
     }
   }
+
+  // 计算当前这一时刻最新的自适应偏离修正因子 (用偏离值去修正下一次的预测)
+  let currentAdaptiveFactor = 1.0;
+  if (recentRatios.length >= 3) {
+    const avgRatio = recentRatios.reduce((a, b) => a + b, 0) / recentRatios.length;
+    currentAdaptiveFactor = Math.max(0.72, Math.min(1.0, +(avgRatio * 1.22).toFixed(2)));
+  }
+  const biasCorrectionPct = Math.round((1 - currentAdaptiveFactor) * 100);
+
+  const tfConfigs = {
+    '15M': { moveNorm: +(3.2 * sessionVol).toFixed(1), moveStress: +(5.0 * sessionVol).toFixed(1), sec: 900 },
+    '1H':  { moveNorm: +(6.5 * sessionVol).toFixed(1), moveStress: +(10.5 * sessionVol).toFixed(1), sec: 3600 },
+    '2H':  { moveNorm: +(10.0 * sessionVol).toFixed(1), moveStress: +(16.0 * sessionVol).toFixed(1), sec: 7200 }
+  };
+
+  const current = {};
+  ['15M', '1H', '2H'].forEach((tf) => {
+    const cfg = tfConfigs[tf];
+    const normRes = simAdverseExcursionLoss(curDd, netLots, cfg.moveNorm, false, currentAdaptiveFactor);
+    const stressRes = simAdverseExcursionLoss(curDd, netLots, cfg.moveStress, true, currentAdaptiveFactor);
+    const estTotMargin = curMar + stressRes.addedMargin;
+    const estStressEq = Math.max(0, curBal - stressRes.maxDd);
+    const estMl = estTotMargin > 0 ? Math.round((estStressEq / estTotMargin) * 100) : 9999;
+    current[tf] = {
+      tf,
+      targetTs: nowSec + cfg.sec,
+      worstMove: cfg.moveStress,
+      predNormal: normRes.maxDd,
+      predStress: stressRes.maxDd,
+      rawStress: stressRes.rawMaxDd,
+      adaptiveFactor: currentAdaptiveFactor,
+      biasCorrectionPct,
+      addedLots: stressRes.addedLots,
+      addedMargin: stressRes.addedMargin,
+      estMargin: estTotMargin,
+      estMl,
+      curDd
+    };
+  });
 
   // 加上当前实时点
   series.push({
@@ -2176,11 +2208,13 @@ function computeDdForecastAndVerification(stats, snap, historyLong, historyFast)
     metrics: {
       total15M: tot15,
       hit15M: hits15,
-      acc15M: tot15 > 0 ? +((hits15 / tot15) * 100).toFixed(1) : 98.0,
+      acc15M: tot15 > 0 ? +((hits15 / tot15) * 100).toFixed(1) : 88.5,
       total1H: tot1h,
       hit1H: hits1h,
-      acc1H: tot1h > 0 ? +((hits1h / tot1h) * 100).toFixed(1) : 95.0,
-      avgSafetyMargin: safeties.length ? +(safeties.reduce((a, b) => a + b, 0) / safeties.length).toFixed(1) : 0
+      acc1H: tot1h > 0 ? +((hits1h / tot1h) * 100).toFixed(1) : 88.0,
+      avgSafetyMargin: safeties.length ? +(safeties.reduce((a, b) => a + b, 0) / safeties.length).toFixed(1) : 0,
+      currentAdaptiveFactor,
+      biasCorrectionPct
     },
     auditLog: auditLog.reverse(),
     series
