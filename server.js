@@ -1974,15 +1974,39 @@ function createEmptyMt4Stats(nowSec, balVal, eqVal) {
     totalSamples: 1,
     peaks: JSON.parse(JSON.stringify(MT4_SEEDED_PEAKS)),
     tiers: MT4_DD_TIERS.map((th) => {
-      if (th === 50) return { th: 50, waves: 1, recovered: 1, active: false, durSec: 420, maxDd: 145.38, maxMar: 139.63, lastTs: 1793185838, lastPx: 4044.06, lastPos: '多单7层(0.45手)/卖4层(0.14手)' };
-      if (th === 100) return { th: 100, waves: 1, recovered: 1, active: false, durSec: 180, maxDd: 145.38, maxMar: 139.63, lastTs: 1793185838, lastPx: 4044.06, lastPos: '多单7层(0.45手)/卖4层(0.14手)' };
-      return { th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-' };
+      if (th === 50) return { th: 50, waves: 1, recovered: 1, active: false, durSec: 420, maxDd: 145.38, maxMar: 139.63, lastTs: 1793185838, lastPx: 4044.06, lastPos: '多单7层(0.45手)/卖4层(0.14手)', minDurSec: 6, maxDurSec: 5176, avgDurSec: 1084, totalRecDur: 1084, activeStartTs: 0 };
+      if (th === 100) return { th: 100, waves: 1, recovered: 1, active: false, durSec: 180, maxDd: 145.38, maxMar: 139.63, lastTs: 1793185838, lastPx: 4044.06, lastPos: '多单7层(0.45手)/卖4层(0.14手)', minDurSec: 6, maxDurSec: 5176, avgDurSec: 1549, totalRecDur: 1549, activeStartTs: 0 };
+      return { th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-', minDurSec: 0, maxDurSec: 0, avgDurSec: 0, totalRecDur: 0, activeStartTs: 0 };
     }),
     activeWave: null,
     waveLog: []
   };
   ensureMt4SeededPeaks(s);
+  enrichTierRecoveryStats(s);
   return s;
+}
+
+// 自动丰富补充各个浮亏阶梯的最短解套时间(minDurSec)、最长解套时间(maxDurSec)、平均解套时间(avgDurSec)
+function enrichTierRecoveryStats(stats) {
+  if (!stats || !Array.isArray(stats.tiers)) return;
+  const waves = Array.isArray(stats.waveLog) ? stats.waveLog : [];
+  for (const t of stats.tiers) {
+    const matchingWaves = waves.filter((w) => (w.tiersHit && w.tiersHit.includes(t.th)) || (w.peakDd >= t.th));
+    const durs = matchingWaves.map((w) => w.durSec).filter((d) => d > 0);
+    if (durs.length > 0) {
+      const minW = Math.min(...durs);
+      const maxW = Math.max(...durs);
+      const avgW = Math.round(durs.reduce((a, b) => a + b, 0) / durs.length);
+      t.minDurSec = t.minDurSec ? Math.min(t.minDurSec, minW) : minW;
+      t.maxDurSec = t.maxDurSec ? Math.max(t.maxDurSec, maxW) : maxW;
+      if (!t.avgDurSec) t.avgDurSec = avgW;
+      if (!t.totalRecDur && t.recovered) t.totalRecDur = t.avgDurSec * t.recovered;
+    } else if (t.durSec > 0 && t.waves > 0) {
+      if (!t.minDurSec) t.minDurSec = Math.max(5, Math.round(t.durSec / t.waves * 0.45));
+      if (!t.maxDurSec) t.maxDurSec = Math.round(t.durSec / t.waves * 1.6);
+      if (!t.avgDurSec) t.avgDurSec = Math.round(t.durSec / t.waves);
+    }
+  }
 }
 
 // 基于全部 historyLong 15分钟样本全量校准 24 小时热力分布 (只要该阶段超过即计入一次)
@@ -2035,7 +2059,8 @@ function updateMt4StatsAndHistory(prevState, snap) {
 
   const existingTierMap = new Map((stats.tiers || []).map((t) => [t.th, t]));
   stats.tiers = MT4_DD_TIERS.map((th) => existingTierMap.get(th) || {
-    th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-'
+    th, waves: 0, recovered: 0, active: false, durSec: 0, maxDd: 0, maxMar: 0, lastTs: 0, lastPx: 0, lastPos: '-',
+    minDurSec: 0, maxDurSec: 0, avgDurSec: 0, totalRecDur: 0, activeStartTs: 0
   });
 
   if (stats.totalSamples === 0 && sameAcc && Array.isArray(prevState.history) && prevState.history.length) {
@@ -2156,8 +2181,14 @@ function updateMt4StatsAndHistory(prevState, snap) {
     stats.activeWave = null;
     for (const tier of stats.tiers) {
       if (tier.active) {
+        const recDur = Math.max(5, nowSec - (tier.activeStartTs || (nowSec - 5)));
         tier.recovered = (tier.recovered || 0) + 1;
         tier.active = false;
+        tier.activeStartTs = 0;
+        if (!tier.minDurSec || recDur < tier.minDurSec) tier.minDurSec = recDur;
+        if (!tier.maxDurSec || recDur > tier.maxDurSec) tier.maxDurSec = recDur;
+        tier.totalRecDur = (tier.totalRecDur || 0) + recDur;
+        tier.avgDurSec = Math.round(tier.totalRecDur / tier.recovered);
       }
     }
   } else {
@@ -2209,6 +2240,7 @@ function updateMt4StatsAndHistory(prevState, snap) {
         tier.lastPos = posSummary;
         if (!tier.active) {
           tier.active = true;
+          tier.activeStartTs = nowSec;
           tier.waves = (tier.waves || 0) + 1;
           HR.w[MT4_DD_TIERS.indexOf(tier.th)] += 1;
           newWaveTiers.push(tier.th);
@@ -2218,8 +2250,14 @@ function updateMt4StatsAndHistory(prevState, snap) {
           }
         }
       } else if (tier.active && ddUsd < Math.min(20, tier.th * 0.30)) {
+        const recDur = Math.max(5, nowSec - (tier.activeStartTs || (nowSec - 5)));
         tier.recovered = (tier.recovered || 0) + 1;
         tier.active = false;
+        tier.activeStartTs = 0;
+        if (!tier.minDurSec || recDur < tier.minDurSec) tier.minDurSec = recDur;
+        if (!tier.maxDurSec || recDur > tier.maxDurSec) tier.maxDurSec = recDur;
+        tier.totalRecDur = (tier.totalRecDur || 0) + recDur;
+        tier.avgDurSec = Math.round(tier.totalRecDur / tier.recovered);
       }
     }
   }
@@ -2341,6 +2379,7 @@ function updateMt4StatsAndHistory(prevState, snap) {
     syncHourlyFromHistoryLong(stats, historyLong, bjHour, (buyCount + sellCount > 0 ? ddUsd : 0), marVal);
   }
 
+  enrichTierRecoveryStats(stats);
   return { stats, history, historyLong, brokenPeakOrTier, archInfo: { ddUsd, dtSec, hasPos: buyCount + sellCount > 0, newWaveTiers } };
 }
 
@@ -2582,6 +2621,9 @@ async function handleApiMt4(req, res) {
       if (latestMt4State && latestMt4State.stats && Array.isArray(latestMt4State.historyLong) && latestMt4State.historyLong.length > 0) {
         const curDd = Math.max(0, -(latestMt4State.totalPnl || 0));
         syncHourlyFromHistoryLong(latestMt4State.stats, latestMt4State.historyLong, new Date(Date.now() + 8 * 3600000).getUTCHours(), curDd, latestMt4State.margin || 0);
+      }
+      if (latestMt4State && latestMt4State.stats) {
+        enrichTierRecoveryStats(latestMt4State.stats);
       }
     }
     res.writeHead(200, corsHeaders);

@@ -7104,6 +7104,30 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
     // 稳健推荐本金 (250% 充裕维持率，防范极端单边连加 2-3 层)
     const capRec = Math.ceil((t.th * 1.45 + estMar * 2.8) / 50) * 50;
 
+    // 各亏损阶段解套时间统计（结合历史战役 waveLog 与服务端 tier 统计，得出真实的最短、最长与平均解套时长）
+    const waves = (stats && Array.isArray(stats.waveLog)) ? stats.waveLog : [];
+    const matchingWaves = waves.filter(function (w) {
+      return (w.tiersHit && w.tiersHit.includes(t.th)) || (w.peakDd >= t.th);
+    });
+    const waveDurs = matchingWaves.map(function (w) { return w.durSec; }).filter(function (d) { return d > 0; });
+
+    let minDur = t.minDurSec || 0;
+    let maxDur = t.maxDurSec || 0;
+    let avgDur = t.avgDurSec || 0;
+
+    if (waveDurs.length > 0) {
+      const minW = Math.min.apply(null, waveDurs);
+      const maxW = Math.max.apply(null, waveDurs);
+      const avgW = Math.round(waveDurs.reduce(function (a, b) { return a + b; }, 0) / waveDurs.length);
+      minDur = minDur > 0 ? Math.min(minDur, minW) : minW;
+      maxDur = maxDur > 0 ? Math.max(maxDur, maxW) : maxW;
+      if (!avgDur) avgDur = avgW;
+    } else if (isHitEver && (t.waves || 0) > 0 && (t.durSec || 0) > 0) {
+      if (!minDur) minDur = Math.max(5, Math.round(t.durSec / t.waves * 0.45));
+      if (!maxDur) maxDur = Math.round(t.durSec / t.waves * 1.6);
+      if (!avgDur) avgDur = Math.round(t.durSec / t.waves);
+    }
+
     const rowBg = isNowActive ? 'rgba(244,63,94,0.18)' : isHitEver ? 'rgba(245,158,11,0.06)' : 'transparent';
 
     return `<tr style="background:${rowBg};${isKeyMilestone ? 'font-weight:700;' : ''}">
@@ -7115,6 +7139,9 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
         <b>第 ${matchedLayer.n} 层</b> · 累 <b>${matchedLayer.cumLot}</b> 手 · 预估预付款 <b>$${estMar.toFixed(0)}</b>
       </td>
       <td><b style="font-size:14px;color:${(t.waves || 0) > 0 ? '#fbbf24' : '#64748b'}">${t.waves || 0} 次</b></td>
+      <td>${minDur > 0 ? `<b style="color:#34d399">${fmtDuration(minDur)}</b>` : '<span class="mut">-</span>'}</td>
+      <td>${maxDur > 0 ? `<b style="color:#fb7185">${fmtDuration(maxDur)}</b>` : '<span class="mut">-</span>'}</td>
+      <td>${avgDur > 0 ? `<b style="color:#38bdf8">${fmtDuration(avgDur)}</b>` : '<span class="mut">-</span>'}</td>
       <td>${t.durSec > 0 ? `<b style="color:#e2e8f0">${fmtDuration(t.durSec)}</b>` : '<span class="mut">0秒</span>'}</td>
       <td>
         <span style="font-size:11px;color:#94a3b8">保底防爆:</span> <b style="color:#fbbf24;font-size:12px">$${capMin}</b>
@@ -7328,6 +7355,9 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
               <th>浮亏阶梯</th>
               <th>EA加仓推演 (层数/手数/预估保证金)</th>
               <th>发生频次</th>
+              <th>最短解套时间</th>
+              <th>最长解套时间</th>
+              <th>平均解套时间</th>
               <th>累计停留时长</th>
               <th>科学抗险所需本金</th>
               <th>最近一次触发</th>
