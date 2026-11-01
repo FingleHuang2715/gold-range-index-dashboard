@@ -2616,7 +2616,11 @@ function render() {
       lvMap[k] = levelFor(adj, t.trendDir);
       if (W[k]) { sw += W[k]; ss += adj * W[k]; }
     }
-    const adjCurrent = sw ? r1(ss / sw) : m.current;
+    const rawAdjCurrent = sw ? r1(ss / sw) : m.current;
+    // 融入用户手动设置的新闻关注度 (0-100分，分越高越不利于震荡，按 18% 权重动态计入)
+    const newsScore = (typeof window.NEWS_ATTENTION_SCORE === 'number') ? window.NEWS_ATTENTION_SCORE : +(localStorage.getItem('gold_news_attention_score') || 20);
+    const newsFactor = (100 - newsScore);
+    const adjCurrent = r1(clamp(rawAdjCurrent * 0.82 + newsFactor * 0.18, 5, 99));
     const rawDelta = clamp((m.run ?? m.current) - (m.current ?? 0), -18, 12);
     const adjRun = r1(clamp(adjCurrent + rawDelta * 0.65, 16, 98));
     const curLv = levelFor(adjCurrent, m.overallDir);
@@ -2667,11 +2671,11 @@ function render() {
       const lkNow = evalCustomLockState();
       const hasRedLock = lkNow && lkNow.activeLocks && lkNow.activeLocks.length > 0;
 
-      // 合成全站唯一主指数：【马丁实盘可做总分 (0~100)】= 基础短周期震荡指数 + 锯齿回调修正加分(下跌10$但回调3$平仓了就加分！) - 红灯锁惩罚
+      // 合成全站唯一主指数：【马丁实盘可做总分 (0~100)】= 基础短周期震荡指数 + 锯齿回调修正加分 - 红灯锁惩罚，按 20% 权重动态计入新闻关注度
       const baseShortScore = Math.round(0.35 * (adjMap['1M'] || 60) + 0.40 * (adjMap['5M'] || 60) + 0.25 * (adjMap['15M'] || 60));
       const revInfo = getReversalInfo(eMap);
       const rawMartingaleScore = baseShortScore + (pb.sawtoothBonus || 0) + (revInfo ? 16 : 0) - (hasRedLock ? 25 : 0);
-      const martingaleScore = Math.max(5, Math.min(99, Math.round(rawMartingaleScore)));
+      const martingaleScore = Math.max(5, Math.min(99, Math.round(rawMartingaleScore * 0.80 + newsFactor * 0.20)));
       const mCls = martingaleScore >= 60 ? 'RANGE' : martingaleScore >= 46 ? 'MIXED' : 'TREND';
       const mStatusTxt = martingaleScore >= 60
         ? '🟢 适合做马丁 (震荡或带3$回调的锯齿波段)'
@@ -2808,6 +2812,29 @@ function render() {
         </div>
         ${mt4StripHtml}
 
+        <!-- 📰 新闻关注度交互调节控制栏 (用户自定义输入 0-100分，按18%权重融入震荡指数，20%融入马丁总分) -->
+        <div style="background:rgba(15,23,42,0.92);border:1px solid #334155;border-radius:8px;padding:9px 13px;margin:10px 0 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-weight:800;color:var(--gold);font-size:13px">📰 新闻关注度 (宏观事件风暴指数):</span>
+            <div style="display:flex;align-items:center;gap:3px">
+              <input type="number" id="inputNewsScore" min="0" max="100" value="${newsScore}" onchange="setNewsScore(this.value)" style="width:65px;background:#0f172a;border:1px solid #475569;color:#fbbf24;font-size:14px;font-weight:800;border-radius:4px;padding:2px 6px;text-align:center" />
+              <span style="font-size:12px;color:#94a3b8">分 (0-100分，分越高越不利于震荡)</span>
+            </div>
+            <div style="display:inline-flex;gap:4px">
+              <button class="sm ${newsScore <= 20 ? 'pri' : ''}" onclick="setNewsScore(15)" style="padding:2px 8px;font-size:11px">清淡 15分</button>
+              <button class="sm ${newsScore > 20 && newsScore <= 50 ? 'pri' : ''}" onclick="setNewsScore(40)" style="padding:2px 8px;font-size:11px">常规 40分</button>
+              <button class="sm ${newsScore > 50 && newsScore <= 80 ? 'pri' : ''}" onclick="setNewsScore(75)" style="padding:2px 8px;font-size:11px">重磅非农/CPI 75分</button>
+              <button class="sm ${newsScore > 80 ? 'pri' : ''}" onclick="setNewsScore(95)" style="padding:2px 8px;font-size:11px">决议/黑天鹅 95分</button>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#cbd5e1">
+            <span>权重视角: <b>18%融入震荡指数</b> · <b>20%融入马丁总分</b></span>
+            <span class="pill ${newsScore >= 75 ? 'TREND' : newsScore >= 45 ? 'MIXED' : 'RANGE'}" style="font-size:10px">
+              ${newsScore >= 75 ? '🚨 极端新闻风暴·强力压制震荡' : newsScore >= 45 ? '⚠️ 中等数据扰动·注意防守' : '🟢 清淡无大新闻·适宜网格'}
+            </span>
+          </div>
+        </div>
+
         <div class="grid3" style="gap:12px">
           <!-- 卡片 1：唯一总指数（含单边10$但回调3$平仓赚钱的锯齿修正 + 实盘账户健康度） -->
           <div style="background:linear-gradient(135deg,rgba(234,179,8,0.12),rgba(15,20,30,0.95));border:1.5px solid ${mCls === 'RANGE' ? 'rgba(16,185,129,0.55)' : mCls === 'MIXED' ? 'rgba(245,158,11,0.55)' : 'rgba(244,63,94,0.65)'};border-radius:10px;padding:12px 14px">
@@ -2819,6 +2846,7 @@ function render() {
               <span class="num-chip fast-num" style="font-size:38px;font-weight:900;line-height:1;color:${mCls === 'RANGE' ? '#34d399' : mCls === 'MIXED' ? '#fbbf24' : '#fb7185'}">${martingaleScore}</span>
               <span class="mut sm">/ 100</span>
               <span class="pill NEUT" style="font-size:11px">基础震荡 ${baseShortScore}分 ${pb.sawtoothBonus >= 0 ? `+ 锯齿回调 +${pb.sawtoothBonus}` : `− 无回调 ${pb.sawtoothBonus}`}</span>
+              <span class="pill ${newsScore >= 75 ? 'TREND' : newsScore >= 45 ? 'MIXED' : 'RANGE'}" style="font-size:11px">📰 新闻关注 ${newsScore}分 (压制 -${Math.round(newsScore * 0.20)}分)</span>
               ${mt4Dec && !isMockAcc ? `<span class="pill ${mt4Dec.healthCls}" style="font-size:11px">🛡️ 实盘账户安全分: ${mt4Dec.accountHealthScore}分</span>` : ''}
             </div>
             ${idxBar(martingaleScore)}
@@ -5154,6 +5182,43 @@ try {
 } catch(e) {}
 fetchMt4Archive();
 
+// 新闻关注度设置 (0-100分，分越高越不利于震荡，默认 20分，按18%权重融入震荡指数，20%融入马丁总分)
+window.NEWS_ATTENTION_SCORE = +(localStorage.getItem('gold_news_attention_score') || 20);
+window.setNewsScore = function(val) {
+  val = Math.max(0, Math.min(100, Math.round(Number(val) || 0)));
+  window.NEWS_ATTENTION_SCORE = val;
+  try { localStorage.setItem('gold_news_attention_score', val); } catch(e) {}
+  if (window.render) window.render();
+};
+
+// 交易手续费、点差损耗与时间周期自定义配置
+window.TRADE_COST_COMM = +(localStorage.getItem('gold_trade_cost_comm') || 5.0);
+window.TRADE_COST_SPREAD = +(localStorage.getItem('gold_trade_cost_spread') || 10.0);
+window.TRADE_COST_PERIOD = localStorage.getItem('gold_trade_cost_period') || 'ALL';
+window.setTradeCostComm = function(v) {
+  window.TRADE_COST_COMM = Math.max(0, +(Number(v) || 0).toFixed(2));
+  try { localStorage.setItem('gold_trade_cost_comm', window.TRADE_COST_COMM); } catch(e) {}
+  if (window.render) window.render();
+};
+window.setTradeCostSpread = function(v) {
+  window.TRADE_COST_SPREAD = Math.max(0, +(Number(v) || 0).toFixed(1));
+  try { localStorage.setItem('gold_trade_cost_spread', window.TRADE_COST_SPREAD); } catch(e) {}
+  if (window.render) window.render();
+};
+window.setTradeCostPeriod = function(p) {
+  window.TRADE_COST_PERIOD = p;
+  try { localStorage.setItem('gold_trade_cost_period', p); } catch(e) {}
+  if (window.render) window.render();
+};
+
+// 24小时时段视窗切换 (效益夏普率透视表 / 热力图 / 双重并览)
+window.HOURLY_VIEW_MODE = localStorage.getItem('gold_hourly_view_mode') || 'both';
+window.setHourlyViewMode = function(m) {
+  window.HOURLY_VIEW_MODE = m;
+  try { localStorage.setItem('gold_hourly_view_mode', m); } catch(e) {}
+  if (window.render) window.render();
+};
+
 window.setMt4CurveTf = function(tf) {
   MT4_CHART_STATE.tf = tf;
   MT4_CHART_STATE.mode = (tf === '4H') ? 'fast' : 'long';
@@ -7194,7 +7259,123 @@ function buildMt4ParetoFibonacciChartHtml(tiers, ea, curBal, stats, pk) {
 }
 
 // ========== 24 小时 (北京时间) 浮亏高危时段热力表：行=浮亏阶梯，列=小时，支持自定义日期范围与3000/4000高危档 ==========
+// ===== 从 historyLong 相邻15分钟样本提取已平仓获利事件 (余额上升=平仓获利, 手数下降=平仓手数) =====
+function extractMt4TradeEvents(historyLong) {
+  const ev = [];
+  if (!Array.isArray(historyLong)) return ev;
+  for (let i = 1; i < historyLong.length; i++) {
+    const a = historyLong[i - 1], b = historyLong[i];
+    if (a.bal == null || b.bal == null) continue;
+    const dBal = b.bal - a.bal;
+    if (dBal <= 0.5) continue;
+    const la = (a.buyLots || 0) + (a.sellLots || 0), lb = (b.buyLots || 0) + (b.sellLots || 0);
+    let lots = Math.max(0, la - lb);
+    if (lots <= 0) lots = 0.01;
+    const t = (b.t || 0) < 1e11 ? (b.t || 0) * 1000 : (b.t || 0);
+    ev.push({ t, profit: dBal, lots });
+  }
+  return ev;
+}
+
+function buildMt4TradeCostSectionHtml(historyLong, mt4) {
+  const P = window.TRADE_COST_PERIOD || 'ALL';
+  const comm = window.TRADE_COST_COMM, spr = window.TRADE_COST_SPREAD;
+  const nowMs = Date.now();
+  const bjMidnight = Math.floor((nowMs + 8 * 3600000) / 86400000) * 86400000 - 8 * 3600000;
+  const since = P === 'TODAY' ? bjMidnight : P === '24H' ? nowMs - 86400000 : P === '3D' ? nowMs - 3 * 86400000 : P === '7D' ? nowMs - 7 * 86400000 : 0;
+  const evs = extractMt4TradeEvents(historyLong).filter(e => e.t >= since);
+  const lots = evs.reduce((s, e) => s + e.lots, 0);
+  const gross = evs.reduce((s, e) => s + e.profit, 0);
+  const totalComm = lots * comm;
+  const spreadCost = lots * spr; // XAUUSD: 1点=$0.01/盎司×100盎司 = $1/手/点
+  const friction = totalComm + spreadCost;
+  const net = gross - friction;
+  const keep = gross > 0 ? net / gross * 100 : 0;
+  const perLot = lots > 0 ? net / lots : 0;
+  const btn = (k, n) => `<button class="sm ${P === k ? 'on' : ''}" onclick="setTradeCostPeriod('${k}')">${n}</button>`;
+  const card = (t, v, c) => `<div style="flex:1;min-width:120px;background:rgba(15,19,28,0.9);border:1px solid #334155;border-radius:8px;padding:7px 10px"><div class="xs mut">${t}</div><div style="font-size:17px;font-weight:900;color:${c || '#e2e8f0'}">${v}</div></div>`;
+  const inp = (id, v, fn, step) => `<input type="number" min="0" step="${step}" value="${v}" onchange="${fn}(this.value)" style="width:64px;background:#0f172a;border:1px solid #475569;color:#fbbf24;font-weight:800;border-radius:4px;padding:2px 6px;text-align:center" />`;
+  return `<div id="mt4TradeCostSec" style="margin-top:12px;background:#0d1118;border:1px solid var(--bd);border-radius:10px;padding:12px 14px">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <b style="color:#fff;font-size:13.5px">💸 交易手数 · 手续费 · 点差损耗统计</b>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">${btn('TODAY', '今日')}${btn('24H', '近24小时')}${btn('3D', '近3天')}${btn('7D', '近7天')}${btn('ALL', '全部历史')}</div>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:12px;color:#cbd5e1">
+      <span>每手手续费 $ ${inp('c', comm, 'setTradeCostComm', 0.5)}</span>
+      <span>交易所点差 (点) ${inp('s', spr, 'setTradeCostSpread', 1)} <span class="xs mut">(黄金 1点≈$1/手)</span></span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${card('累计成交手数', lots.toFixed(2) + ' 手')}
+      ${card('平仓获利次数', evs.length + ' 次')}
+      ${card('账面平仓获利', '$' + gross.toFixed(2), '#34d399')}
+      ${card('累计手续费', '-$' + totalComm.toFixed(2), '#fb923c')}
+      ${card('点差预估扣除', '-$' + spreadCost.toFixed(2), '#fb923c')}
+      ${card('净利润(扣费后)', (net >= 0 ? '$' : '-$') + Math.abs(net).toFixed(2), net >= 0 ? '#34d399' : '#fb7185')}
+      ${card('利润留存率 · 每手净利', keep.toFixed(1) + '% · $' + perLot.toFixed(2))}
+    </div>
+    <div class="xs mut" style="margin-top:6px">说明：账面获利按 15 分钟样本中余额上升估算，手数按持仓手数下降估算；点差若已体现在成交价中，则"点差预估扣除"为参考性质，用于比较不同交易所成本。</div>
+  </div>`;
+}
+
+function buildMt4HourEfficiencyHtml(stats, historyLong) {
+  const H = Array.from({ length: 24 }, () => ({ n: 0, lots: 0, profit: 0, dd: 0 }));
+  extractMt4TradeEvents(historyLong).forEach(e => {
+    const h = new Date(e.t + 8 * 3600000).getUTCHours();
+    H[h].n++; H[h].lots += e.lots; H[h].profit += e.profit;
+  });
+  (historyLong || []).forEach(b => {
+    const bt = (b.t || 0) < 1e11 ? (b.t || 0) * 1000 : (b.t || 0);
+    if (!bt) return;
+    const h = new Date(bt + 8 * 3600000).getUTCHours();
+    const dd = b.ddMax != null ? b.ddMax : Math.max(0, -(b.pnl || 0));
+    if (dd > H[h].dd) H[h].dd = dd;
+  });
+  if (stats && Array.isArray(stats.hourly) && stats.hourly.length === 24) {
+    stats.hourly.forEach((s, h) => { if ((s.dd || 0) > H[h].dd) H[h].dd = s.dd; });
+  }
+  const rows = H.map((r, h) => {
+    const ratio = r.dd > 0 ? r.profit / r.dd : (r.profit > 0 ? 9.99 : 0);
+    return { h, ...r, ratio };
+  });
+  const rated = rows.filter(r => r.n > 0);
+  if (!rated.length) return '<div class="xs mut">暂无已平仓获利样本，无法统计时段效益。</div>';
+  const best = rated.slice().sort((a, b) => b.ratio - a.ratio)[0];
+  const worst = rows.filter(r => r.dd > 0).sort((a, b) => a.ratio - b.ratio)[0];
+  const busy = rated.slice().sort((a, b) => b.n - a.n)[0];
+  const rate = r => r.n === 0 ? ['—', '#64748b'] : r.ratio >= 1.5 ? ['⭐⭐⭐ 优', '#34d399'] : r.ratio >= 0.5 ? ['⭐⭐ 良', '#fbbf24'] : r.ratio >= 0.15 ? ['⭐ 一般', '#fb923c'] : ['⛔ 低效高危', '#f43f5e'];
+  const fh = h => String(h).padStart(2, '0') + ':00';
+  const maxProfit = Math.max(1, ...rows.map(r => r.profit));
+  const body = rows.map(r => {
+    const [t, c] = rate(r);
+    const w = Math.round(r.profit / maxProfit * 100);
+    return `<tr><td style="padding:2px 8px;font-weight:800">${fh(r.h)}</td><td style="text-align:center">${r.lots.toFixed(2)}</td><td style="text-align:center">${r.n}</td><td style="padding:2px 6px;color:#34d399;white-space:nowrap"><span style="display:inline-block;height:6px;width:${w * 0.6}px;background:#34d399;border-radius:3px;margin-right:4px"></span>$${r.profit.toFixed(0)}</td><td style="text-align:center;color:#fb7185">${r.dd > 0 ? '-$' + Math.round(r.dd) : '0'}</td><td style="text-align:center;font-weight:800">${r.n || r.dd ? r.ratio.toFixed(2) : '—'}</td><td style="color:${c};font-weight:800;white-space:nowrap">${t}</td></tr>`;
+  }).join('');
+  return `<div id="mt4HourEffSec" style="margin-top:12px;background:#0d1118;border:1px solid var(--bd);border-radius:10px;padding:12px 14px">
+    <b style="color:#fff;font-size:13.5px">📈 24小时时段效益 · 风险收益比 (夏普率近似)</b>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;font-size:12px">
+      <span class="pill RANGE">🏆 最佳时段 ${fh(best.h)} (收益/浮亏 ${best.ratio.toFixed(2)})</span>
+      ${worst ? `<span class="pill TREND">⚠️ 最低效 ${fh(worst.h)} (最大浮亏 -$${Math.round(worst.dd)} · 比值 ${worst.ratio.toFixed(2)})</span>` : ''}
+      <span class="pill MIXED">⚡ 最活跃 ${fh(busy.h)} (${busy.n}次 · ${busy.lots.toFixed(2)}手)</span>
+    </div>
+    <div style="max-height:360px;overflow:auto"><table style="border-collapse:collapse;width:100%;font-size:12px">
+      <thead><tr style="color:#94a3b8;position:sticky;top:0;background:#0d1118"><th style="text-align:left;padding:3px 8px">时段(北京)</th><th>成交手数</th><th>获利次数</th><th style="text-align:left">平仓获利</th><th>最大浮亏(热力图)</th><th>收益/浮亏比</th><th style="text-align:left">夏普评级</th></tr></thead>
+      <tbody>${body}</tbody></table></div>
+    <div class="xs mut" style="margin-top:6px">收益/浮亏比 = 该小时累计平仓获利 ÷ 该小时历史最大浮亏，越高说明每承担 $1 风险换得的收益越多；≥1.5 优，0.5~1.5 良，&lt;0.15 低效高危。</div>
+  </div>`;
+}
+
 function buildMt4HourHeatmap(stats, mt4Dec, passedHistoryLong, mt4Obj) {
+  const hl = (Array.isArray(passedHistoryLong) && passedHistoryLong.length > 0) ? passedHistoryLong
+    : ((mt4Obj && Array.isArray(mt4Obj.historyLong)) ? mt4Obj.historyLong : []);
+  const mode = window.HOURLY_VIEW_MODE || 'both';
+  const tb = (k, n) => `<button class="sm ${mode === k ? 'on' : ''}" onclick="setHourlyViewMode('${k}')">${n}</button>`;
+  const bar = `<div style="margin-top:12px;display:flex;gap:4px;flex-wrap:wrap">${tb('eff', '📊 时段效益与夏普率')}${tb('heat', '🔥 浮亏突破热力表')}${tb('both', '🌐 双重视角全览')}</div>`;
+  return buildMt4TradeCostSectionHtml(hl, mt4Obj) + bar
+    + (mode !== 'heat' ? buildMt4HourEfficiencyHtml(stats, hl) : '')
+    + (mode !== 'eff' ? buildMt4HourHeatmapCore(stats, mt4Dec, passedHistoryLong, mt4Obj) : '');
+}
+
+function buildMt4HourHeatmapCore(stats, mt4Dec, passedHistoryLong, mt4Obj) {
   const TH = MT4_DD_TIERS_DEF;
   const bjNowH = new Date(Date.now() + 8 * 3600000).getUTCHours();
   const bjNowM = new Date(Date.now() + 8 * 3600000).getUTCMinutes();
