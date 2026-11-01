@@ -5465,7 +5465,24 @@ function ensureMt4SeededPeaks(stats) {
   }
 }
 
+// 黄金休市判定 (北京时间): 周六 06:05 ~ 周一 06:05 休市; 圣诞/元旦按美东日期整日休市。休市样本不画曲线、不计统计。
+function isGoldMarketClosedMs(ms) {
+  if (ms < 1e11) ms *= 1000;
+  const bj = new Date(ms + 8 * 3600000);
+  const dow = bj.getUTCDay(), mins = bj.getUTCHours() * 60 + bj.getUTCMinutes();
+  if (dow === 6 && mins >= 365) return true;
+  if (dow === 0) return true;
+  if (dow === 1 && mins < 365) return true;
+  const ny = new Date(ms - 5 * 3600000);
+  const md = (ny.getUTCMonth() + 1) * 100 + ny.getUTCDate();
+  return md === 1225 || md === 101;
+}
 function getMergedMt4History(mt4) {
+  const r = getMergedMt4HistoryRaw(mt4);
+  const open = p => !(p && p.t) || !isGoldMarketClosedMs(p.t);
+  return { ...r, history: (r.history || []).filter(open), historyLong: (r.historyLong || []).filter(open) };
+}
+function getMergedMt4HistoryRaw(mt4) {
   if (!mt4) return { history: [], historyLong: [], stats: null, initBal: 0 };
   const acc = mt4.account || 'default';
   const accFastKey = `gold_mt4_hist_v1_${acc}`;
@@ -7685,7 +7702,7 @@ function getMScoreCandles(d, tf, curScore) {
   }
 
   // 记录/更新当前实盘正在走动中的这一根最新蜡烛
-  if (curScore != null) {
+  if (curScore != null && !isGoldMarketClosedMs(Date.now())) {
     const last = candles[candles.length - 1];
     if (last && last.t === curBarTs) {
       last.c = curScore;

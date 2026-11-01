@@ -2268,12 +2268,25 @@ function syncHourlyFromHistoryLong(stats, historyLong, curBjHour = -1, curDdUsd 
   stats.hourly = hourly;
 }
 
-function updateMt4StatsAndHistory(prevState, snap) {
-  const {
+// 黄金休市判定 (北京时间): 周六 06:05 ~ 周一 06:05 休市; 圣诞(12/25)与元旦(1/1)按美东日期整日休市。休市期间不再累计曲线/统计样本。
+function isGoldMarketClosedSec(nowSec) {
+  const bj = new Date((nowSec + 8 * 3600) * 1000);
+  const dow = bj.getUTCDay(), mins = bj.getUTCHours() * 60 + bj.getUTCMinutes();
+  if (dow === 6 && mins >= 6 * 60 + 5) return true;
+  if (dow === 0) return true;
+  if (dow === 1 && mins < 6 * 60 + 5) return true;
+  const ny = new Date((nowSec - 5 * 3600) * 1000);
+  const md = (ny.getUTCMonth() + 1) * 100 + ny.getUTCDate();
+  return md === 1225 || md === 101;
+}
+function updateMt4StatsAndHistory(prevState, snap) {  const {
     nowSec, accStr, balVal, eqVal, marVal, freeMVal, mlVal,
     buyCount, buyLots, sellCount, sellLots, netLots, totalPnlVal, bid
   } = snap;
   const sameAcc = prevState && prevState.account === accStr;
+  if (sameAcc && prevState.stats && prevState.stats.peaks && isGoldMarketClosedSec(nowSec)) {
+    return { stats: prevState.stats, history: prevState.history || [], historyLong: prevState.historyLong || [], brokenPeakOrTier: null, archInfo: { ddUsd: 0, dtSec: 0, hasPos: false, newWaveTiers: [], marketClosed: true } };
+  }
   const ddUsd = +(Math.max(0, -totalPnlVal)).toFixed(2);
   const ddPct = balVal > 0 ? +((ddUsd / balVal) * 100).toFixed(1) : 0;
   const totalLots = +(buyLots + sellLots).toFixed(2);
@@ -2760,7 +2773,7 @@ async function handleApiMt4(req, res) {
         nowSec, accStr, balVal, eqVal, marVal, freeMVal, mlVal,
         buyCount, buyLots, sellCount, sellLots, netLots, totalPnlVal, bid
       });
-      if (!isMock) {
+      if (!isMock && !(archInfo && archInfo.marketClosed)) {
         try {
           await updateMt4Archive(prevStateForArc, { nowSec, accStr, balVal, eqVal, marVal, totalPnlVal, bid }, archInfo);
         } catch (e) { console.error('[MT4] archive update failed', e.message); }
