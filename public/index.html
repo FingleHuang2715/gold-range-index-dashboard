@@ -2554,7 +2554,7 @@ function render() {
   if (!D) return;
   window.D = D;
   const d = D;
-  const mt4 = d.mt4 && d.mt4.balance > 0 && (Date.now() - d.mt4.ts < 3600000) ? d.mt4 : null;
+  const mt4 = d.mt4 && d.mt4.balance > 0 ? d.mt4 : null; // MT4 关闭后保留最后一次快照与历史统计 (标记离线, 不再隐藏)
   if (mt4) {
     ACC_BAL = Math.round(mt4.balance);
     BUY_LOTS = r2(mt4.buyLots);
@@ -2785,7 +2785,7 @@ function render() {
         const ageSec = Math.max(0, Math.round((Date.now() - mt4.ts) / 1000));
         const statusTag = isMockAcc
           ? `<span class="pill MIXED" style="cursor:pointer" onclick="clearMt4Data()" title="点击立即清除这条模拟测试数据">🧪 网页模拟演示数据 (假测试账号 #${mt4.account} · 非您的真实MT4 · 点此清除)</span>`
-          : `<span class="pill RANGE" style="background:rgba(56,189,248,0.2);color:#38bdf8;border:1px solid #38bdf8">🟢 您的真实 MT4 已联动决策 (${ageSec}秒前 · 实时推演价 $${f2(mt4Dec.curPx)})</span>`;
+          : `<span class="pill RANGE" style="background:rgba(56,189,248,0.2);color:#38bdf8;border:1px solid #38bdf8">${ageSec > 180 ? `⚫ MT4 已离线 (最后推送于 ${ageSec >= 3600 ? Math.round(ageSec/3600) + " 小时" : Math.round(ageSec/60) + " 分钟"}前 · 以下为最后快照与历史统计, 持仓/决策数据可能已过期)` : `🟢 您的真实 MT4 已联动决策 (${ageSec}秒前 · 实时推演价 $${f2(mt4Dec.curPx)})`}</span>`;
         mt4StripHtml = `
           <div style="margin-bottom:10px;padding:9px 12px;background:${isMockAcc ? 'rgba(245,158,11,0.12)' : 'linear-gradient(90deg,rgba(14,116,144,0.24),rgba(15,23,42,0.92))'};border:1.5px solid ${isMockAcc ? 'rgba(245,158,11,0.55)' : 'rgba(56,189,248,0.6)'};border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
