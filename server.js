@@ -1989,9 +1989,21 @@ function createEmptyMt4Stats(nowSec, balVal, eqVal) {
 // 严格按最大浮亏落入的专属极值区间(Mutually Exclusive Bracket)归类统计解套时间
 // 准则：必须网格彻底完结（全部平仓）才计入；浮亏达到 50 但未达到 100，解套后只算 50~100 区间的最短/平均/最长解套时间；
 // 浮亏冲上 1000，则只算 1000 级，不再混入 50~100 等前面低级区间，避免重复计算，确保真实反映“浮亏越大、解套耗时越长”
+// 扣除休市时间后的“有效交易秒数” (5分钟步进累加), 用于解套时间/存续时间
+function tradingSecBetween(a, b) {
+  if (!(b > a)) return 0;
+  const step = 300;
+  let open = 0;
+  for (let t = a; t < b; t += step) {
+    const len = Math.min(step, b - t);
+    if (!isGoldMarketClosedSec(t + len / 2)) open += len;
+  }
+  return Math.round(open);
+}
 function enrichTierRecoveryStats(stats) {
   if (!stats || !Array.isArray(stats.tiers)) return;
   const waves = Array.isArray(stats.waveLog) ? stats.waveLog : [];
+  waves.forEach((w) => { if (w.status === 'RECOVERED' && w.endTs > w.startTs) w.durSec = Math.max(15, tradingSecBetween(w.startTs, w.endTs)); });
   const completedWaves = waves.filter((w) => w.status === 'RECOVERED' && (w.durSec || 0) >= 20);
 
   const tiersDef = stats.tiers.map((t) => t.th);
@@ -2412,7 +2424,7 @@ function updateMt4StatsAndHistory(prevState, snap) {  const {
       const doneWave = {
         ...stats.activeWave,
         endTs: nowSec,
-        durSec: Math.max(15, nowSec - stats.activeWave.startTs),
+        durSec: Math.max(15, tradingSecBetween(stats.activeWave.startTs, nowSec)),
         status: 'RECOVERED',
         endBal: balVal
       };

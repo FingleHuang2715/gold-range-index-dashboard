@@ -5477,6 +5477,12 @@ function isGoldMarketClosedMs(ms) {
   const md = (ny.getUTCMonth() + 1) * 100 + ny.getUTCDate();
   return md === 1225 || md === 101;
 }
+function tradingSecBetween(a, b) {
+  if (!(b > a)) return 0;
+  let open = 0;
+  for (let t = a; t < b; t += 300) { const len = Math.min(300, b - t); if (!isGoldMarketClosedMs((t + len / 2) * 1000)) open += len; }
+  return Math.round(open);
+}
 function getMergedMt4History(mt4) {
   const r = getMergedMt4HistoryRaw(mt4);
   const open = p => !(p && p.t) || !isGoldMarketClosedMs(p.t);
@@ -7382,6 +7388,10 @@ function buildMt4HourEfficiencyHtml(stats, historyLong) {
 }
 
 function buildMt4HourHeatmap(stats, mt4Dec, passedHistoryLong, mt4Obj) {
+  try { return buildMt4HourHeatmapInner(stats, mt4Dec, passedHistoryLong, mt4Obj); }
+  catch (e) { console.error(e); return '<div class="xs" style="color:#fb7185;margin-top:12px">时段表渲染异常: ' + String(e.message).replace(/</g, '&lt;') + '</div>' + buildMt4HourHeatmapCore(stats, mt4Dec, passedHistoryLong, mt4Obj); }
+}
+function buildMt4HourHeatmapInner(stats, mt4Dec, passedHistoryLong, mt4Obj) {
   const hl = (Array.isArray(passedHistoryLong) && passedHistoryLong.length > 0) ? passedHistoryLong
     : ((mt4Obj && Array.isArray(mt4Obj.historyLong)) ? mt4Obj.historyLong : []);
   const mode = window.HOURLY_VIEW_MODE || 'both';
@@ -8103,7 +8113,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       const isBreachedPast = curPeak >= (nextTh || Infinity);
 
       if (isCurrentPeakStage) {
-        const liveSec = Math.max(1, Math.floor(Date.now() / 1000) - stats.activeWave.startTs);
+        const liveSec = Math.max(1, tradingSecBetween(stats.activeWave.startTs, Math.floor(Date.now() / 1000)));
         const isOverAvg = avgDur > 0 && liveSec > avgDur;
         const isOverMax = maxDur > 0 && liveSec > maxDur;
         liveDurationHtml = `
@@ -8152,7 +8162,7 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
   // 重大深套战役日志 (含当前进行中的 activeWave + 历史已结束的 waveLog)
   const waveItems = [];
   if (stats && stats.activeWave) {
-    waveItems.push({ ...stats.activeWave, status: 'ACTIVE', durSec: Math.max(5, Math.floor(Date.now() / 1000) - stats.activeWave.startTs) });
+    waveItems.push({ ...stats.activeWave, status: 'ACTIVE', durSec: Math.max(5, tradingSecBetween(stats.activeWave.startTs, Math.floor(Date.now() / 1000))) });
   }
   if (stats && Array.isArray(stats.waveLog)) {
     waveItems.push(...stats.waveLog.slice(0, 12));
