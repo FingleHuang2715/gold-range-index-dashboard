@@ -6295,8 +6295,8 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
 
   const lastWinNet = r2((last.eq || 0) - cycleBaseEq);
   const lastWinClosed = r2((last.bal || 0) - cycleBaseBal);
-  const totalClosedProfit = r2((last.bal || 0) - initBal);
-  const totalNetProfit = r2((last.eq || 0) - initBal);
+  const totalClosedProfit = r2((last.bal || 0) - initBal - (window.MT4_DEP || 0));
+  const totalNetProfit = r2((last.eq || 0) - initBal - (window.MT4_DEP || 0));
 
   // X 轴时间刻度
   const xStep = Math.max(1, Math.floor((n - 1) / 7));
@@ -6505,8 +6505,8 @@ window.onMt4ChartHover = function(ev) {
   t3.setAttribute('x', bx + 12); t3.setAttribute('y', by + 65);
 
   const tm = new Date(p.t).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-  const totalClosedPnl = r2((p.bal || 0) - cfg.initBal);
-  const totalNetRet = r2((p.eq || 0) - cfg.initBal);
+  const totalClosedPnl = r2((p.bal || 0) - cfg.initBal - (window.MT4_DEP || 0));
+  const totalNetRet = r2((p.eq || 0) - cfg.initBal - (window.MT4_DEP || 0));
   const pMar = p.marMax != null ? p.marMax : (p.mar || 0);
 
   t1.textContent = `🕒 ${tm}  |  余额: $${f2(p.bal)}  |  实时净值: $${f2(p.eq)}  |  金价: $${f2(p.px)}`;
@@ -7283,6 +7283,29 @@ function buildMt4ParetoFibonacciChartHtml(tiers, ea, curBal, stats, pk) {
 
 // ========== 24 小时 (北京时间) 浮亏高危时段热力表：行=浮亏阶梯，列=小时，支持自定义日期范围与3000/4000高危档 ==========
 // ===== 从 historyLong 相邻15分钟样本提取已平仓获利事件 (余额上升=平仓获利, 手数下降=平仓手数) =====
+// 统计历史样本中的入金总额 (净值与余额同步跳升、非平仓获利)，用于从“收益”里剔除本金
+function isMt4DepositJump(a, b) {
+  const dBal = b.bal - a.bal;
+  if (dBal <= 0.5) return false;
+  const la = (a.buyLots || 0) + (a.sellLots || 0), lb = (b.buyLots || 0) + (b.sellLots || 0);
+  const lotsBase = Math.max(la, lb);
+  // 1 手黄金 $1 波动 = $100；该桶内合理平仓获利上限 ≈ 手数×100×$15 + $20
+  const cap = lotsBase * 100 * 15 + 20;
+  if (dBal > cap) return true;
+  // 净值同步抬升且没有平仓手数下降 => 入金
+  if (a.eq != null && b.eq != null && (b.eq - a.eq) >= dBal * 0.6 && la - lb <= 0) return true;
+  return false;
+}
+function sumMt4Deposits(historyLong) {
+  let tot = 0;
+  if (!Array.isArray(historyLong)) return tot;
+  for (let i = 1; i < historyLong.length; i++) {
+    const a = historyLong[i - 1], b = historyLong[i];
+    if (a.bal == null || b.bal == null) continue;
+    if (isMt4DepositJump(a, b)) tot += b.bal - a.bal;
+  }
+  return tot;
+}
 function extractMt4TradeEvents(historyLong) {
   const ev = [];
   if (!Array.isArray(historyLong)) return ev;
@@ -7293,6 +7316,8 @@ function extractMt4TradeEvents(historyLong) {
     if (dBal <= 0.5) continue;
     const la = (a.buyLots || 0) + (a.sellLots || 0), lb = (b.buyLots || 0) + (b.sellLots || 0);
     let lots = Math.max(0, la - lb);
+    // 入金识别：余额上升但净值同步上升(平仓获利不会推高净值) => 视为入金，不计利润 (含爆仓后入金同桶的情况)
+    if (isMt4DepositJump(a, b)) continue;
     if (lots <= 0) lots = 0.01;
     const t = (b.t || 0) < 1e11 ? (b.t || 0) * 1000 : (b.t || 0);
     ev.push({ t, profit: dBal, lots });
@@ -7367,26 +7392,36 @@ function buildMt4HourEfficiencyHtml(stats, historyLong) {
   const busy = rated.slice().sort((a, b) => b.n - a.n)[0];
   const rate = r => r.n === 0 ? ['—', '#64748b'] : r.ratio >= 1.5 ? ['⭐⭐⭐ 优', '#34d399'] : r.ratio >= 0.5 ? ['⭐⭐ 良', '#fbbf24'] : r.ratio >= 0.15 ? ['⭐ 一般', '#fb923c'] : ['⛔ 低效高危', '#f43f5e'];
   const fh = h => String(h).padStart(2, '0') + ':00';
-  const maxProfit = Math.max(1, ...rows.map(r => r.profit));
-  const body = rows.map(r => {
-    const [t, c] = rate(r);
-    const w = Math.round(r.profit / maxProfit * 100);
-    return `<tr><td style="padding:2px 8px;font-weight:800">${fh(r.h)}</td><td style="text-align:center">${r.lots.toFixed(2)}</td><td style="text-align:center">${r.n}</td><td style="padding:2px 6px;color:#34d399;white-space:nowrap"><span style="display:inline-block;height:6px;width:${w * 0.6}px;background:#34d399;border-radius:3px;margin-right:4px"></span>$${r.profit.toFixed(0)}</td><td style="text-align:center;color:#fb7185">${r.dd > 0 ? '-$' + Math.round(r.dd) : '0'}</td><td style="text-align:center;font-weight:800">${r.n || r.dd ? r.ratio.toFixed(2) : '—'}</td><td style="color:${c};font-weight:800;white-space:nowrap">${t}</td></tr>`;
-  }).join('');
+  // 热力图：颜色=收益/浮亏比 (绿=高效，黄=一般，红=低效高危，灰=无数据)
+  const cellColor = r => {
+    if (!r.n && !r.dd) return 'rgba(51,65,85,0.35)';
+    if (!r.n) return 'rgba(244,63,94,0.55)';
+    const k = Math.max(0, Math.min(1, r.ratio / 2));
+    const hue = Math.round(k * 140); // 0红 -> 140绿
+    return `hsla(${hue},70%,${34 + k * 6}%,0.9)`;
+  };
+  const cell = r => {
+    const [t] = rate(r);
+    const rt = r.n || r.dd ? (r.ratio >= 9.99 ? '∞' : r.ratio.toFixed(2)) : '—';
+    return `<div title="${fh(r.h)} · 平仓获利$${r.profit.toFixed(2)} · 最大浮亏-$${Math.round(r.dd)} · ${r.n}次 ${r.lots.toFixed(2)}手 · ${t}" style="background:${cellColor(r)};border-radius:6px;padding:6px 2px;text-align:center;color:#fff;line-height:1.35">
+      <div style="font-size:11px;opacity:.85;font-weight:700">${fh(r.h)}</div>
+      <div style="font-size:15px;font-weight:900">${rt}</div>
+      <div style="font-size:10px;opacity:.9">+$${r.profit.toFixed(0)} / -$${Math.round(r.dd)}</div>
+    </div>`;
+  };
+  const grid = rows.map(cell).join('');
   return `<div id="mt4HourEffSec" style="margin-top:12px;background:#0d1118;border:1px solid var(--bd);border-radius:10px;padding:12px 14px">
-    <b style="color:#fff;font-size:13.5px">📈 24小时时段效益 · 风险收益比 (夏普率近似)</b>
+    <b style="color:#fff;font-size:13.5px">📈 24小时时段效益热力图 · 风险收益比 (夏普率近似)</b>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;font-size:12px">
       <span class="pill RANGE">🏆 最佳时段 ${fh(best.h)} (收益/浮亏 ${best.ratio.toFixed(2)})</span>
       ${worst ? `<span class="pill TREND">⚠️ 最低效 ${fh(worst.h)} (最大浮亏 -$${Math.round(worst.dd)} · 比值 ${worst.ratio.toFixed(2)})</span>` : ''}
       <span class="pill MIXED">⚡ 最活跃 ${fh(busy.h)} (${busy.n}次 · ${busy.lots.toFixed(2)}手)</span>
     </div>
-    <div style="max-height:360px;overflow:auto"><table style="border-collapse:collapse;width:100%;font-size:12px">
-      <thead><tr style="color:#94a3b8;position:sticky;top:0;background:#0d1118"><th style="text-align:left;padding:3px 8px">时段(北京)</th><th>成交手数</th><th>获利次数</th><th style="text-align:left">平仓获利</th><th>最大浮亏(热力图)</th><th>收益/浮亏比</th><th style="text-align:left">夏普评级</th></tr></thead>
-      <tbody>${body}</tbody></table></div>
-    <div class="xs mut" style="margin-top:6px">收益/浮亏比 = 该小时累计平仓获利 ÷ 该小时历史最大浮亏，越高说明每承担 $1 风险换得的收益越多；≥1.5 优，0.5~1.5 良，&lt;0.15 低效高危。</div>
+    <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px">${grid}</div>
+    <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#94a3b8">低效 <span style="flex:0 0 160px;height:8px;border-radius:4px;background:linear-gradient(90deg,hsl(0,70%,34%),hsl(70,70%,37%),hsl(140,70%,40%))"></span> 高效 <span style="margin-left:8px">灰=无数据 · 每格：收益/浮亏比、平仓获利/最大浮亏 · 悬停看详情</span></div>
+    <div class="xs mut" style="margin-top:6px">收益/浮亏比 = 该小时累计平仓获利 ÷ 该小时历史最大浮亏；≥1.5 优，0.5~1.5 良，&lt;0.15 低效高危。入金(净值与余额同步跳升、无平仓)已自动排除，不计入利润。</div>
   </div>`;
 }
-
 function buildMt4HourHeatmap(stats, mt4Dec, passedHistoryLong, mt4Obj) {
   try { return buildMt4HourHeatmapInner(stats, mt4Dec, passedHistoryLong, mt4Obj); }
   catch (e) { console.error(e); return '<div class="xs" style="color:#fb7185;margin-top:12px">时段表渲染异常: ' + String(e.message).replace(/</g, '&lt;') + '</div>' + buildMt4HourHeatmapCore(stats, mt4Dec, passedHistoryLong, mt4Obj); }
@@ -7980,8 +8015,9 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
   const standalone = $('standaloneMScoreKlineSec');
   if (standalone) standalone.style.display = 'none';
   const { history, historyLong, stats, initBal } = getMergedMt4History(mt4);
-  const closedProfit = r2((mt4.balance || 0) - initBal);
-  const netTotalProfit = r2((mt4.equity || 0) - initBal);
+  window.MT4_DEP = sumMt4Deposits(historyLong);
+  const closedProfit = r2((mt4.balance || 0) - initBal - window.MT4_DEP);
+  const netTotalProfit = r2((mt4.equity || 0) - initBal - window.MT4_DEP);
   const closedPct = initBal > 0 ? r1((closedProfit / initBal) * 100) : 0;
   const netRetPct = initBal > 0 ? r1((netTotalProfit / initBal) * 100) : 0;
 
