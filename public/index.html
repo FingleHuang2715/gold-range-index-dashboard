@@ -8173,7 +8173,15 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       const isBreachedPast = curPeak >= (nextTh || Infinity);
 
       if (isCurrentPeakStage) {
-        const liveSec = Math.max(1, tradingSecBetween(stats.activeWave.startTs, Math.floor(Date.now() / 1000)));
+        // 当前余额阶梯起点 = 最近一次平仓获利(余额上升)的时间，与 activeWave 起点取较晚者
+        let stepStart = stats.activeWave.startTs;
+        const hlS = (Array.isArray(mt4.historyLong) ? mt4.historyLong : []);
+        for (let i = hlS.length - 1; i >= 1; i--) {
+          const a = hlS[i - 1], b = hlS[i];
+          if (a.bal == null || b.bal == null) continue;
+          if (b.bal - a.bal > 0.3 && !isMt4DepositJump(a, b)) { const bt = (b.t || 0) < 1e11 ? (b.t || 0) : Math.floor(b.t / 1000); stepStart = Math.max(stepStart, bt); break; }
+        }
+        const liveSec = Math.max(1, tradingSecBetween(stepStart, Math.floor(Date.now() / 1000)));
         const isOverAvg = avgDur > 0 && liveSec > avgDur;
         const isOverMax = maxDur > 0 && liveSec > maxDur;
         liveDurationHtml = `

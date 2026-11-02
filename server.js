@@ -2418,7 +2418,15 @@ function updateMt4StatsAndHistory(prevState, snap) {  const {
   }
 
   const hasOpenPos = (buyCount + sellCount > 0);
-  if (!hasOpenPos) {
+  // 余额阶梯：每次平仓获利余额上升一档 = 一个解套阶梯结束，下一阶梯从此刻起算 (入金跳升不算)
+  let stepClosed = false;
+  if (hasOpenPos && stats.activeWave && typeof stats.activeWave.lastBal === 'number') {
+    const dB = balVal - stats.activeWave.lastBal;
+    const cap = Math.max(totalLots, stats.activeWave.maxLots || 0) * 100 * 15 + 20;
+    if (dB > 0.3 && dB <= cap) stepClosed = true;
+    else stats.activeWave.lastBal = balVal; // 入金或余额下降(亏损平仓) 只重设基准
+  }
+  if (!hasOpenPos || stepClosed) {
     // 所有的持仓已经全部平仓！网格彻底完结/平仓解套
     if (stats.activeWave && stats.activeWave.peakDd >= 30) {
       const doneWave = {
@@ -2442,13 +2450,15 @@ function updateMt4StatsAndHistory(prevState, snap) {  const {
       }
     }
     enrichTierRecoveryStats(stats);
-  } else {
-    // 仍在持仓中（网格尚未完结）
+  }
+  if (hasOpenPos) {
+    // 仍在持仓中（当前余额阶梯尚未完结）
     if (!stats.activeWave) {
       // 开仓：开启新一轮网格战役
       stats.activeWave = {
         id: 'w_' + nowSec,
         startTs: nowSec,
+        lastBal: balVal,
         peakTs: nowSec,
         peakDd: ddUsd,
         peakDdPct: ddPct,
@@ -2464,6 +2474,7 @@ function updateMt4StatsAndHistory(prevState, snap) {  const {
       };
     } else {
       const w = stats.activeWave;
+      if (typeof w.lastBal !== 'number') w.lastBal = balVal;
       if (ddUsd >= w.peakDd) {
         w.peakDd = ddUsd;
         w.peakDdPct = ddPct;
