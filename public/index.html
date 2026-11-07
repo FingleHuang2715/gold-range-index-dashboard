@@ -56,7 +56,74 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
   aside.sidenav a:hover,aside.sidenav a.active{background:var(--card2);border-color:#2c364b;color:#fff}
   main{padding:18px 22px;display:grid;gap:16px;min-width:0}
   @media(max-width:1160px){header{flex-wrap:wrap;gap:8px}header .btns{flex-wrap:wrap}}
-  @media(max-width:960px){.layout{grid-template-columns:1fr}aside.sidenav{position:static;height:auto;flex-direction:row;flex-wrap:wrap;border-right:none;border-bottom:1px solid var(--bd)}.sidenav .ng{width:100%}header{flex-wrap:wrap}}
+  @media(max-width:960px){
+    .layout{grid-template-columns:1fr}
+    aside.sidenav{
+      position:sticky;
+      top:0;
+      z-index:90;
+      height:auto;
+      max-height:46px;
+      flex-direction:row;
+      flex-wrap:nowrap;
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+      border-right:none;
+      border-bottom:1px solid var(--bd);
+      background:#0c1017;
+      padding:6px 8px;
+      gap:6px;
+      scrollbar-width:none;
+    }
+    aside.sidenav::-webkit-scrollbar{display:none}
+    aside.sidenav .ng{display:none}
+    aside.sidenav a{
+      flex-shrink:0;
+      padding:4px 10px;
+      font-size:12px;
+      border-radius:99px;
+      background:#161d2a;
+      border:1px solid #2b374c;
+      white-space:nowrap;
+    }
+    header{flex-wrap:wrap}
+  }
+  @media(max-width:768px){
+    body{overflow-x:hidden;width:100%}
+    header{padding:8px 10px;gap:6px}
+    .header-row{flex-direction:column;align-items:flex-start;gap:6px}
+    .header-row-top{flex-direction:column;align-items:flex-start;gap:6px}
+    header h1{font-size:16px;line-height:1.2}
+    .world-clocks{display:grid;grid-template-columns:repeat(2,1fr);gap:4px;width:100%}
+    .clk-item{font-size:11px;padding:3px 6px}
+    .header-row-bot{flex-direction:column;align-items:stretch;gap:8px}
+    .header-row-bot .btns{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-start}
+    .header-row-bot .btns button,.header-row-bot .btns .header-dropdown summary{font-size:11px;padding:3px 8px;height:28px}
+    main{padding:10px 8px;gap:12px}
+    .card{padding:12px 10px;border-radius:10px}
+    .screen-card{min-height:auto;padding:12px 10px}
+    .big-svg{height:460px;min-height:360px}
+    .hero-grid{grid-template-columns:1fr;gap:10px}
+    .hero-val{font-size:28px}
+    .vgrid,.grid3,.fcgrid,.tfidx-grid,.gauges,.anom-grid{grid-template-columns:1fr;gap:10px}
+    .meta-strip{gap:6px}
+    .mchip{padding:3px 8px;font-size:11.5px}
+    table{font-size:11.5px}
+    th,td{padding:5px 4px}
+    div[style*="overflow-x:auto"]{
+      -webkit-overflow-scrolling:touch;
+      width:100%;
+      max-width:100%;
+    }
+  }
+  @media(max-width:480px){
+    header h1{font-size:14.5px}
+    .hero-val{font-size:25px}
+    .world-clocks{grid-template-columns:repeat(2,1fr);gap:3px}
+    .clk-item{font-size:10px;padding:2px 4px}
+    .big-svg{height:420px;min-height:340px}
+    .mchip{font-size:11px;padding:2px 6px}
+  }
   section[id],div[id^="ind-"]{scroll-margin-top:72px}
   .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;overflow:hidden;min-width:0}
   .card h2{margin:0 0 12px;font-size:15px;color:#f1f5f9;font-weight:600;word-break:break-word;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -6119,7 +6186,8 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   const curMar = Number(mt4.margin) || 0;
   const pkMaxMar = (stats && stats.peaks && stats.peaks.maxMargin && stats.peaks.maxMargin.val) || curMar;
   const chartStyle = MT4_CHART_STATE.chartStyle || 'candle'; // 'candle' | 'line' | 'both'
-  const candles = aggregateMt4Candles(arr, Math.min(50, Math.max(18, Math.round(cw / 24))));
+  // 蜡烛密集度大幅提升：根据宽度紧凑排列 60~180 根精致细腻蜡烛，一览无余
+  const candles = aggregateMt4Candles(arr, Math.min(180, Math.max(60, Math.round(cw / 6.8))));
 
   // 1) 上面板 Y 轴：严格聚焦当前视窗 (arr) 的真实局部极值，绝不引入全局 initBal 造成尺度严重压缩失衡！
   let bMin = Infinity, bMax = -Infinity;
@@ -6224,7 +6292,7 @@ function buildMt4AccountChartSvg(hist, mt4, mt4Dec, initBal, stats, mode) {
   // 蜡烛K线渲染
   let candleSvg = '';
   if (chartStyle === 'candle' || chartStyle === 'both') {
-    const bw = Math.max(4, Math.min(18, (cw / Math.max(10, candles.length)) * 0.65));
+    const bw = Math.max(2.2, Math.min(8.5, (cw / Math.max(10, candles.length)) * 0.72));
     candleSvg = candles.map((c) => {
       const cx = (L + (c.midIdx / Math.max(1, n - 1)) * cw).toFixed(1);
       const yH = yTop(c.h).toFixed(1);
@@ -6444,19 +6512,8 @@ window.onMt4ChartTouchEnd = function() {
 };
 
 window.onMt4ChartWheel = function(ev) {
-  const cfg = MT4_CHART_STATE.pts;
-  if (!cfg) return;
-  ev.preventDefault();
-  const delta = ev.deltaY !== 0 ? ev.deltaY : ev.deltaX;
-  if (Math.abs(delta) < 2) return;
-  if (ev.shiftKey) {
-    // 按住 Shift 滚轮水平平移
-    const step = delta > 0 ? 15 : -15;
-    window.panMt4Chart(step);
-  } else {
-    // 鼠标滚轮缩放：向上滚动(delta < 0)放大，向下滚动(delta > 0)缩小展现更长时间段数据
-    window.zoomMt4Chart(delta < 0 ? 1 : -1);
-  }
+  // 取消拦截鼠标滚轮缩放：各种周期直接一屏全显，滚轮顺畅自然滚动页面
+  return;
 };
 
 window.onMt4ChartHover = function(ev) {
@@ -8235,17 +8292,10 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
 
   // 窗口切片逻辑：支持放大/缩小与股票K线式拖拽平移
   // 默认 windowSize 为 null 时展现全部数据 (在同一屏幕看全当前周期的更长跨度数据)
-  let wSize = MT4_CHART_STATE.windowSize || totalPts;
-  if (wSize > totalPts) wSize = totalPts;
-  if (wSize < 20) wSize = Math.min(totalPts, 20);
-  MT4_CHART_STATE.windowSize = wSize;
-
-  const maxOffset = Math.max(0, totalPts - wSize);
-  let offset = Math.max(0, Math.min(maxOffset, MT4_CHART_STATE.panOffset || 0));
-  MT4_CHART_STATE.panOffset = offset;
-  const startIdx = Math.max(0, totalPts - wSize - offset);
-  const endIdx = totalPts - offset;
-  const visibleArr = fullData.slice(startIdx, endIdx);
+  MT4_CHART_STATE.panOffset = 0;
+  MT4_CHART_STATE.windowSize = totalPts;
+  // 各种周期均一屏幕完整展示全部点，无需切片与平移
+  const visibleArr = fullData;
 
   const chartSvg = buildMt4AccountChartSvg(visibleArr, mt4, mt4Dec, initBal, stats, tf);
 
@@ -8569,23 +8619,11 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
         <button class="sm ${(MT4_CHART_STATE.chartStyle || 'candle') === 'both' ? 'on' : ''}" onclick="setMt4ChartStyle('both')" style="${(MT4_CHART_STATE.chartStyle || 'candle') === 'both' ? 'border-color:#38bdf8;color:#38bdf8;font-weight:800;' : ''}">✨ 蜡烛+曲线融合</button>
       </div>
 
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <!-- 放大/缩小与全景控制器 -->
-        <span style="font-weight:800;font-size:12px;color:var(--gold)">🔍 缩放:</span>
-        <button class="sm" onclick="zoomMt4Chart(1)" title="放大：减少同屏点数，查看更精细波动细节" style="font-weight:700">🔍+ 放大</button>
-        <button class="sm" onclick="zoomMt4Chart(-1)" title="缩小：增加同屏点数，在同一屏幕展现更长时间段数据" style="font-weight:700">🔍- 缩小 (看更长)</button>
-        <button class="sm ${wSize >= totalPts ? 'on' : ''}" onclick="fitAllMt4Chart()" title="一屏全景：100% 完整展示当前周期的全部数据" style="${wSize >= totalPts ? 'border-color:var(--gold);color:var(--gold);font-weight:800;' : ''}">🌐 一屏看全</button>
-
-        <span style="border-left:1px solid #334155;height:18px;margin:0 3px"></span>
-        <!-- 左右平移与复位控制器 -->
-        <button class="sm" onclick="panMt4Chart(25)" title="向左平移查看更早历史">◀ 往左移</button>
-        <button class="sm" onclick="panMt4Chart(-25)" title="向右平移查看最新数据">往右移 ▶</button>
-        <button class="sm ${offset === 0 ? '' : 'pri'}" onclick="resetMt4ChartPan()" title="复位到最新数据">⏮ 回到最新</button>
-
-        <span class="xs" style="color:#94a3b8;margin-left:4px">
-          ${totalPts > 0 ? `同屏: <b>${visibleArr.length}</b>/${totalPts}点 (${Math.round((visibleArr.length / Math.max(1, totalPts)) * 100)}% · <b>${fmtSecTime(visibleArr[0] && visibleArr[0].t)}</b> ~ <b>${fmtSecTime(visibleArr[visibleArr.length - 1] && visibleArr[visibleArr.length - 1].t)}</b>${offset > 0 ? ` · 回溯${offset}点` : ' · 实时'})` : '暂无数据'}
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="pill RANGE" style="font-size:11.5px;font-weight:800">⚡ 一屏全览 · 密集K线</span>
+        <span class="xs" style="color:#94a3b8">
+          ${totalPts > 0 ? `同屏展示全部 <b>${visibleArr.length}</b> 个时序样本 (<b>${fmtSecTime(visibleArr[0] && visibleArr[0].t)}</b> ~ <b>${fmtSecTime(visibleArr[visibleArr.length - 1] && visibleArr[visibleArr.length - 1].t)}</b>)` : '暂无数据'}
         </span>
-        <span class="xs" style="color:var(--gold);opacity:.85" title="滚轮缩放时间跨度，左键拖拽自由平移">💡 滚轮直接缩放 · 拖拽自由平移</span>
       </div>
     </div>
 
