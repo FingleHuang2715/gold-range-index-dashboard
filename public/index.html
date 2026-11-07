@@ -215,6 +215,40 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
   }
   .flash-num { animation: numFlashBg 4.5s ease-out; }
   #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--green);color:#04170f;padding:10px 20px;border-radius:8px;display:none;font-weight:600;z-index:100}
+
+  /* 全站精简版与完整注释版切换系统 */
+  .exp-tip-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    color: var(--mut);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--bd);
+    border-radius: 4px;
+    padding: 1px 7px;
+    cursor: help;
+    vertical-align: middle;
+    transition: all .15s;
+    user-select: none;
+  }
+  .exp-tip-trigger:hover {
+    color: var(--gold);
+    border-color: rgba(234,179,8,0.5);
+    background: rgba(234,179,8,0.12);
+  }
+  /* 默认精简模式：隐藏大段铺张的说明文字，界面极致清爽 */
+  html.mode-compact .exp-note, body.mode-compact .exp-note {
+    display: none !important;
+  }
+  /* 完整模式：展开所有大段文字，隐藏悬停小徽标 */
+  html.mode-full .exp-note, body.mode-full .exp-note {
+    display: block !important;
+  }
+  html.mode-full .compact-only-badge, body.mode-full .compact-only-badge {
+    display: none !important;
+  }
+
 </style>
 </head>
 <body>
@@ -276,6 +310,7 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
         </div>
       </details>
 
+      <button id="btnUiModeToggle" onclick="toggleUiDetailMode()" style="border-color:var(--gold);color:var(--gold);font-weight:700" title="切换精简清爽版 / 完整详细注释版">🔍 界面: 精简版</button>
       <button id="btnMt4Guide" onclick="toggleMt4Guide()" style="border-color:rgba(56,189,248,0.5);color:#38bdf8;font-weight:700" title="点击打开 MT4 实盘数据同步中心">🔌 MT4同步</button>
       <button id="btnEaParamGuide" onclick="if(window.toggleEaParamGuide)toggleEaParamGuide(true);document.getElementById('eaParamGuideSec').scrollIntoView({behavior:'smooth'})" style="border-color:rgba(52,211,153,0.6);color:#34d399;font-weight:700" title="查看 XAUUSD M1 马丁策略震荡加剧调参指南与优化配置">⚙️ 调参指南</button>
       <button id="btnFast" title="立即极速刷新 1M~4H 实时行情与震荡指数">⚡ 刷新</button>
@@ -851,6 +886,39 @@ const lk = (u, t) => '<a class="num" href="' + u + '" target="_blank" rel="noope
 const $ = (id) => document.getElementById(id);
 const fmtBJ = (ts) => new Date(ts * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(/\//g, '-');
 const f2 = (v) => v == null || isNaN(v) ? '-' : Number(v).toFixed(2);
+
+// ========== 界面纯净精简版 vs 完整注释版全局切换引擎 ==========
+window.UI_DETAIL_MODE = localStorage.getItem('gold_ui_detail_mode') || 'compact';
+
+window.initUiDetailMode = function() {
+  const mode = window.UI_DETAIL_MODE || 'compact';
+  document.body.classList.remove('mode-compact', 'mode-full');
+  document.body.classList.add(mode === 'full' ? 'mode-full' : 'mode-compact');
+  const btn = document.getElementById('btnUiModeToggle');
+  if (btn) {
+    if (mode === 'full') {
+      btn.innerHTML = '📖 界面: 完整版';
+      btn.style.borderColor = '#38bdf8';
+      btn.style.color = '#38bdf8';
+      btn.title = '当前为完整版（显示所有详细文字与注释），点击切换回精简版';
+    } else {
+      btn.innerHTML = '🔍 界面: 精简版';
+      btn.style.borderColor = 'var(--gold)';
+      btn.style.color = 'var(--gold)';
+      btn.title = '当前为精简版（已收起大段冗长注释，鼠标悬停看说明），点击展开全部显示';
+    }
+  }
+};
+
+window.toggleUiDetailMode = function() {
+  const cur = window.UI_DETAIL_MODE || 'compact';
+  const next = cur === 'compact' ? 'full' : 'compact';
+  window.UI_DETAIL_MODE = next;
+  try { localStorage.setItem('gold_ui_detail_mode', next); } catch(e) {}
+  window.initUiDetailMode();
+  toast(next === 'full' ? '📖 已切换为【完整专业版】：显示全站详细注释与原理解析' : '🔍 已切换为【极简清爽版】：精简界面，注释改为悬停提示');
+};
+
 const toast = (m) => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 1800); };
 
 // ========== 常用世界时区时钟 (北京/伦敦/纽约/东京) 每秒精准跳动 (含日期与GMT提示) ==========
@@ -1938,7 +2006,7 @@ function gauge(g, v, apiUrl, sub) {
   const ticks = g.zones.slice(0, -1).map((z) => `<span style="left:${z[0] / g.max * 100}%">${z[0]}</span>`).join('');
   const title = g.url ? `<a href="${g.url}" target="_blank" rel="noopener">${g.name}</a>` : g.name;
   return `<div class="${cardCls}" title="${g.tip || ''}"><div class="gh"><span>${title}</span><span><b style="color:#fff;margin-right:4px">${lk(apiUrl, v)}</b><span class="${pillCls}">${zname}</span></span></div>
-    <div class="bar">${segs}<div class="mk" style="left:${pos}%"></div></div><div class="ticks">${ticks}</div>${sub ? `<div class="mut sm" style="margin-top:2px;font-size:11.5px">${sub}</div>` : ''}</div>`;
+    <div class="bar">${segs}<div class="mk" style="left:${pos}%"></div></div><div class="ticks">${ticks}</div>${sub ? `<div class="mut sm exp-note" style="margin-top:2px;font-size:11.5px">${sub}</div>` : ''}</div>`;
 }
 
 const IDX_ZONES = [[30, R_, '强单边'], [45, R_, '偏单边'], [55, Y_, '过渡'], [70, G_, '偏震荡'], [100, G_, '强震荡']];
@@ -7022,13 +7090,13 @@ function buildMt4ForecastSectionHtml(stats, mt4Dec, passedHistoryLong, mt4Obj) {
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <h3 style="margin:0;font-size:15px;color:var(--gold)">🔮 AI 浮亏前瞻预测走势与历史准确率回测看板 (Forward Risk Forecast &amp; Verification)</h3>
+        <h3 style="margin:0;font-size:15px;color:var(--gold)">🔮 AI 浮亏前瞻预测走势与历史准确率回测看板</h3> <span class="exp-tip-trigger compact-only-badge" title="基于当前持仓净敞口、EA网格加仓链条演进与实时黄金 ATR 极值波动率 (MAE) 滚动严密推演">ℹ️ 模型说明</span>
         <span class="pill RANGE">🎯 15M防线命中率 ${m.acc15M || 98.2}% (${m.hit15M || 163}/${m.total15M || 166})</span>
         <span class="pill MIXED">🕒 1H防线命中率 ${m.acc1H || 96.4}% (${m.hit1H || 160}/${m.total1H || 166})</span>
         <span class="pill NEUT">🛡️ 平均防守安全垫 +$${m.avgSafetyMargin || 280}</span>
         <span class="pill" style="background:rgba(99,102,241,0.22);color:#a5b4fc;border:1px solid rgba(99,102,241,0.6)">🤖 自适应偏离自修正: -${m.biasCorrectionPct || 18}% (AI动态自学习修正下一次预测)</span>
       </div>
-      <span class="xs mut">基于当前持仓净敞口、EA网格加仓链条演进与实时黄金 ATR 极值波动率 (MAE) 滚动严密推演</span>
+      <span class="xs mut exp-note">基于当前持仓净敞口、EA网格加仓链条演进与实时黄金 ATR 极值波动率 (MAE) 滚动严密推演</span>
     </div>
 
     <!-- 第一排：前瞻预测与准确率 4 大指标卡片 -->
@@ -7223,12 +7291,12 @@ function buildMt4ParetoFibonacciChartHtml(tiers, ea, curBal, stats, pk) {
   return `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <h3 style="margin:0;font-size:15px;color:var(--gold)">📐 浮亏阶梯发生频次分布 · 帕累托二八定律 &amp; 斐波那契黄金分割本金测算看板</h3>
+        <h3 style="margin:0;font-size:15px;color:var(--gold)">📐 浮亏频次分布 · 二八定律 &amp; 斐波那契本金测算看板</h3> <span class="exp-tip-trigger compact-only-badge" title="统计实盘波段突破规律：利用二八定律与黄金分割数理模型，精确测算覆盖大多数行情所需的本金配置">ℹ️ 测算说明</span>
         <span class="pill RANGE">🟠 二八定律 80% 线: 浮亏 ≤ $300 (建议 $750)</span>
         <span class="pill MIXED">🟡 黄金分割 61.8% 线: 浮亏 ≤ $160 (建议 $450)</span>
         <span class="pill TREND">🛡️ 95% 极值防线: 浮亏 ≤ $600 (建议 $1,350)</span>
       </div>
-      <span class="xs mut">统计 ${totalWaves} 次实盘波段突破规律：利用二八定律与黄金分割数理模型，精确测算覆盖大多数行情所需的本金配置</span>
+      <span class="xs mut exp-note">统计 ${totalWaves} 次实盘波段突破规律：利用二八定律与黄金分割数理模型，精确测算覆盖大多数行情所需的本金配置</span>
     </div>
 
     <!-- 第一排：二八定律与黄金分割 4 档科学本金配置推荐决策卡片 -->
@@ -7402,7 +7470,7 @@ function buildMt4TradeCostSectionHtml(historyLong, mt4) {
   const inp = (id, v, fn, step) => `<input type="number" min="0" step="${step}" value="${v}" onchange="${fn}(this.value)" style="width:64px;background:#0f172a;border:1px solid #475569;color:#fbbf24;font-weight:800;border-radius:4px;padding:2px 6px;text-align:center" />`;
   return `<div id="mt4TradeCostSec" style="margin-top:12px;background:#0d1118;border:1px solid var(--bd);border-radius:10px;padding:12px 14px">
     <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-      <b style="color:#fff;font-size:13.5px">💸 交易手数 · 手续费 · 点差损耗统计</b>
+      <b style="color:#fff;font-size:13.5px">💸 交易手数 · 手续费 · 点差损耗统计</b> <span class="exp-tip-trigger compact-only-badge" title="账面获利按 15 分钟样本中余额上升估算，点差预估为参考性质">ℹ️ 统计说明</span>
       <div style="display:flex;gap:4px;flex-wrap:wrap">${btn('TODAY', '今日')}${btn('24H', '近24小时')}${btn('3D', '近3天')}${btn('7D', '近7天')}${btn('ALL', '全部历史')}</div>
     </div>
     <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:12px;color:#cbd5e1">
@@ -7418,7 +7486,7 @@ function buildMt4TradeCostSectionHtml(historyLong, mt4) {
       ${card('净利润(扣费后)', (net >= 0 ? '$' : '-$') + Math.abs(net).toFixed(2), net >= 0 ? '#34d399' : '#fb7185')}
       ${card('利润留存率 · 每手净利', keep.toFixed(1) + '% · $' + perLot.toFixed(2))}
     </div>
-    <div class="xs mut" style="margin-top:6px">说明：账面获利按 15 分钟样本中余额上升估算，手数按持仓手数下降估算；点差若已体现在成交价中，则"点差预估扣除"为参考性质，用于比较不同交易所成本。</div>
+    <div class="xs mut exp-note" style="margin-top:6px">说明：账面获利按 15 分钟样本中余额上升估算，手数按持仓手数下降估算；点差若已体现在成交价中，则"点差预估扣除"为参考性质，用于比较不同交易所成本。</div>
   </div>`;
 }
 
@@ -7753,7 +7821,7 @@ function buildMt4HourHeatmapCore(stats, mt4Dec, passedHistoryLong, mt4Obj) {
     : '<span style="color:#34d399;font-weight:800">✅ 现在是历史【' + curLv.t + '】时段(' + fmtRange(bjNowH) + ')</span>';
 
   return '<div id="mt4HeatSec" style="margin-top:12px;background:linear-gradient(135deg,rgba(244,63,94,0.08),rgba(15,20,30,0.95));border:1.5px solid rgba(244,63,94,0.4);border-radius:10px;padding:11px 13px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><b style="color:#fff;font-size:13.5px">🕒 浮亏高危时段热力表 (北京时间 24 小时 × 浮亏阶梯 · 阶梯覆盖至$4000 · 支持日均频次)</b><span class="xs">' + curMsg + '</span></div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px"><b style="color:#fff;font-size:13.5px">🕒 浮亏高危时段热力表 (24小时 × 浮亏阶梯)</b> <span class="exp-tip-trigger compact-only-badge" title="收益÷浮亏比=平仓获利÷历史最大浮亏；数据按持仓期间采样累计，超过该阶梯即计1次">ℹ️ 说明</span><span class="xs">' + curMsg + '</span></div>'
     + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;background:rgba(15,23,42,0.7);padding:6px 10px;border-radius:8px;border:1px solid rgba(244,63,94,0.25)">'
     + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
     + '<span style="font-size:12px;font-weight:700;color:var(--gold)">🗓️ 时段范围:</span>'
@@ -7776,8 +7844,8 @@ function buildMt4HourHeatmapCore(stats, mt4Dec, passedHistoryLong, mt4Obj) {
     + '</div>'
     + '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr><th style="text-align:left;padding:3px 8px;color:#94a3b8;font-size:11px">阶梯 \\ 时(北京)</th>' + head + '</tr></thead><tbody>' + tierRows + ddRow + marRow + monRow + lvRow + effRows + '</tbody></table></div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:9px">' + sessCards + '</div>'
-    + '<div class="xs mut" style="margin-top:6px">底部「时段效益」：收益÷浮亏比 = 该小时累计平仓获利 ÷ 该小时历史最大浮亏，红(低效高危)→绿(高效)，⭐⭐⭐≥1.5 · ⭐⭐≥0.5 · ⭐≥0.15 · ⛔更低；入金已自动剔除，随上方日期范围联动。</div>'
-    + '<div class="xs mut" style="margin-top:6px">说明：数据以持仓期间 15 分钟与每 5 秒采样累计；超过该阶梯即计入 1 次；可自由切换「累计总次数」与「日均频次 (除以样本天数)」。支持至 $4000 极端深套阶梯，点击「自定义日期」可自由弹出窗口挑选历史天数。</div>'
+    + '<div class="xs mut exp-note" style="margin-top:6px">底部「时段效益」：收益÷浮亏比 = 该小时累计平仓获利 ÷ 该小时历史最大浮亏，红(低效高危)→绿(高效)，⭐⭐⭐≥1.5 · ⭐⭐≥0.5 · ⭐≥0.15 · ⛔更低；入金已自动剔除，随上方日期范围联动。</div>'
+    + '<div class="xs mut exp-note" style="margin-top:6px">说明：数据以持仓期间 15 分钟与每 5 秒采样累计；超过该阶梯即计入 1 次；可自由切换「累计总次数」与「日均频次 (除以样本天数)」。支持至 $4000 极端深套阶梯，点击「自定义日期」可自由弹出窗口挑选历史天数。</div>'
     + '</div>';
 }
 
@@ -7951,7 +8019,7 @@ function buildMt4DailyDateHeatmap(stats, mt4Dec, passedHistoryLong, mt4Obj) {
 
   return '<div id="mt4DailyHeatSec" style="margin-top:12px;background:linear-gradient(135deg,rgba(56,189,248,0.07),rgba(15,20,30,0.95));border:1.5px solid rgba(56,189,248,0.35);border-radius:10px;padding:11px 13px">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">'
-    + '<div><b style="color:#fff;font-size:13.5px">📅 每日浮亏阶梯热力表 (横轴=日期 · 纵轴=浮亏金额阶梯 $50~$4000 · 共 ' + days.length + ' 天)</b><span class="xs mut" style="margin-left:8px">与上方「时段范围」筛选同步 · 悬停单元格看次数与时长</span></div>'
+    + '<div><b style="color:#fff;font-size:13.5px">📅 每日浮亏阶梯热力表</b> <span class="exp-tip-trigger compact-only-badge" title="横轴为日期，纵轴为浮亏阶梯，右上角可一键切换发生次数或停留时长，悬停看详情">ℹ️ 说明</span><span class="xs mut" style="margin-left:8px">与上方「时段范围」筛选同步 · 悬停单元格看次数与时长</span></div>'
     + '<div style="display:flex;align-items:center;gap:6px">'
     + '<span style="font-size:11.5px;color:#cbd5e1">单元格显示:</span>'
     + '<div style="display:flex;background:rgba(0,0,0,0.4);border-radius:6px;padding:2px;border:1px solid rgba(255,255,255,0.1)">'
@@ -7959,7 +8027,7 @@ function buildMt4DailyDateHeatmap(stats, mt4Dec, passedHistoryLong, mt4Obj) {
     + '<button class="sm ' + (mode === 'dur' ? 'on' : '') + '" onclick="setDailyHeatMode(\'dur\')" style="font-size:11px;padding:2px 9px">⏱️ 停留时长</button>'
     + '</div></div></div>'
     + '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr><th style="text-align:left;padding:3px 8px;color:#94a3b8;font-size:11px;white-space:nowrap">阶梯 \\ 日期(北京)</th>' + head + '</tr></thead><tbody>' + tierRows + ddRow + marRow + profRow + ratioRow + '</tbody></table></div>'
-    + '<div class="xs mut" style="margin-top:6px">说明：纵轴为浮亏阶梯 ($50 ~ $4000)，横轴为北京日期；右上角可一键切换显示每天到达各阶梯的「发生次数」或「停留时长」(m=分钟, h=小时)，鼠标悬停任意格子可同时查看次数与精确时长。底部附带当日最大浮亏、最高预付款、平仓获利(已剔除入金)与当日收益÷浮亏比。</div>'
+    + '<div class="xs mut exp-note" style="margin-top:6px">说明：纵轴为浮亏阶梯 ($50 ~ $4000)，横轴为北京日期；右上角可一键切换显示每天到达各阶梯的「发生次数」或「停留时长」(m=分钟, h=小时)，鼠标悬停任意格子可同时查看次数与精确时长。底部附带当日最大浮亏、最高预付款、平仓获利(已剔除入金)与当日收益÷浮亏比。</div>'
     + '</div>';
 }
 
@@ -8653,9 +8721,10 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <b style="color:var(--gold);font-size:14px">🪜 账户浮亏分阶段极值解套时间与推演表 ($50 ~ $4000)</b>
-          <span class="pill NEUT" style="font-size:11px">⏱️ 专属极值区间归类：浮亏达到 50~100 仅计入该区间；若冲上 1000 则专属归入 1000 级，彻底避免前段重复虚高，真实呈现“浮亏越深解套越久”</span>
+          <span class="pill NEUT exp-note" style="font-size:11px">⏱️ 专属极值区间归类：浮亏达到 50~100 仅计入该区间；若冲上 1000 则专属归入 1000 级，彻底避免前段重复虚高，真实呈现“浮亏越深解套越久”</span>
+          <span class="exp-tip-trigger compact-only-badge" title="专属极值区间归类：浮亏达到 50~100 仅计入该区间，冲上 1000 则专属归入 1000 级；避免重复虚高">ℹ️ 区间说明</span>
         </div>
-        <span class="xs mut">基于当前 EA 策略参数 (首单 0.02 / 倍率 1.38 / 封顶 1.32) 严格推演对应各层持仓与预付款</span>
+        <span class="xs mut exp-note">基于当前 EA 策略参数 (首单 0.02 / 倍率 1.38 / 封顶 1.32) 严格推演对应各层持仓与预付款</span>
       </div>
       <table class="tbl" style="font-size:12px;width:100%;border-collapse:collapse;line-height:1.4">
         <thead>
