@@ -2984,15 +2984,10 @@ async function handleApiData(req, res) {
     }
     let respData = data;
     if (fast && data && data.timeframes) {
-      // 深度瘦身：高频轮询只传输变动指标，剥离 112KB 的 sparks 和 64KB 的长文推特 items
+      // 瘦身优化：高频轮询保留大图所需的 model.sparks，仅对长文推特 items 适度裁剪，兼顾大图完整呈现与省流
       respData = { ...data };
-      if (respData.model && respData.model.sparks) {
-        respData.model = { ...respData.model };
-        delete respData.model.sparks;
-        delete respData.model.spark;
-      }
-      if (respData.trump && respData.trump.items) {
-        respData.trump = { ...respData.trump, items: [] };
+      if (respData.trump && respData.trump.items && respData.trump.items.length > 5) {
+        respData.trump = { ...respData.trump, items: respData.trump.items.slice(0, 5) };
       }
     }
     return sendResponse(req, res, 200, 'application/json; charset=utf-8', respData, {
