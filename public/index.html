@@ -8695,13 +8695,15 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
   `;
 }
 
-// 每 8 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (配合服务端 8s 内存缓存与页面后台休眠，极致节省 Redis 额度)
+// 每 10 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (配合服务端增量探测，未变动仅消耗45字节，彻底杜绝流量超限)
 setInterval(async () => {
-  if (!D || document.hidden) return; // 页面在后台时暂停轮询，节省 Redis 额度
+  if (!D || document.hidden) return; // 页面切到后台、锁屏时暂停轮询，不耗费流量
   try {
-    const r = await fetch('/api/mt4');
+    const since = (D.mt4 && D.mt4.ts) ? D.mt4.ts : 0;
+    const r = await fetch('/api/mt4?since=' + since);
     if (!r.ok) return;
     const j = await r.json();
+    if (j && j.unchanged) return; // 数据无变化，直接跳过，零开销
     if (j && j.connected && j.mt4) {
       const prevTs = D.mt4 ? D.mt4.ts : 0;
       if (j.mt4.ts !== prevTs) {
@@ -8713,7 +8715,7 @@ setInterval(async () => {
       render();
     }
   } catch (e) {}
-}, 8000);
+}, 10000);
 // 1) 打开网页瞬间(0ms)：立即从浏览器 localStorage 恢复上次缓存秒开渲染，杜绝白屏等待
 try {
   const cachedStr = localStorage.getItem(LOCAL_DATA_CACHE_KEY);
@@ -8728,8 +8730,17 @@ try {
 
 // 2) 紧接着立即请求 fast=1 极速实时接口(~0.4s)，秒级更新 1M/5M/15M/1H/4H 黄金价格与震荡指数、跨市场报价与特朗普快讯
 load(false, true);
-setInterval(() => load(false, true), 15 * 1000);       // 经常更新的数据(1M~4H/跨市场/特朗普)每 15 秒实时获取
-setInterval(() => load(false, false, true), 15 * 60 * 1000); // 低频数据(日线kNN/GVZ/金十周历)每 15 分钟后台静默同步
+// 经常更新的数据(1M~4H/跨市场/特朗普)每 20 秒实时获取；休市期间或切到后台自动休眠
+setInterval(() => {
+  if (document.hidden) return;
+  if (typeof isGoldMarketClosedMs === 'function' && isGoldMarketClosedMs(Date.now())) return; // 周末休市自动静默防偷跑
+  load(false, true);
+}, 20 * 1000);
+// 低频数据(日线kNN/GVZ/金十周历)每 20 分钟后台静默同步
+setInterval(() => {
+  if (document.hidden) return;
+  load(false, false, true);
+}, 20 * 60 * 1000);
 </script>
 </body>
 </html>

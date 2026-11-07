@@ -4,6 +4,36 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const zlib = require('zlib');
+
+function sendResponse(req, res, statusCode, contentType, body, extraHeaders = {}) {
+  const acceptEncoding = (req && req.headers && req.headers['accept-encoding']) || '';
+  const isBuffer = Buffer.isBuffer(body);
+  const buf = isBuffer ? body : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
+  const headers = {
+    'content-type': contentType,
+    ...extraHeaders
+  };
+
+  if (acceptEncoding.includes('gzip') && buf.length > 512) {
+    zlib.gzip(buf, (err, compressed) => {
+      if (err) {
+        headers['content-length'] = buf.length;
+        res.writeHead(statusCode, headers);
+        return res.end(buf);
+      }
+      headers['content-encoding'] = 'gzip';
+      headers['content-length'] = compressed.length;
+      res.writeHead(statusCode, headers);
+      res.end(compressed);
+    });
+  } else {
+    headers['content-length'] = buf.length;
+    res.writeHead(statusCode, headers);
+    res.end(buf);
+  }
+}
+
 
 const { knnModel, composite, indexSeries } = require('./model');
 const PORT = process.env.PORT || 3000;
@@ -2896,8 +2926,11 @@ async function handleApiMt4(req, res) {
         }, latestMt4State.historyLong || [], latestMt4State.history || []);
       }
     }
-    res.writeHead(200, corsHeaders);
-    return res.end(JSON.stringify({ ok: true, redisOk: !!(MT4_REDIS_URL && MT4_REDIS_TOKEN), connected: !!latestMt4State, mt4: latestMt4State }));
+    const since = Number(u.searchParams.get('since')) || 0;
+    if (since > 0 && latestMt4State && latestMt4State.ts && latestMt4State.ts === since) {
+      return sendResponse(req, res, 200, 'application/json; charset=utf-8', { ok: true, unchanged: true, ts: latestMt4State.ts }, corsHeaders);
+    }
+    return sendResponse(req, res, 200, 'application/json; charset=utf-8', { ok: true, redisOk: !!(MT4_REDIS_URL && MT4_REDIS_TOKEN), connected: !!latestMt4State, mt4: latestMt4State }, corsHeaders);
   } catch (e) {
     res.writeHead(500, corsHeaders);
     return res.end(JSON.stringify({ ok: false, error: e.message }));
@@ -2949,8 +2982,23 @@ async function handleApiData(req, res) {
       }
       data.mt4 = latestMt4State;
     }
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(JSON.stringify(data));
+    let respData = data;
+    if (fast && data && data.timeframes) {
+      // 深度瘦身：高频轮询只传输变动指标，剥离 112KB 的 sparks 和 64KB 的长文推特 items
+      respData = { ...data };
+      if (respData.model && respData.model.sparks) {
+        respData.model = { ...respData.model };
+        delete respData.model.sparks;
+        delete respData.model.spark;
+      }
+      if (respData.trump && respData.trump.items) {
+        respData.trump = { ...respData.trump, items: [] };
+      }
+    }
+    return sendResponse(req, res, 200, 'application/json; charset=utf-8', respData, {
+      'cache-control': 'no-store',
+      'access-control-allow-origin': '*'
+    });
   } catch (e) {
     res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify({ error: e.message }));
@@ -2972,15 +3020,12 @@ const appHandler = async (req, res) => {
     return handleApiData(req, res);
   }
   if (u.pathname === '/' || u.pathname === '/index.html') {
-    if (!process.env.VERCEL && fs.existsSync(INDEX_HTML_PATH)) {
-      try {
-        const diskHtml = await fs.promises.readFile(INDEX_HTML_PATH, 'utf8');
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
-        return res.end(diskHtml);
-      } catch (e) {}
-    }
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
-    return res.end(EMBEDDED_HTML);
+    const htmlContent = (!process.env.VERCEL && fs.existsSync(INDEX_HTML_PATH))
+      ? await fs.promises.readFile(INDEX_HTML_PATH, 'utf8').catch(() => EMBEDDED_HTML)
+      : EMBEDDED_HTML;
+    return sendResponse(req, res, 200, 'text/html; charset=utf-8', htmlContent, {
+      'cache-control': 'public, max-age=60, s-maxage=300'
+    });
   }
   const safeRel = path.normalize(u.pathname).replace(/^(\.\.[\\/])+/, '').replace(/^[/\\]+/, '');
   const file = path.join(__dirname, 'public', safeRel);
