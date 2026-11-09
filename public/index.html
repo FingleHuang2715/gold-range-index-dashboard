@@ -845,7 +845,7 @@ let EA_CFG = {
 };
 let TOL = Number(localStorage.getItem('gold_tol')) || 34.9; // 由净敞口公式 D = L / (N * 100) 推演出的抗单边跨度(美元)
 const SHOW_CANDLE = { '1M': true, '5M': true, '15M': true, '1H': true, '4H': true }; // 默认直接开启黄金K线蜡烛图+MT4震荡指标附图
-let KLINE_OSC_KEY = localStorage.getItem('gold_kline_osc') || 'cci'; // K线图下方MT4震荡指标附图当前选中项
+let KLINE_OSC_KEY = localStorage.getItem('gold_kline_osc_v2') || 'consensus'; // 默认直接展示「🌟 12指标全合一共振红绿灯(傻瓜模式)」
 const CHART_PTS = {};   // 缓存各周期大图的坐标与数据供十字准星使用
 window.OPEN_FOLDS = {}; // 持久化记录所有 <details> 展开状态，防止 15秒/3分钟数据刷新时自动合上
 window.SCROLL_POS = {}; // 持久化记录内部滚动容器的滚动条位置
@@ -2203,82 +2203,286 @@ window.setEntryChartTf = function(tf) {
 
 window.setKlineOsc = function(key) {
   KLINE_OSC_KEY = key;
-  try { localStorage.setItem('gold_kline_osc', key); } catch (e) {}
-  if (D) render();
+  try { localStorage.setItem('gold_kline_osc_v2', key); } catch (e) {}
+  if (D) {
+    render();
+    if (typeof recordAndRenderMScoreKline === 'function') {
+      recordAndRenderMScoreKline(D, D._lastMartingaleScore);
+    }
+  }
 };
 
+// 将 12 项复杂的 MT4 震荡指标自动翻译成「🟢安全震荡 / 🟡临界观察 / 🔴单边警报」+ 4字大白话结论
+function evalMt4Osc12(p, refAtr) {
+  if (!p) p = {};
+  const atr = Math.max(0.15, Number(p.atr ?? p.atrFast ?? refAtr ?? 1.5));
+  const baseAtr = Math.max(0.15, Number(refAtr || p.atrSlow || atr));
+  const items = [];
+  const pushItem = (key, shortName, full, valStr, state, human) => {
+    const icon = state === 'G' ? '🟢' : state === 'Y' ? '🟡' : '🔴';
+    const score = state === 'G' ? 100 : state === 'Y' ? 55 : 10;
+    items.push({ key, shortName, full, valStr, state, icon, human, score });
+  };
+
+  // 1) CCI(14) 商品通道指数
+  const cci = p.cci != null ? Number(p.cci) : 0;
+  const absCci = Math.abs(cci);
+  pushItem('cci', 'CCI通道', 'Commodity Channel Index(14) 商品通道指数', p.cci != null ? (cci >= 0 ? '+' + cci : String(cci)) : '-',
+    absCci <= 100 ? 'G' : absCci <= 160 ? 'Y' : 'R',
+    absCci <= 100 ? '通道内震荡' : absCci <= 160 ? '偏离均价' : (cci > 0 ? '突破急涨!' : '突破急跌!'));
+
+  // 2) Stochastic(14,3,3) KD随机指标
+  const stK = p.stochK != null ? Number(p.stochK) : 50;
+  const stD = p.stochD != null ? Number(p.stochD) : 50;
+  pushItem('stoch', 'KD随机', 'Stochastic Oscillator(14,3,3) 随机指标', p.stochK != null ? `${stK}/${stD}` : '-',
+    (stK >= 22 && stK <= 78) ? 'G' : (stK >= 14 && stK <= 86) ? 'Y' : 'R',
+    (stK >= 22 && stK <= 78) ? '区间摆动' : (stK >= 14 && stK <= 86) ? '逼近极值' : (stK > 86 ? '高位钝化!' : '低位钝化!'));
+
+  // 3) RSI(14) 相对强弱指数
+  const rsi = p.rsi != null ? Number(p.rsi) : 50;
+  pushItem('rsi', 'RSI强弱', 'Relative Strength Index(14) 相对强弱指数', p.rsi != null ? String(rsi) : '-',
+    (rsi >= 35 && rsi <= 65) ? 'G' : (rsi >= 28 && rsi <= 72) ? 'Y' : 'R',
+    (rsi >= 35 && rsi <= 65) ? '多空均衡' : (rsi >= 28 && rsi <= 72) ? '强弱偏斜' : (rsi > 72 ? '超买单边!' : '超卖单边!'));
+
+  // 4) Williams %R(14) 威廉指标
+  const wpr = p.wpr != null ? Number(p.wpr) : -50;
+  pushItem('wpr', '威廉%R', 'Williams Percent Range(14) 威廉超买超卖', p.wpr != null ? `${wpr}%` : '-',
+    (wpr >= -78 && wpr <= -22) ? 'G' : (wpr >= -86 && wpr <= -14) ? 'Y' : 'R',
+    (wpr >= -78 && wpr <= -22) ? '中枢拉锯' : (wpr >= -86 && wpr <= -14) ? '边缘试探' : (wpr > -14 ? '极度超买!' : '极度超卖!'));
+
+  // 5) DeMarker(14) 德马克指标
+  const dem = p.dem != null ? Number(p.dem) : 0.5;
+  pushItem('dem', 'DeM拐点', 'DeMarker(14) 高低点买盘耗竭指标', p.dem != null ? String(dem) : '-',
+    (dem >= 0.32 && dem <= 0.68) ? 'G' : (dem >= 0.22 && dem <= 0.78) ? 'Y' : 'R',
+    (dem >= 0.32 && dem <= 0.68) ? '高低平衡' : (dem >= 0.22 && dem <= 0.78) ? '动能偏斜' : (dem > 0.78 ? '冲高过热!' : '杀跌过猛!'));
+
+  // 6) RVI(10) 相对能量指数
+  const rvi = p.rvi != null ? Number(p.rvi) : 0;
+  const absRvi = Math.abs(rvi);
+  pushItem('rvi', 'RVI能量', 'Relative Vigor Index(10) 相对趋势活力', p.rvi != null ? `${rvi}/${p.rviSig ?? '-'}` : '-',
+    absRvi <= 0.20 ? 'G' : absRvi <= 0.32 ? 'Y' : 'R',
+    absRvi <= 0.20 ? '活力温和' : absRvi <= 0.32 ? '趋势蓄力' : '强趋势发散!');
+
+  // 7) OsMA(12,26,9) MACD柱差
+  const osma = p.osma != null ? Number(p.osma) : 0;
+  const osmaNorm = Math.abs(osma) / atr;
+  pushItem('osma', 'OsMA动能', 'Moving Average of Oscillator(12,26,9) MACD差值柱', p.osma != null ? (osma >= 0 ? '+' + osma : String(osma)) : '-',
+    osmaNorm <= 0.20 ? 'G' : osmaNorm <= 0.36 ? 'Y' : 'R',
+    osmaNorm <= 0.20 ? '柱体收敛' : osmaNorm <= 0.36 ? '动能抬头' : '单边加速!');
+
+  // 8) Momentum(14) 动量速率
+  const mom = p.mom != null ? Number(p.mom) : 100;
+  const momDev = Math.abs(mom - 100);
+  pushItem('mom', 'Mom动量', 'Momentum(14) 价格变化速率', p.mom != null ? String(mom) : '-',
+    momDev <= 0.28 ? 'G' : momDev <= 0.60 ? 'Y' : 'R',
+    momDev <= 0.28 ? '车速平缓' : momDev <= 0.60 ? '车速加快' : '高速冲刺!');
+
+  // 9) Force Index(13) 量价强力指数
+  const force = p.force != null ? Number(p.force) : (p.forceIdx != null ? Number(p.forceIdx) : 0);
+  const forceNorm = Math.abs(force) / Math.max(0.2, atr * 0.8);
+  pushItem('force', 'Force强力', 'Force Index(13) 量价买卖推动力', String(force),
+    forceNorm <= 0.55 ? 'G' : forceNorm <= 1.15 ? 'Y' : 'R',
+    forceNorm <= 0.55 ? '量价温和' : forceNorm <= 1.15 ? '资金异动' : '主力放量推盘!');
+
+  // 10) Bulls Power(13) 牛力震荡指标
+  const bulls = p.bulls != null ? Number(p.bulls) : (p.bullsPower != null ? Number(p.bullsPower) : 0);
+  const bears = p.bears != null ? Number(p.bears) : (p.bearsPower != null ? Number(p.bearsPower) : 0);
+  const bullsNorm = Math.abs(bulls) / atr;
+  const bullState = (bulls >= 0 && bears <= 0 && bullsNorm <= 1.15) ? 'G' : (bullsNorm <= 1.55 ? 'Y' : 'R');
+  pushItem('elder', 'Bulls牛力', 'Bulls Power(13) 买方多头力量', `${bulls >= 0 ? '+' : ''}${bulls}$`,
+    bullState,
+    bullState === 'G' ? '买力正常' : bullState === 'Y' ? '买盘偏强' : (bulls > 0 ? '逼空狂拉!' : '多头溃败!'));
+
+  // 11) Bears Power(13) 熊市力量指标
+  const bearsNorm = Math.abs(bears) / atr;
+  const bearState = (bears <= 0 && bulls >= 0 && bearsNorm <= 1.15) ? 'G' : (bearsNorm <= 1.55 ? 'Y' : 'R');
+  pushItem('elder', 'Bears熊力', 'Bears Power(13) 卖方空头压力', `${bears >= 0 ? '+' : ''}${bears}$`,
+    bearState,
+    bearState === 'G' ? '卖压正常' : bearState === 'Y' ? '卖压偏重' : (bears < 0 ? '恐慌砸盘!' : '空头踏空!'));
+
+  // 12) iATR(14) 平均真实波幅
+  const atrRatio = p.atrRatio != null ? Number(p.atrRatio) : (atr / baseAtr);
+  pushItem('atr', 'iATR波幅', 'Average True Range(14) 平均真实波幅', `$${f2(atr)}`,
+    atrRatio <= 1.08 ? 'G' : atrRatio <= 1.28 ? 'Y' : 'R',
+    atrRatio <= 1.08 ? '波幅温和' : atrRatio <= 1.28 ? '波幅放大' : '巨震扩张!');
+
+  const greenCnt = items.filter((x) => x.state === 'G').length;
+  const yellowCnt = items.filter((x) => x.state === 'Y').length;
+  const redCnt = items.filter((x) => x.state === 'R').length;
+  const score = Math.round(items.reduce((s, x) => s + x.score, 0) / items.length);
+  const redItems = items.filter((x) => x.state === 'R');
+  const yellowItems = items.filter((x) => x.state === 'Y');
+
+  let verdictTitle = '', verdictDesc = '', verdictCls = 'RANGE', verdictCol = '#34d399';
+  if (greenCnt >= 8 && redCnt <= 2) {
+    verdictTitle = `✅ 【傻瓜结论：放心做震荡】12项指标中有 ${greenCnt} 项亮绿灯 (共振安全度 ${score}分)`;
+    verdictDesc = redItems.length
+      ? `绝大多数指标确认多空拉锯均衡（仅 ${redItems.map((x) => x.shortName).join('、')} 轻微偏离），适合正常开启/持有马丁EA`
+      : `全部核心震荡指标均在安全通道内来回摆动，无单边破位迹象，属于标准收菜行情`;
+    verdictCls = 'RANGE';
+    verdictCol = '#34d399';
+  } else if (redCnt >= 5 || score < 46) {
+    verdictTitle = `🚨 【傻瓜结论：危险！多项指标报警单边】当前有 ${redCnt} 项亮红灯 / 仅 ${greenCnt} 项绿灯 (安全度 ${score}分)`;
+    verdictDesc = `报警指标点名：【${redItems.map((x) => `${x.shortName}(${x.human})`).join(' · ')}】— 市场正处于单边发散或剧烈冲击，切勿密集逆势加仓！`;
+    verdictCls = 'TREND';
+    verdictCol = '#fb7185';
+  } else {
+    verdictTitle = `⚠️ 【傻瓜结论：指标分歧 · 谨慎观望等回调】当前 ${greenCnt}绿 / ${yellowCnt}黄 / ${redCnt}红 (安全度 ${score}分)`;
+    const warnNames = [...redItems, ...yellowItems].slice(0, 4).map((x) => `${x.shortName}(${x.human})`).join('、');
+    verdictDesc = `部分指标出现偏离【${warnNames}】，建议拉大加仓间距或等红/黄灯重新转绿后再进场`;
+    verdictCls = 'MIXED';
+    verdictCol = '#fbbf24';
+  }
+
+  return { items, greenCnt, yellowCnt, redCnt, score, redItems, yellowItems, verdictTitle, verdictDesc, verdictCls, verdictCol };
+}
+
 const MT4_OSC_TABS = [
-  { key: 'cci',   label: 'CCI(14)',          full: 'Commodity Channel Index 商品通道指数 (±100震荡通道)', val: (t) => t.cci != null ? (t.cci >= 0 ? '+' + t.cci : t.cci) : '-' },
-  { key: 'stoch', label: 'KD随机(Stoch)',    full: 'Stochastic Oscillator(14,3,3) 随机震荡指标 (%K/%D)', val: (t) => t.stochK != null ? `${t.stochK}/${t.stochD}` : '-' },
-  { key: 'rsi',   label: 'RSI(14)',          full: 'Relative Strength Index 相对强弱指数 (30~70)',       val: (t) => t.rsi ?? '-' },
-  { key: 'wpr',   label: 'Williams %R',      full: 'Williams Percent Range(14) 威廉指标 (-20~-80)',      val: (t) => t.wpr != null ? `${t.wpr}%` : '-' },
-  { key: 'osma',  label: 'OsMA柱(12,26,9)',  full: 'Moving Average of Oscillator (MACD - Signal 柱状图)', val: (t) => t.osma != null ? (t.osma >= 0 ? '+' + t.osma : t.osma) : '-' },
-  { key: 'elder', label: 'Bulls/Bears牛熊',  full: 'Bulls Power(13) 牛力 & Bears Power(13) 熊市力量柱',   val: (t) => t.bullsPower != null ? `牛${t.bullsPower >= 0 ? '+' : ''}${t.bullsPower}/熊${t.bearsPower}` : '-' },
-  { key: 'dem',   label: 'DeMarker(14)',     full: 'DeMarker 德马克指标 (0.30~0.70震荡中枢)',             val: (t) => t.dem ?? '-' },
-  { key: 'rvi',   label: 'RVI能量(10)',      full: 'Relative Vigor Index 相对能量指数 (主线+信号线)',      val: (t) => t.rvi != null ? `${t.rvi}/${t.rviSig}` : '-' },
-  { key: 'mom',   label: 'Momentum(14)',     full: 'Momentum 动量指标 (100.0中轴)',                       val: (t) => t.mom ?? '-' },
-  { key: 'force', label: 'Force强力(13)',    full: 'Force Index 强力指数 (量价买卖力量)',                 val: (t) => t.forceIdx ?? '-' },
-  { key: 'atr',   label: 'iATR(14)',         full: 'Average True Range 平均真实波幅 ($)',                 val: (t) => t.atrFast != null ? `$${t.atrFast}` : '-' },
+  { key: 'consensus', label: '🌟 12指标全合一共振(傻瓜直看)', full: 'MT4 12项震荡指标【全合一共振红绿灯】 (绿柱≥65分=放心做 · 黄柱=观望 · 红柱<45分=防单边停EA)' },
+  { key: 'cci',   label: 'CCI通道',       full: 'Commodity Channel Index(14) 商品通道指数 (±100内绿灯震荡，突破±160红灯单边)' },
+  { key: 'stoch', label: 'KD随机',        full: 'Stochastic Oscillator(14,3,3) 随机震荡指标 (20~80区间摆动，>85/<15单边钝化)' },
+  { key: 'rsi',   label: 'RSI强弱',       full: 'Relative Strength Index(14) 相对强弱指数 (35~65多空平衡，>72/<28极端单边)' },
+  { key: 'wpr',   label: '威廉%R',        full: 'Williams Percent Range(14) 威廉指标 (-20~-80震荡，接近0或-100为极端超买超卖)' },
+  { key: 'osma',  label: 'OsMA动能柱',    full: 'Moving Average of Oscillator(12,26,9) MACD差值柱 (贴近0轴=震荡，柱体暴涨=单边爆发)' },
+  { key: 'elder', label: 'Bulls/Bears牛熊', full: 'Bulls Power(13) 牛力 & Bears Power(13) 熊市力量柱 (绿红交替互搏=震荡，同向碾压=单边)' },
+  { key: 'dem',   label: 'DeM拐点',       full: 'DeMarker(14) 德马克指标 (0.30~0.70震荡中枢，>0.78/<0.22单边耗竭)' },
+  { key: 'rvi',   label: 'RVI能量',       full: 'Relative Vigor Index(10) 相对能量指数 (贴近0轴=震荡温和，大幅发散=强趋势)' },
+  { key: 'mom',   label: 'Mom动量',       full: 'Momentum(14) 动量指标 (围绕100.0中轴=平缓震荡，远离100=单边加速冲刺)' },
+  { key: 'force', label: 'Force强力',     full: 'Force Index(13) 量价强力指数 (柱体温和=常规换手，巨柱=主力放量砸盘/拉升)' },
+  { key: 'atr',   label: 'iATR波幅',      full: 'Average True Range(14) 平均真实波幅 (低位平稳=窄幅好做，陡峭飙升=剧烈巨震)' },
 ];
 
-// 生成 K 线图上方的「MT4 12项自带震荡指标切换器 + 数据源状态条」
+// 生成 K 线图上方的「傻瓜式 12项MT4指标红绿灯投票总表 + 一句话大白话结论 + 附图切换栏」
 function buildOscToolbarHtml(tf, t) {
   if (!t) return '';
+  const diag = evalMt4Osc12(t, t.atrSlow || t.atrFast);
   const isFromMt4 = !!t.fromMt4Script;
   const srcBadge = isFromMt4
-    ? `<span class="pill RANGE" title="当前指标由您的 MT4 客户端 GoldDashboardSync v2.0 脚本调用 iATR/iCCI/iStochastic/iForce 等原生函数直接上传">🟢 数据源: MT4实盘脚本v2.0原生直传</span>`
-    : `<span class="pill MIXED" title="当前使用实时黄金K线同步计算；升级 MT4 脚本至 v2.0 即可直接由您的 MT4 客户端上传全部12项原生指标">🌐 数据源: 实时K线同步计算 (点右侧升级MT4脚本直传)</span>
+    ? `<span class="pill RANGE" title="当前指标由您的 MT4 客户端 GoldDashboardSync v2.0 脚本调用原生函数直接上传">🟢 MT4脚本v2.0直传</span>`
+    : `<span class="pill MIXED" title="当前使用实时黄金K线同步计算；升级 MT4 脚本至 v2.0 即可直接由您的 MT4 客户端上传全部12项原生指标">🌐 实时K线同步计算</span>
        <button class="sm" onclick="copyMt4ScriptCode('script')" style="padding:1px 7px;font-size:11px;border-color:#34d399;color:#34d399" title="复制包含12项MT4震荡指标上传代码的v2.0脚本">📋 复制MT4脚本v2.0</button>
-       <button class="sm" onclick="downloadMt4Script('script')" style="padding:1px 7px;font-size:11px;border-color:#38bdf8;color:#38bdf8" title="下载包含12项MT4震荡指标上传代码的v2.0脚本">📥 下载MT4脚本v2.0</button>`;
-  const tabsHtml = MT4_OSC_TABS.map((item) => {
-    const active = KLINE_OSC_KEY === item.key;
-    const vStr = item.val(t);
-    return `<button class="sm ${active ? 'on pri' : ''}" onclick="setKlineOsc('${item.key}')" style="padding:2px 8px;font-size:11.5px" title="点击在K线图下方切换显示【${item.full}】附图"><b>${item.label}</b> <span style="color:${active ? '#fff' : '#fbbf24'};font-family:monospace">${vStr}</span></button>`;
+       <button class="sm" onclick="downloadMt4Script('script')" style="padding:1px 7px;font-size:11px;border-color:#38bdf8;color:#38bdf8" title="下载包含12项MT4震荡指标上传代码的v2.0脚本">📥 下载v2.0</button>`;
+
+  const isCons = (KLINE_OSC_KEY || 'consensus') === 'consensus';
+  const consBtn = `<button class="sm ${isCons ? 'on pri' : ''}" onclick="setKlineOsc('consensus')" style="padding:3px 10px;font-size:12px;font-weight:800;border-width:1.5px;${isCons ? 'background:#059669;border-color:#34d399;color:#fff;' : 'border-color:#34d399;color:#34d399;'}" title="把12个指标融合成1张红绿灯附图，不用懂公式，看绿柱/红柱直接做决定！">🌟 12指标全合一共振图 (${diag.greenCnt}绿/${diag.redCnt}红·傻瓜直看)</button>`;
+
+  // 12项指标各自带 🟢/🟡/🔴 红绿灯 + 4字人话状态，点哪个就能单独看哪个的附图
+  const itemBtns = diag.items.map((it) => {
+    const active = KLINE_OSC_KEY === it.key;
+    const bdr = it.state === 'R' ? 'rgba(244,63,94,0.75)' : it.state === 'Y' ? 'rgba(245,158,11,0.6)' : 'rgba(51,65,85,0.85)';
+    const bg = active ? 'rgba(124,58,237,0.35)' : it.state === 'R' ? 'rgba(244,63,94,0.15)' : it.state === 'Y' ? 'rgba(245,158,11,0.10)' : 'rgba(15,23,42,0.8)';
+    const txtCol = it.state === 'R' ? '#fda4af' : it.state === 'Y' ? '#fde68a' : '#cbd5e1';
+    return `<button class="sm ${active ? 'on' : ''}" onclick="setKlineOsc('${it.key}')" style="padding:2px 7px;font-size:11.5px;border-color:${active ? '#a78bfa' : bdr};background:${bg};color:${txtCol}" title="${it.full} | 当前值: ${it.valStr} → 判定: ${it.icon}${it.human} (点击在下方单独查看该指标附图)">${it.icon}<b>${it.shortName}</b>:<span>${it.human}</span> <span style="opacity:0.75;font-family:monospace;font-size:10.5px">(${it.valStr})</span></button>`;
   }).join('');
-  return `<div style="background:rgba(15,23,42,0.92);border:1px solid #262d3b;border-radius:8px;padding:7px 10px;margin-bottom:8px">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px">
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <b style="color:var(--gold);font-size:12.5px">📊 [${tf} K线附图] MT4 12项自带震荡指标切换 (点击任意指标在K线下方展开附图):</b>
+
+  return `<div style="background:linear-gradient(135deg,rgba(15,23,42,0.96),rgba(12,17,28,0.96));border:1.5px solid ${diag.verdictCol}66;border-radius:10px;padding:9px 12px;margin-bottom:8px">
+    <!-- 第一排：傻瓜式红绿灯投票总表 + 一句话大白话结论 -->
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding-bottom:7px;margin-bottom:7px;border-bottom:1px dashed rgba(148,163,184,0.22)">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+        <span class="pill ${diag.verdictCls}" style="font-size:12.5px;padding:3px 10px;font-weight:900">🚦 [${tf}] 12指标投票：🟢 ${diag.greenCnt}绿 · 🟡 ${diag.yellowCnt}黄 · 🔴 ${diag.redCnt}红 (安全度 ${diag.score}分)</span>
+        <b style="color:${diag.verdictCol};font-size:13px">${diag.verdictTitle}</b>
+        <span class="xs" style="color:#cbd5e1">${diag.verdictDesc}</span>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${srcBadge}</div>
     </div>
-    <div style="display:flex;flex-wrap:wrap;gap:5px">${tabsHtml}</div>
+    <!-- 第二排：🌟全合一共振图按钮(默认) + 12项自带红绿灯与大白话翻译胶囊 -->
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px">
+      ${consBtn}
+      <span class="xs mut" style="margin:0 2px">| 单项红绿灯诊断(点击可切换附图):</span>
+      ${itemBtns}
+    </div>
   </div>`;
 }
 
-// 渲染 K 线图下方的「MT4 12项震荡指标子面板 SVG」
+// 渲染 K 线图下方的「MT4 12项震荡指标子面板 SVG」（默认直接展示 🌟12指标全合一共振红绿灯附图，不用懂任何公式）
 function renderOscSubPanelSvg(arr, oscTop, oscH, L, R, W, cw, xOf) {
   const n = arr.length;
   const oscBot = oscTop + oscH;
-  const key = KLINE_OSC_KEY || 'cci';
+  const key = KLINE_OSC_KEY || 'consensus';
   const tabInfo = MT4_OSC_TABS.find((x) => x.key === key) || MT4_OSC_TABS[0];
-  const bw = Math.max(2.2, Math.min(7.5, cw / n * 0.64));
+  const bw = Math.max(2.4, Math.min(7.8, cw / n * 0.66));
+
+  // 计算该周期的平均 ATR 供归一化判定
+  let sumAtr = 0, cntAtr = 0;
+  arr.forEach((p) => { if (p.atr != null && p.atr > 0) { sumAtr += p.atr; cntAtr++; } });
+  const avgAtr = cntAtr > 0 ? (sumAtr / cntAtr) : 1.5;
+
+  // ====== 默认模式：🌟 12指标全合一共振红绿灯附图 (傻瓜直看模式) ======
+  if (key === 'consensus') {
+    const scores = arr.map((p) => evalMt4Osc12(p, avgAtr));
+    // 3周期平滑曲线让走势更清晰
+    const smoothScores = scores.map((d, i) => {
+      const s0 = d.score;
+      const s1 = i > 0 ? scores[i - 1].score : s0;
+      const s2 = i > 1 ? scores[i - 2].score : s1;
+      return Math.round(s0 * 0.5 + s1 * 0.3 + s2 * 0.2);
+    });
+    const yOf = (v) => oscTop + (1 - clamp(v, 0, 100) / 100) * oscH;
+    const y65 = yOf(65), y45 = yOf(45);
+
+    const zonesBg = `
+      <rect x="${L}" y="${oscTop}" width="${cw}" height="${(y65 - oscTop).toFixed(1)}" fill="#10b981" opacity="0.11"/>
+      <rect x="${L}" y="${y65.toFixed(1)}" width="${cw}" height="${(y45 - y65).toFixed(1)}" fill="#f59e0b" opacity="0.07"/>
+      <rect x="${L}" y="${y45.toFixed(1)}" width="${cw}" height="${(oscBot - y45).toFixed(1)}" fill="#f43f5e" opacity="0.12"/>
+      <line x1="${L}" y1="${y65.toFixed(1)}" x2="${W - R}" y2="${y65.toFixed(1)}" stroke="#10b981" stroke-width="1.3" stroke-dasharray="5,4" opacity="0.85"/>
+      <line x1="${L}" y1="${y45.toFixed(1)}" x2="${W - R}" y2="${y45.toFixed(1)}" stroke="#f43f5e" stroke-width="1.3" stroke-dasharray="5,4" opacity="0.85"/>
+      <text x="${L - 8}" y="${(y65 + 4).toFixed(1)}" text-anchor="end" fill="#34d399" font-size="10.5" font-weight="bold">65(≥8绿)</text>
+      <text x="${L - 8}" y="${(y45 + 4).toFixed(1)}" text-anchor="end" fill="#fb7185" font-size="10.5" font-weight="bold">45(警报)</text>
+      <text x="${W - R + 6}" y="${((oscTop + y65) / 2 + 4).toFixed(1)}" fill="#34d399" font-size="11" font-weight="bold">🟢 ≥8绿灯:放心做</text>
+      <text x="${W - R + 6}" y="${((y65 + y45) / 2 + 4).toFixed(1)}" fill="#fbbf24" font-size="10.5" font-weight="bold">🟡 分歧:谨慎观望</text>
+      <text x="${W - R + 6}" y="${((y45 + oscBot) / 2 + 4).toFixed(1)}" fill="#fb7185" font-size="11" font-weight="bold">🔴 多灯红:停EA防单边</text>
+    `;
+
+    const barsSvg = scores.map((d, i) => {
+      const x = xOf(i), sc = smoothScores[i], y = yOf(sc), h = Math.max(2, oscBot - y);
+      const col = sc >= 65 ? '#10b981' : sc >= 45 ? '#f59e0b' : '#f43f5e';
+      return `<rect x="${(x - bw / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${col}" opacity="0.42" rx="1"/>`;
+    }).join('');
+
+    const linePts = smoothScores.map((sc, i) => `${xOf(i).toFixed(1)},${yOf(sc).toFixed(1)}`).join(' ');
+    const lastD = scores[n - 1] || { greenCnt: 0, yellowCnt: 0, redCnt: 0, score: 50, verdictCol: '#34d399' };
+    const lastSc = smoothScores[n - 1] || lastD.score;
+    const lastX = xOf(n - 1).toFixed(1), lastY = yOf(lastSc).toFixed(1);
+
+    return `
+      <line x1="${L}" y1="${oscTop - 16}" x2="${W - R}" y2="${oscTop - 16}" stroke="#334155" stroke-width="1.5"/>
+      <text x="${L + 6}" y="${oscTop - 4}" fill="#34d399" font-size="12" font-weight="bold">🌟 MT4 12项震荡指标【全合一共振红绿灯】傻瓜附图 (看颜色即可：🟢绿区≥65分[≥8项绿灯]=安全可做 · 🟡黄区=观望 · 🔴红区&lt;45分=多项报警停EA)</text>
+      <rect x="${L}" y="${oscTop}" width="${cw}" height="${oscH}" fill="#0b0f17" opacity="0.45"/>
+      ${zonesBg}
+      ${barsSvg}
+      <polyline fill="none" stroke="#ffffff" stroke-width="2.2" points="${linePts}" opacity="0.92"/>
+      <circle cx="${lastX}" cy="${lastY}" r="5" fill="${lastD.verdictCol}" stroke="#ffffff" stroke-width="1.5"/>
+      <text x="${(+lastX - 10).toFixed(1)}" y="${Math.max(oscTop + 14, Math.min(oscBot - 8, +lastY - 8)).toFixed(1)}" text-anchor="end" fill="${lastD.verdictCol}" font-size="12" font-weight="bold">当前: 🟢${lastD.greenCnt}绿 🟡${lastD.yellowCnt}黄 🔴${lastD.redCnt}红 (共振 ${lastSc}分)</text>
+    `;
+  }
 
   let vMin = 0, vMax = 100, refLines = [], seriesSvg = '', rightNowTxt = '';
   const lastP = arr[n - 1] || {};
+  const lastDiag = evalMt4Osc12(lastP, avgAtr);
+  const matchedItem = lastDiag.items.find((x) => x.key === key);
 
   if (key === 'cci') {
     let mx = 140;
     arr.forEach((p) => { if (p.cci != null) mx = Math.max(mx, Math.abs(p.cci) * 1.08); });
     vMin = -mx; vMax = mx;
-    refLines = [[100, '#10b981', '+100'], [0, '#64748b', '0'], [-100, '#10b981', '-100']];
+    refLines = [[100, '#10b981', '+100通道上沿'], [0, '#64748b', '0中轴'], [-100, '#10b981', '-100通道下沿']];
   } else if (key === 'stoch') {
     vMin = 0; vMax = 100;
-    refLines = [[80, '#f43f5e', '80超买'], [50, '#64748b', '50'], [20, '#10b981', '20超卖']];
+    refLines = [[80, '#f43f5e', '80超买红线'], [50, '#64748b', '50中轴'], [20, '#10b981', '20超卖线']];
   } else if (key === 'rsi') {
     vMin = 0; vMax = 100;
-    refLines = [[70, '#f43f5e', '70超买'], [50, '#64748b', '50'], [30, '#10b981', '30超卖']];
+    refLines = [[70, '#f43f5e', '70超买红线'], [50, '#64748b', '50均衡'], [30, '#10b981', '30超卖线']];
   } else if (key === 'wpr') {
     vMin = -100; vMax = 0;
-    refLines = [[-20, '#f43f5e', '-20超买'], [-50, '#64748b', '-50'], [-80, '#10b981', '-80超卖']];
+    refLines = [[-20, '#f43f5e', '-20超买线'], [-50, '#64748b', '-50中轴'], [-80, '#10b981', '-80超卖线']];
   } else if (key === 'dem') {
     vMin = 0; vMax = 1;
-    refLines = [[0.7, '#f43f5e', '0.7超买'], [0.5, '#64748b', '0.5'], [0.3, '#10b981', '0.3超卖']];
+    refLines = [[0.7, '#f43f5e', '0.7超买线'], [0.5, '#64748b', '0.5均衡'], [0.3, '#10b981', '0.3超卖线']];
   } else if (key === 'osma') {
     let mx = 0.2;
     arr.forEach((p) => { if (p.osma != null) mx = Math.max(mx, Math.abs(p.osma) * 1.15); });
     vMin = -mx; vMax = mx;
-    refLines = [[0, '#94a3b8', '0轴']];
+    refLines = [[0, '#94a3b8', '0轴(贴近=震荡)']];
   } else if (key === 'elder') {
     let mx = 1.0;
     arr.forEach((p) => {
@@ -2291,24 +2495,24 @@ function renderOscSubPanelSvg(arr, oscTop, oscH, L, R, W, cw, xOf) {
     let mx = 0.35;
     arr.forEach((p) => { if (p.rvi != null) mx = Math.max(mx, Math.abs(p.rvi) * 1.15); });
     vMin = -mx; vMax = mx;
-    refLines = [[0.2, '#f59e0b', '+0.2'], [0, '#64748b', '0'], [-0.2, '#f59e0b', '-0.2']];
+    refLines = [[0.2, '#f59e0b', '+0.2温和上沿'], [0, '#64748b', '0中轴'], [-0.2, '#f59e0b', '-0.2温和下沿']];
   } else if (key === 'mom') {
     let dMax = 0.3;
     arr.forEach((p) => { if (p.mom != null) dMax = Math.max(dMax, Math.abs(p.mom - 100) * 1.15); });
     vMin = 100 - dMax; vMax = 100 + dMax;
-    refLines = [[100, '#94a3b8', '100中轴']];
+    refLines = [[100, '#94a3b8', '100中轴(贴近=平缓)']];
   } else if (key === 'force') {
     let mx = 0.5;
     arr.forEach((p) => { if (p.force != null) mx = Math.max(mx, Math.abs(p.force) * 1.15); });
     vMin = -mx; vMax = mx;
-    refLines = [[0, '#94a3b8', '0轴']];
+    refLines = [[0, '#94a3b8', '0轴(温和换手)']];
   } else if (key === 'atr') {
     let mn = Infinity, mx = -Infinity;
     arr.forEach((p) => { if (p.atr != null) { mn = Math.min(mn, p.atr); mx = Math.max(mx, p.atr); } });
     if (!isFinite(mn)) { mn = 0; mx = 5; }
     const pad = Math.max(0.2, (mx - mn) * 0.15);
     vMin = Math.max(0, mn - pad); vMax = mx + pad;
-    refLines = [[+((vMin + vMax) / 2).toFixed(2), '#64748b', '均值']];
+    refLines = [[+avgAtr.toFixed(2), '#10b981', `均值$${avgAtr.toFixed(2)}`]];
   }
 
   const yOf = (v) => oscTop + (1 - (clamp(v, vMin, vMax) - vMin) / Math.max(1e-6, vMax - vMin)) * oscH;
@@ -2331,7 +2535,7 @@ function renderOscSubPanelSvg(arr, oscTop, oscH, L, R, W, cw, xOf) {
       const col = val >= 0 ? '#2ecc8f' : '#ef5b5b';
       return `<rect x="${(x - bw / 2).toFixed(1)}" y="${top}" width="${bw.toFixed(1)}" height="${h}" fill="${col}" opacity="0.82"/>`;
     }).join('');
-    rightNowTxt = `${tabInfo.label}: ${lastP[field] ?? '-'}`;
+    rightNowTxt = `${matchedItem ? matchedItem.icon + matchedItem.human : ''} (${lastP[field] ?? '-'})`;
   } else if (key === 'elder') {
     const y0 = yOf(0);
     seriesSvg = arr.map((p, i) => {
@@ -2347,35 +2551,39 @@ function renderOscSubPanelSvg(arr, oscTop, oscH, L, R, W, cw, xOf) {
       }
       return s;
     }).join('');
-    rightNowTxt = `Bulls ${lastP.bulls ?? '-'}$ / Bears ${lastP.bears ?? '-'}$`;
+    rightNowTxt = `Bulls ${lastP.bulls ?? '-'}$ / Bears ${lastP.bears ?? '-'}$ (${matchedItem ? matchedItem.icon + matchedItem.human : ''})`;
   } else if (key === 'stoch') {
     const kPts = arr.map((p, i) => p.stochK != null ? `${xOf(i).toFixed(1)},${yOf(p.stochK).toFixed(1)}` : null).filter(Boolean).join(' ');
     const dPts = arr.map((p, i) => p.stochD != null ? `${xOf(i).toFixed(1)},${yOf(p.stochD).toFixed(1)}` : null).filter(Boolean).join(' ');
-    seriesSvg = `<rect x="${L}" y="${yOf(70).toFixed(1)}" width="${cw}" height="${(yOf(30) - yOf(70)).toFixed(1)}" fill="#10b981" opacity="0.06"/>
+    seriesSvg = `<rect x="${L}" y="${yOf(78).toFixed(1)}" width="${cw}" height="${(yOf(22) - yOf(78)).toFixed(1)}" fill="#10b981" opacity="0.08"/>
       <polyline fill="none" stroke="#38bdf8" stroke-width="2" points="${kPts}"/>
       <polyline fill="none" stroke="#fbbf24" stroke-width="1.6" stroke-dasharray="4,3" points="${dPts}"/>`;
-    rightNowTxt = `%K=${lastP.stochK ?? '-'} / %D=${lastP.stochD ?? '-'}`;
+    rightNowTxt = `${matchedItem ? matchedItem.icon + matchedItem.human : ''} (%K=${lastP.stochK ?? '-'} / %D=${lastP.stochD ?? '-'})`;
   } else if (key === 'rvi') {
     const mPts = arr.map((p, i) => p.rvi != null ? `${xOf(i).toFixed(1)},${yOf(p.rvi).toFixed(1)}` : null).filter(Boolean).join(' ');
     const sPts = arr.map((p, i) => p.rviSig != null ? `${xOf(i).toFixed(1)},${yOf(p.rviSig).toFixed(1)}` : null).filter(Boolean).join(' ');
     seriesSvg = `<polyline fill="none" stroke="#2ecc8f" stroke-width="2" points="${mPts}"/>
       <polyline fill="none" stroke="#ef5b5b" stroke-width="1.6" stroke-dasharray="4,3" points="${sPts}"/>`;
-    rightNowTxt = `RVI=${lastP.rvi ?? '-'} / Sig=${lastP.rviSig ?? '-'}`;
+    rightNowTxt = `${matchedItem ? matchedItem.icon + matchedItem.human : ''} (RVI=${lastP.rvi ?? '-'})`;
   } else {
     const field = key;
     const pts = arr.map((p, i) => p[field] != null ? `${xOf(i).toFixed(1)},${yOf(p[field]).toFixed(1)}` : null).filter(Boolean).join(' ');
     const bandFill = key === 'cci'
-      ? `<rect x="${L}" y="${yOf(100).toFixed(1)}" width="${cw}" height="${(yOf(-100) - yOf(100)).toFixed(1)}" fill="#10b981" opacity="0.07"/>`
+      ? `<rect x="${L}" y="${yOf(100).toFixed(1)}" width="${cw}" height="${(yOf(-100) - yOf(100)).toFixed(1)}" fill="#10b981" opacity="0.08"/>`
       : key === 'rsi'
-      ? `<rect x="${L}" y="${yOf(70).toFixed(1)}" width="${cw}" height="${(yOf(30) - yOf(70)).toFixed(1)}" fill="#10b981" opacity="0.06"/>`
+      ? `<rect x="${L}" y="${yOf(65).toFixed(1)}" width="${cw}" height="${(yOf(35) - yOf(65)).toFixed(1)}" fill="#10b981" opacity="0.08"/>`
+      : key === 'wpr'
+      ? `<rect x="${L}" y="${yOf(-22).toFixed(1)}" width="${cw}" height="${(yOf(-78) - yOf(-22)).toFixed(1)}" fill="#10b981" opacity="0.08"/>`
+      : key === 'dem'
+      ? `<rect x="${L}" y="${yOf(0.68).toFixed(1)}" width="${cw}" height="${(yOf(0.32) - yOf(0.68)).toFixed(1)}" fill="#10b981" opacity="0.08"/>`
       : '';
     seriesSvg = `${bandFill}<polyline fill="none" stroke="#a78bfa" stroke-width="2.1" points="${pts}"/>`;
-    rightNowTxt = `${tabInfo.label} = ${lastP[field] ?? '-'}`;
+    rightNowTxt = `${matchedItem ? matchedItem.icon + matchedItem.human : ''} (${tabInfo.label}=${lastP[field] ?? '-'})`;
   }
 
   return `
     <line x1="${L}" y1="${oscTop - 16}" x2="${W - R}" y2="${oscTop - 16}" stroke="#334155" stroke-width="1.5"/>
-    <text x="${L + 6}" y="${oscTop - 4}" fill="#a78bfa" font-size="12" font-weight="bold">🎛️ MT4 震荡指标附图：${tabInfo.full}   [当前最新: ${rightNowTxt}]</text>
+    <text x="${L + 6}" y="${oscTop - 4}" fill="#a78bfa" font-size="12" font-weight="bold">🎛️ 单项指标附图：${tabInfo.full}   [当前诊断: ${rightNowTxt} · 点上方「🌟12指标全合一共振图」可切回傻瓜视图]</text>
     <rect x="${L}" y="${oscTop}" width="${cw}" height="${oscH}" fill="#0b0f17" opacity="0.45"/>
     ${refSvg}
     ${seriesSvg}
@@ -2590,10 +2798,13 @@ window.onEntryDedicatedMove = function(ev, tf) {
   t1.setAttribute('x', bx + 10); t1.setAttribute('y', by + 20);
   t2.setAttribute('x', bx + 10); t2.setAttribute('y', by + 42);
   t3.setAttribute('x', bx + 10); t3.setAttribute('y', by + 63);
+  const diagP = evalMt4Osc12(p, p.atr);
+  const redTxt = diagP.redItems.length ? ` | 🚨报警: ${diagP.redItems.map((x) => x.shortName).join('、')}` : ' | ✅全部平稳无单边报警';
   t1.textContent = `🕒 ${tm} | 黄金K线: 开$${f2(p.o)} 高$${f2(p.h)} 低$${f2(p.l)} 收$${f2(p.c)} (单根波幅 $${f2(p.barSpan)} / 14根波幅 $${f2(p.span)})`;
   t2.setAttribute('fill', p.entryCol);
   t2.textContent = `🚦 所在区间: 【${p.zoneName}】 | 慢均线(EMA8): ${p.entrySlow}分 · 快线: ${p.entryFast}分 | ${p.entryReason}`;
-  t3.textContent = `🎛️ MT4指标: CCI=${p.cci ?? '-'} · KD=${p.stochK ?? '-'}/${p.stochD ?? '-'} · RSI=${p.rsi ?? '-'} · %R=${p.wpr ?? '-'} · OsMA=${p.osma ?? '-'} · DeM=${p.dem ?? '-'} · RVI=${p.rvi ?? '-'} · iATR=${p.atr ?? '-'}$`;
+  t3.setAttribute('fill', diagP.verdictCol);
+  t3.textContent = `🌟 MT4 12指标投票: 🟢${diagP.greenCnt}绿 🟡${diagP.yellowCnt}黄 🔴${diagP.redCnt}红 (共振安全度 ${diagP.score}分)${redTxt}`;
 };
 
 window.onEntryDedicatedLeave = function(tf) {
@@ -2868,11 +3079,14 @@ window.onChartMove = function(ev, tf) {
   t4.setAttribute('x', bx + 10); t4.setAttribute('y', by + 77);
   const dirTxt = p.dir === 'UP' ? '📈上涨' : '📉下跌';
   const chgStr = `${p.effChg1 >= 0 ? '+' : ''}${p.effChg1}分${p.effDrop1 >= 7 ? '(⚡急跌)' : ''}`;
+  const diagP = evalMt4Osc12(p, p.atr);
+  const redTxt = diagP.redItems.length ? ` | 🚨报警: ${diagP.redItems.map((x) => x.shortName).join('、')}` : ' | ✅无单边报警';
   t1.textContent = `🕒 ${tm}  |  震荡指数: ${p.adjV}分(原${p.v})  |  单次变化: ${chgStr}  |  ${dirTxt}`;
   t2.setAttribute('fill', p.entryCol);
   t2.textContent = `🚦 是否适合入场: ${p.entryTxt} (入场适宜度 ${p.entryScore}/100 · ${p.entryReason})`;
   t3.textContent = `黄金K线: 开${f2(p.o)} 高${f2(p.h)} 低${f2(p.l)} 收${f2(p.c)}$ | 单根:${f2(p.barSpan)}$ | 14根:${f2(p.span)}$ | BB中轨:${f2(p.bbM)}$`;
-  t4.textContent = `🎛️ MT4指标: CCI=${p.cci ?? '-'} · KD=${p.stochK ?? '-'}/${p.stochD ?? '-'} · RSI=${p.rsi ?? '-'} · %R=${p.wpr ?? '-'} · OsMA=${p.osma ?? '-'} · DeM=${p.dem ?? '-'} · iATR=${p.atr ?? '-'}$`;
+  t4.setAttribute('fill', diagP.verdictCol);
+  t4.textContent = `🌟 MT4 12指标投票: 🟢${diagP.greenCnt}绿 🟡${diagP.yellowCnt}黄 🔴${diagP.redCnt}红 (共振安全度 ${diagP.score}分)${redTxt}`;
 };
 
 window.onChartLeave = function(tf) {
@@ -8589,11 +8803,14 @@ window.onMScoreChartMove = function(ev) {
   const oscArr = cfg.oscArr || [];
   const oscIdx = oscArr.length ? Math.max(0, Math.min(oscArr.length - 1, Math.round((mx - cfg.L) / cfg.cw * Math.max(1, oscArr.length - 1)))) : -1;
   const op = oscIdx >= 0 ? oscArr[oscIdx] : null;
+  const diagOp = op ? evalMt4Osc12(op, op.atr) : null;
+  const redTxt = diagOp && diagOp.redItems.length ? ` | 🚨报警: ${diagOp.redItems.map((x) => x.shortName).join('、')}` : ' | ✅全部平稳';
 
   t1.textContent = `⏱️ ${cfg.tf} 蜡烛时间: ${tmStr}  |  马丁判定: ${statusStr}`;
   t2.textContent = `马丁指数K线: 开 ${c.o} | 高 ${c.h} | 低 ${c.l} | 收 ${c.c} (${isBull ? '▲阳线' : '▼阴线'})`;
-  t3.textContent = op
-    ? `🎛️ MT4指标: CCI=${op.cci ?? '-'} · KD=${op.stochK ?? '-'}/${op.stochD ?? '-'} · RSI=${op.rsi ?? '-'} · %R=${op.wpr ?? '-'} · OsMA=${op.osma ?? '-'} · iATR=${op.atr ?? '-'}$`
+  if (diagOp) t3.setAttribute('fill', diagOp.verdictCol);
+  t3.textContent = diagOp
+    ? `🌟 MT4 12指标投票: 🟢${diagOp.greenCnt}绿 🟡${diagOp.yellowCnt}黄 🔴${diagOp.redCnt}红 (安全度 ${diagOp.score}分)${redTxt}`
     : `柱内采样: ${c.cnt || 1}次`;
 };
 
