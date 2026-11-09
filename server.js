@@ -2977,6 +2977,84 @@ async function handleApiMt4(req, res) {
       const closedProfit = +(balVal - initBal).toFixed(2);
       const netTotalProfit = +(eqVal - initBal).toFixed(2);
 
+      // 解析 MT4 脚本 v2.0 上传的 6 周期 12 项自带震荡指标 (&osc=1M:atr,bears,bulls,cci,dem,force,mom,osma,rsi,rviM,rviS,stoK,stoD,wpr,adx,pdi,mdi;5M:...)
+      const oscRaw = u.searchParams.get('osc') || '';
+      let oscByTf = (latestMt4State && latestMt4State.oscByTf) || null;
+      if (oscRaw && oscRaw.includes(':')) {
+        const parsed = {};
+        const refPx = bid > 100 ? bid : 3300;
+        for (const seg of oscRaw.split(';')) {
+          const [tfKey, valsStr] = seg.split(':');
+          if (!tfKey || !valsStr) continue;
+          const v = valsStr.split(',').map((x) => parseFloat(x));
+          if (v.length < 14 || v.some((n) => !Number.isFinite(n))) continue;
+          const [atrV, bears, bulls, cci, dem, force, mom, osma, rsiV, rviM, rviS, stoK, stoD, wpr, adxV, pdiV, mdiV] = v;
+          const atrSafe = atrV > 0 ? atrV : 1;
+          const momDiff = +(((mom - 100) / 100) * refPx).toFixed(2);
+          parsed[tfKey.trim()] = {
+            fromMt4Script: true,
+            mt4OscTs: Date.now(),
+            atrFast: +atrV.toFixed(3),
+            bearsPower: +bears.toFixed(2),
+            bearsAtr: +(bears / atrSafe).toFixed(2),
+            bullsPower: +bulls.toFixed(2),
+            bullsAtr: +(bulls / atrSafe).toFixed(2),
+            elderNetAtr: +((bulls + bears) / atrSafe).toFixed(2),
+            cci: +cci.toFixed(1),
+            dem: +dem.toFixed(3),
+            forceIdx: +force.toFixed(2),
+            forceAtr: +(force / Math.max(1, atrSafe * 120)).toFixed(2),
+            mom: +mom.toFixed(2),
+            momDiff,
+            momAtr: +(momDiff / atrSafe).toFixed(2),
+            osma: +osma.toFixed(3),
+            osmaAtr: +(osma / atrSafe).toFixed(2),
+            rsi: +rsiV.toFixed(1),
+            rvi: +rviM.toFixed(3),
+            rviSig: +rviS.toFixed(3),
+            stochK: +stoK.toFixed(1),
+            stochD: +stoD.toFixed(1),
+            wpr: +wpr.toFixed(1),
+            wprAbs: +Math.abs(wpr).toFixed(1),
+            ...(Number.isFinite(adxV) && adxV > 0 ? { adx: +adxV.toFixed(2), pdi: +pdiV.toFixed(2), mdi: +mdiV.toFixed(2) } : {})
+          };
+        }
+        if (Object.keys(parsed).length > 0) oscByTf = parsed;
+      }
+
+      // 将当前 MT4 5M/1M 震荡指标快照存入账户 K 线最新点，供账户 K 线附图联动展示
+      const oscSnap = (oscByTf && (oscByTf['5M'] || oscByTf['1M'])) || null;
+      if (oscSnap && history.length > 0) {
+        const lastH = history[history.length - 1];
+        lastH.rsi = oscSnap.rsi;
+        lastH.cci = oscSnap.cci;
+        lastH.stochK = oscSnap.stochK;
+        lastH.stochD = oscSnap.stochD;
+        lastH.wpr = oscSnap.wpr;
+        lastH.dem = oscSnap.dem;
+        lastH.rvi = oscSnap.rvi;
+        lastH.osma = oscSnap.osma;
+        lastH.mom = oscSnap.mom;
+        lastH.bulls = oscSnap.bullsPower;
+        lastH.bears = oscSnap.bearsPower;
+        lastH.atr = oscSnap.atrFast;
+      }
+      if (oscSnap && historyLong.length > 0) {
+        const lastL = historyLong[historyLong.length - 1];
+        lastL.rsi = oscSnap.rsi;
+        lastL.cci = oscSnap.cci;
+        lastL.stochK = oscSnap.stochK;
+        lastL.stochD = oscSnap.stochD;
+        lastL.wpr = oscSnap.wpr;
+        lastL.dem = oscSnap.dem;
+        lastL.rvi = oscSnap.rvi;
+        lastL.osma = oscSnap.osma;
+        lastL.mom = oscSnap.mom;
+        lastL.bulls = oscSnap.bullsPower;
+        lastL.bears = oscSnap.bearsPower;
+        lastL.atr = oscSnap.atrFast;
+      }
+
       latestMt4State = {
         updatedAt: new Date().toISOString(),
         ts: Date.now(),
@@ -3010,6 +3088,7 @@ async function handleApiMt4(req, res) {
         bid,
         ask,
         spreadPts,
+        oscByTf,
         stats,
         history,
         historyLong
@@ -3120,6 +3199,33 @@ async function handleApiData(req, res) {
         syncHourlyFromHistoryLong(latestMt4State.stats, latestMt4State.historyLong, new Date(Date.now() + 8 * 3600000).getUTCHours(), curDd, latestMt4State.margin || 0);
       }
       data.mt4 = latestMt4State;
+      // 如果 MT4 脚本 v2.0 上传了 12 项原生震荡指标 (oscByTf)，且在有效期内(15分钟内)，直接覆盖各周期的震荡指标并重算指数
+      if (latestMt4State.oscByTf && data.timeframes && (Date.now() - (latestMt4State.ts || 0) < 900000)) {
+        for (const [tfKey, mt4Osc] of Object.entries(latestMt4State.oscByTf)) {
+          if (data.timeframes[tfKey] && mt4Osc) {
+            Object.assign(data.timeframes[tfKey], mt4Osc);
+            if (data.model && data.model.sparks && Array.isArray(data.model.sparks[tfKey]) && data.model.sparks[tfKey].length > 0) {
+              const spArr = data.model.sparks[tfKey];
+              const lastSp = spArr[spArr.length - 1];
+              lastSp.atr = mt4Osc.atrFast;
+              lastSp.rsi = mt4Osc.rsi;
+              lastSp.cci = mt4Osc.cci;
+              lastSp.stochK = mt4Osc.stochK;
+              lastSp.stochD = mt4Osc.stochD;
+              lastSp.wpr = mt4Osc.wpr;
+              lastSp.dem = mt4Osc.dem;
+              lastSp.rvi = mt4Osc.rvi;
+              lastSp.rviSig = mt4Osc.rviSig;
+              lastSp.osma = mt4Osc.osma;
+              lastSp.mom = mt4Osc.mom;
+              lastSp.force = mt4Osc.forceIdx;
+              lastSp.bulls = mt4Osc.bullsPower;
+              lastSp.bears = mt4Osc.bearsPower;
+            }
+          }
+        }
+        buildComposite(data);
+      }
     }
     let respData = data;
     if (fast && data && data.timeframes) {

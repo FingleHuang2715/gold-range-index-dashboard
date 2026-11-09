@@ -395,14 +395,14 @@ aside.sidenav .nd.dn{color:#fb7185;background:rgba(244,63,94,.2)}
     <section class="card" id="mt4GuideSec" style="display:none;border:1.5px solid rgba(56,189,248,0.55);background:linear-gradient(135deg,rgba(14,116,144,0.14),rgba(15,20,30,0.97))">
       <div class="vhead" style="margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <h2 style="margin:0;color:#38bdf8">🔌 MT4 实盘账户 & 马丁持仓实时同步接入中心 (每 3 秒自动推送 · 100%只读零交易干预)</h2>
+          <h2 style="margin:0;color:#38bdf8">🔌 MT4 实盘账户 & 马丁持仓 + 12项自带震荡指标同步接入中心 v2.0 (每 3 秒自动推送 · 100%只读零交易干预)</h2>
           <span id="mt4StatusPill" class="pill NEUT">等待 MT4 脚本推送数据...</span>
         </div>
         <div class="btns">
-          <button class="pri sm" onclick="downloadMt4Script('script')" style="background:#0284c7;border-color:#38bdf8;color:#fff;font-weight:800" title="放入 MQL4\Scripts，可与马丁EA挂在同一张图">📥 下载【脚本版】GoldDashboardSyncScript.mq4 → Scripts</button>
-          <button class="sm" onclick="copyMt4ScriptCode('script')" style="border-color:#38bdf8;color:#38bdf8;font-weight:700">📋 复制脚本版源码</button>
-          <button class="pri sm" onclick="downloadMt4Script('ea')" style="background:#7c3aed;border-color:#a78bfa;color:#fff;font-weight:800" title="放入 MQL4\Experts，需单独一张图表">📥 下载【EA版】GoldDashboardSync.mq4 → Experts</button>
-          <button class="sm" onclick="copyMt4ScriptCode('ea')" style="border-color:#a78bfa;color:#a78bfa;font-weight:700">📋 复制EA版源码</button>
+          <button class="pri sm" onclick="downloadMt4Script('script')" style="background:#0284c7;border-color:#38bdf8;color:#fff;font-weight:800" title="放入 MQL4\Scripts，可与马丁EA挂在同一张图，实时上传账户+12项MT4原生震荡指标">📥 下载【脚本版 v2.0】GoldDashboardSyncScript.mq4 → Scripts</button>
+          <button class="sm" onclick="copyMt4ScriptCode('script')" style="border-color:#38bdf8;color:#38bdf8;font-weight:700">📋 复制脚本版v2.0源码</button>
+          <button class="pri sm" onclick="downloadMt4Script('ea')" style="background:#7c3aed;border-color:#a78bfa;color:#fff;font-weight:800" title="放入 MQL4\Experts，需单独一张图表，实时上传账户+12项MT4原生震荡指标">📥 下载【EA版 v2.0】GoldDashboardSync.mq4 → Experts</button>
+          <button class="sm" onclick="copyMt4ScriptCode('ea')" style="border-color:#a78bfa;color:#a78bfa;font-weight:700">📋 复制EA版v2.0源码</button>
           <button class="sm" onclick="simulateMt4Push()" title="模拟推送一笔假测试账号数据(#8861092)，仅用于预览界面效果">🧪 模拟演示数据</button>
           <button class="sm" onclick="clearMt4Data()" style="color:#fb7185;border-color:rgba(244,63,94,0.45)" title="清除模拟测试数据，等待您的真实MT4账号推送">🗑️ 清除测试数据</button>
           <button class="sm" onclick="toggleMt4Guide()">✖ 收起面板</button>
@@ -844,7 +844,8 @@ let EA_CFG = {
   tpPerOrder: Number(localStorage.getItem('gold_ea_tp')) || 4.0
 };
 let TOL = Number(localStorage.getItem('gold_tol')) || 34.9; // 由净敞口公式 D = L / (N * 100) 推演出的抗单边跨度(美元)
-const SHOW_CANDLE = {}; // 各周期大图是否显示黄金价格蜡烛图(默认全不显示, 点击按钮才开启)
+const SHOW_CANDLE = { '1M': true, '5M': true, '15M': true, '1H': true, '4H': true }; // 默认直接开启黄金K线蜡烛图+MT4震荡指标附图
+let KLINE_OSC_KEY = localStorage.getItem('gold_kline_osc') || 'cci'; // K线图下方MT4震荡指标附图当前选中项
 const CHART_PTS = {};   // 缓存各周期大图的坐标与数据供十字准星使用
 window.OPEN_FOLDS = {}; // 持久化记录所有 <details> 展开状态，防止 15秒/3分钟数据刷新时自动合上
 window.SCROLL_POS = {}; // 持久化记录内部滚动容器的滚动条位置
@@ -2200,18 +2201,201 @@ window.setEntryChartTf = function(tf) {
   if (D) render();
 };
 
-// 专门的「🚦 入场/离场双线历史走势 × 黄金 K 线 1:1 上下对照大图」（上半图：黄金K线+入场/离场背景区间色带；下半图：快线+EMA8慢均线+入场/离场区间标注）
+window.setKlineOsc = function(key) {
+  KLINE_OSC_KEY = key;
+  try { localStorage.setItem('gold_kline_osc', key); } catch (e) {}
+  if (D) render();
+};
+
+const MT4_OSC_TABS = [
+  { key: 'cci',   label: 'CCI(14)',          full: 'Commodity Channel Index 商品通道指数 (±100震荡通道)', val: (t) => t.cci != null ? (t.cci >= 0 ? '+' + t.cci : t.cci) : '-' },
+  { key: 'stoch', label: 'KD随机(Stoch)',    full: 'Stochastic Oscillator(14,3,3) 随机震荡指标 (%K/%D)', val: (t) => t.stochK != null ? `${t.stochK}/${t.stochD}` : '-' },
+  { key: 'rsi',   label: 'RSI(14)',          full: 'Relative Strength Index 相对强弱指数 (30~70)',       val: (t) => t.rsi ?? '-' },
+  { key: 'wpr',   label: 'Williams %R',      full: 'Williams Percent Range(14) 威廉指标 (-20~-80)',      val: (t) => t.wpr != null ? `${t.wpr}%` : '-' },
+  { key: 'osma',  label: 'OsMA柱(12,26,9)',  full: 'Moving Average of Oscillator (MACD - Signal 柱状图)', val: (t) => t.osma != null ? (t.osma >= 0 ? '+' + t.osma : t.osma) : '-' },
+  { key: 'elder', label: 'Bulls/Bears牛熊',  full: 'Bulls Power(13) 牛力 & Bears Power(13) 熊市力量柱',   val: (t) => t.bullsPower != null ? `牛${t.bullsPower >= 0 ? '+' : ''}${t.bullsPower}/熊${t.bearsPower}` : '-' },
+  { key: 'dem',   label: 'DeMarker(14)',     full: 'DeMarker 德马克指标 (0.30~0.70震荡中枢)',             val: (t) => t.dem ?? '-' },
+  { key: 'rvi',   label: 'RVI能量(10)',      full: 'Relative Vigor Index 相对能量指数 (主线+信号线)',      val: (t) => t.rvi != null ? `${t.rvi}/${t.rviSig}` : '-' },
+  { key: 'mom',   label: 'Momentum(14)',     full: 'Momentum 动量指标 (100.0中轴)',                       val: (t) => t.mom ?? '-' },
+  { key: 'force', label: 'Force强力(13)',    full: 'Force Index 强力指数 (量价买卖力量)',                 val: (t) => t.forceIdx ?? '-' },
+  { key: 'atr',   label: 'iATR(14)',         full: 'Average True Range 平均真实波幅 ($)',                 val: (t) => t.atrFast != null ? `$${t.atrFast}` : '-' },
+];
+
+// 生成 K 线图上方的「MT4 12项自带震荡指标切换器 + 数据源状态条」
+function buildOscToolbarHtml(tf, t) {
+  if (!t) return '';
+  const isFromMt4 = !!t.fromMt4Script;
+  const srcBadge = isFromMt4
+    ? `<span class="pill RANGE" title="当前指标由您的 MT4 客户端 GoldDashboardSync v2.0 脚本调用 iATR/iCCI/iStochastic/iForce 等原生函数直接上传">🟢 数据源: MT4实盘脚本v2.0原生直传</span>`
+    : `<span class="pill MIXED" title="当前使用实时黄金K线同步计算；升级 MT4 脚本至 v2.0 即可直接由您的 MT4 客户端上传全部12项原生指标">🌐 数据源: 实时K线同步计算 (点右侧升级MT4脚本直传)</span>
+       <button class="sm" onclick="copyMt4ScriptCode('script')" style="padding:1px 7px;font-size:11px;border-color:#34d399;color:#34d399" title="复制包含12项MT4震荡指标上传代码的v2.0脚本">📋 复制MT4脚本v2.0</button>
+       <button class="sm" onclick="downloadMt4Script('script')" style="padding:1px 7px;font-size:11px;border-color:#38bdf8;color:#38bdf8" title="下载包含12项MT4震荡指标上传代码的v2.0脚本">📥 下载MT4脚本v2.0</button>`;
+  const tabsHtml = MT4_OSC_TABS.map((item) => {
+    const active = KLINE_OSC_KEY === item.key;
+    const vStr = item.val(t);
+    return `<button class="sm ${active ? 'on pri' : ''}" onclick="setKlineOsc('${item.key}')" style="padding:2px 8px;font-size:11.5px" title="点击在K线图下方切换显示【${item.full}】附图"><b>${item.label}</b> <span style="color:${active ? '#fff' : '#fbbf24'};font-family:monospace">${vStr}</span></button>`;
+  }).join('');
+  return `<div style="background:rgba(15,23,42,0.92);border:1px solid #262d3b;border-radius:8px;padding:7px 10px;margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <b style="color:var(--gold);font-size:12.5px">📊 [${tf} K线附图] MT4 12项自带震荡指标切换 (点击任意指标在K线下方展开附图):</b>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">${srcBadge}</div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:5px">${tabsHtml}</div>
+  </div>`;
+}
+
+// 渲染 K 线图下方的「MT4 12项震荡指标子面板 SVG」
+function renderOscSubPanelSvg(arr, oscTop, oscH, L, R, W, cw, xOf) {
+  const n = arr.length;
+  const oscBot = oscTop + oscH;
+  const key = KLINE_OSC_KEY || 'cci';
+  const tabInfo = MT4_OSC_TABS.find((x) => x.key === key) || MT4_OSC_TABS[0];
+  const bw = Math.max(2.2, Math.min(7.5, cw / n * 0.64));
+
+  let vMin = 0, vMax = 100, refLines = [], seriesSvg = '', rightNowTxt = '';
+  const lastP = arr[n - 1] || {};
+
+  if (key === 'cci') {
+    let mx = 140;
+    arr.forEach((p) => { if (p.cci != null) mx = Math.max(mx, Math.abs(p.cci) * 1.08); });
+    vMin = -mx; vMax = mx;
+    refLines = [[100, '#10b981', '+100'], [0, '#64748b', '0'], [-100, '#10b981', '-100']];
+  } else if (key === 'stoch') {
+    vMin = 0; vMax = 100;
+    refLines = [[80, '#f43f5e', '80超买'], [50, '#64748b', '50'], [20, '#10b981', '20超卖']];
+  } else if (key === 'rsi') {
+    vMin = 0; vMax = 100;
+    refLines = [[70, '#f43f5e', '70超买'], [50, '#64748b', '50'], [30, '#10b981', '30超卖']];
+  } else if (key === 'wpr') {
+    vMin = -100; vMax = 0;
+    refLines = [[-20, '#f43f5e', '-20超买'], [-50, '#64748b', '-50'], [-80, '#10b981', '-80超卖']];
+  } else if (key === 'dem') {
+    vMin = 0; vMax = 1;
+    refLines = [[0.7, '#f43f5e', '0.7超买'], [0.5, '#64748b', '0.5'], [0.3, '#10b981', '0.3超卖']];
+  } else if (key === 'osma') {
+    let mx = 0.2;
+    arr.forEach((p) => { if (p.osma != null) mx = Math.max(mx, Math.abs(p.osma) * 1.15); });
+    vMin = -mx; vMax = mx;
+    refLines = [[0, '#94a3b8', '0轴']];
+  } else if (key === 'elder') {
+    let mx = 1.0;
+    arr.forEach((p) => {
+      if (p.bulls != null) mx = Math.max(mx, Math.abs(p.bulls) * 1.15);
+      if (p.bears != null) mx = Math.max(mx, Math.abs(p.bears) * 1.15);
+    });
+    vMin = -mx; vMax = mx;
+    refLines = [[0, '#94a3b8', 'EMA13零轴']];
+  } else if (key === 'rvi') {
+    let mx = 0.35;
+    arr.forEach((p) => { if (p.rvi != null) mx = Math.max(mx, Math.abs(p.rvi) * 1.15); });
+    vMin = -mx; vMax = mx;
+    refLines = [[0.2, '#f59e0b', '+0.2'], [0, '#64748b', '0'], [-0.2, '#f59e0b', '-0.2']];
+  } else if (key === 'mom') {
+    let dMax = 0.3;
+    arr.forEach((p) => { if (p.mom != null) dMax = Math.max(dMax, Math.abs(p.mom - 100) * 1.15); });
+    vMin = 100 - dMax; vMax = 100 + dMax;
+    refLines = [[100, '#94a3b8', '100中轴']];
+  } else if (key === 'force') {
+    let mx = 0.5;
+    arr.forEach((p) => { if (p.force != null) mx = Math.max(mx, Math.abs(p.force) * 1.15); });
+    vMin = -mx; vMax = mx;
+    refLines = [[0, '#94a3b8', '0轴']];
+  } else if (key === 'atr') {
+    let mn = Infinity, mx = -Infinity;
+    arr.forEach((p) => { if (p.atr != null) { mn = Math.min(mn, p.atr); mx = Math.max(mx, p.atr); } });
+    if (!isFinite(mn)) { mn = 0; mx = 5; }
+    const pad = Math.max(0.2, (mx - mn) * 0.15);
+    vMin = Math.max(0, mn - pad); vMax = mx + pad;
+    refLines = [[+((vMin + vMax) / 2).toFixed(2), '#64748b', '均值']];
+  }
+
+  const yOf = (v) => oscTop + (1 - (clamp(v, vMin, vMax) - vMin) / Math.max(1e-6, vMax - vMin)) * oscH;
+
+  const refSvg = refLines.map(([rv, col, lbl]) => {
+    const y = yOf(rv).toFixed(1);
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="${col}" stroke-width="1" stroke-dasharray="4,3" opacity="0.75"/>
+      <text x="${L - 8}" y="${+y + 4}" text-anchor="end" fill="${col}" font-size="10.5">${rv}</text>
+      <text x="${W - R + 6}" y="${+y + 4}" fill="${col}" font-size="10.5">${lbl}</text>`;
+  }).join('');
+
+  if (key === 'osma' || key === 'force') {
+    const y0 = yOf(0);
+    const field = key === 'osma' ? 'osma' : 'force';
+    seriesSvg = arr.map((p, i) => {
+      const val = p[field];
+      if (val == null) return '';
+      const x = xOf(i), y = yOf(val);
+      const top = Math.min(y, y0).toFixed(1), h = Math.max(1.5, Math.abs(y - y0)).toFixed(1);
+      const col = val >= 0 ? '#2ecc8f' : '#ef5b5b';
+      return `<rect x="${(x - bw / 2).toFixed(1)}" y="${top}" width="${bw.toFixed(1)}" height="${h}" fill="${col}" opacity="0.82"/>`;
+    }).join('');
+    rightNowTxt = `${tabInfo.label}: ${lastP[field] ?? '-'}`;
+  } else if (key === 'elder') {
+    const y0 = yOf(0);
+    seriesSvg = arr.map((p, i) => {
+      const x = xOf(i);
+      let s = '';
+      if (p.bulls != null) {
+        const yb = yOf(p.bulls), tb = Math.min(yb, y0).toFixed(1), hb = Math.max(1.5, Math.abs(yb - y0)).toFixed(1);
+        s += `<rect x="${(x - bw / 2).toFixed(1)}" y="${tb}" width="${(bw * 0.48).toFixed(1)}" height="${hb}" fill="#2ecc8f" opacity="0.85"/>`;
+      }
+      if (p.bears != null) {
+        const yr = yOf(p.bears), tr = Math.min(yr, y0).toFixed(1), hr = Math.max(1.5, Math.abs(yr - y0)).toFixed(1);
+        s += `<rect x="${x.toFixed(1)}" y="${tr}" width="${(bw * 0.48).toFixed(1)}" height="${hr}" fill="#ef5b5b" opacity="0.85"/>`;
+      }
+      return s;
+    }).join('');
+    rightNowTxt = `Bulls ${lastP.bulls ?? '-'}$ / Bears ${lastP.bears ?? '-'}$`;
+  } else if (key === 'stoch') {
+    const kPts = arr.map((p, i) => p.stochK != null ? `${xOf(i).toFixed(1)},${yOf(p.stochK).toFixed(1)}` : null).filter(Boolean).join(' ');
+    const dPts = arr.map((p, i) => p.stochD != null ? `${xOf(i).toFixed(1)},${yOf(p.stochD).toFixed(1)}` : null).filter(Boolean).join(' ');
+    seriesSvg = `<rect x="${L}" y="${yOf(70).toFixed(1)}" width="${cw}" height="${(yOf(30) - yOf(70)).toFixed(1)}" fill="#10b981" opacity="0.06"/>
+      <polyline fill="none" stroke="#38bdf8" stroke-width="2" points="${kPts}"/>
+      <polyline fill="none" stroke="#fbbf24" stroke-width="1.6" stroke-dasharray="4,3" points="${dPts}"/>`;
+    rightNowTxt = `%K=${lastP.stochK ?? '-'} / %D=${lastP.stochD ?? '-'}`;
+  } else if (key === 'rvi') {
+    const mPts = arr.map((p, i) => p.rvi != null ? `${xOf(i).toFixed(1)},${yOf(p.rvi).toFixed(1)}` : null).filter(Boolean).join(' ');
+    const sPts = arr.map((p, i) => p.rviSig != null ? `${xOf(i).toFixed(1)},${yOf(p.rviSig).toFixed(1)}` : null).filter(Boolean).join(' ');
+    seriesSvg = `<polyline fill="none" stroke="#2ecc8f" stroke-width="2" points="${mPts}"/>
+      <polyline fill="none" stroke="#ef5b5b" stroke-width="1.6" stroke-dasharray="4,3" points="${sPts}"/>`;
+    rightNowTxt = `RVI=${lastP.rvi ?? '-'} / Sig=${lastP.rviSig ?? '-'}`;
+  } else {
+    const field = key;
+    const pts = arr.map((p, i) => p[field] != null ? `${xOf(i).toFixed(1)},${yOf(p[field]).toFixed(1)}` : null).filter(Boolean).join(' ');
+    const bandFill = key === 'cci'
+      ? `<rect x="${L}" y="${yOf(100).toFixed(1)}" width="${cw}" height="${(yOf(-100) - yOf(100)).toFixed(1)}" fill="#10b981" opacity="0.07"/>`
+      : key === 'rsi'
+      ? `<rect x="${L}" y="${yOf(70).toFixed(1)}" width="${cw}" height="${(yOf(30) - yOf(70)).toFixed(1)}" fill="#10b981" opacity="0.06"/>`
+      : '';
+    seriesSvg = `${bandFill}<polyline fill="none" stroke="#a78bfa" stroke-width="2.1" points="${pts}"/>`;
+    rightNowTxt = `${tabInfo.label} = ${lastP[field] ?? '-'}`;
+  }
+
+  return `
+    <line x1="${L}" y1="${oscTop - 16}" x2="${W - R}" y2="${oscTop - 16}" stroke="#334155" stroke-width="1.5"/>
+    <text x="${L + 6}" y="${oscTop - 4}" fill="#a78bfa" font-size="12" font-weight="bold">🎛️ MT4 震荡指标附图：${tabInfo.full}   [当前最新: ${rightNowTxt}]</text>
+    <rect x="${L}" y="${oscTop}" width="${cw}" height="${oscH}" fill="#0b0f17" opacity="0.45"/>
+    ${refSvg}
+    ${seriesSvg}
+  `;
+}
+
+// 专门的「🚦 入场/离场双线历史走势 × 黄金 K 线 × MT4 12项震荡指标 1:1 上下对照大图」
 function buildEntryKLineChartSvg(rawArr, tf) {
   if (!rawArr || rawArr.length < 2) return '<div class="mut">暂无该周期历史数据</div>';
   const arr = calcEntrySeries(rawArr, TOL);
-  const W = 1200, H = 560, L = 66, R = 138, T = 26, B = 44;
+  const W = 1200, H = 710, L = 66, R = 138, T = 26, B = 44;
   const cw = W - L - R, n = arr.length;
   const xOf = (i) => L + (i / (n - 1)) * cw;
 
-  // 上半屏 (canTop ~ canBot): 黄金 K 线图 + 入场/离场区间直投背景色带
-  // 下半屏 (entTop ~ entBot): 入场快线(青白) + EMA8慢均线(亮金粗线) + 入场区间(≥56绿) / 缓冲区间(46-56黄) / 离场区间(<46红)
-  const canTop = T, canH = 235, canBot = canTop + canH;
-  const entTop = canBot + 36, entH = H - B - entTop, entBot = entTop + entH;
+  // 上屏 (canTop ~ canBot): 黄金 K 线图 + 入场/离场区间直投背景色带
+  // 中屏 (entTop ~ entBot): 入场快线(青白) + EMA8慢均线(亮金粗线)
+  // 下屏 (oscTop ~ oscBot): MT4 12项自带震荡指标附图 (可一键切换 CCI/KD/RSI/WPR/OsMA/BullsBears/DeM/RVI/Mom/Force/iATR)
+  const canTop = T, canH = 225, canBot = canTop + canH;
+  const entTop = canBot + 32, entH = 190, entBot = entTop + entH;
+  const oscTop = entBot + 28, oscH = H - B - oscTop, oscBot = oscTop + oscH;
 
   let pMin = Infinity, pMax = -Infinity;
   arr.forEach((p) => {
@@ -2227,7 +2411,7 @@ function buildEntryKLineChartSvg(rawArr, tf) {
   const yPrice = (v) => canTop + (1 - (v - pMin) / (pMax - pMin)) * canH;
   const yEnt = (v) => entTop + (1 - v / 100) * entH;
 
-  ENTRY_DEDICATED_PTS[tf] = { arr, W, H, L, R, T, B, cw, canTop, canH, canBot, entTop, entH, entBot, pMin, pMax };
+  ENTRY_DEDICATED_PTS[tf] = { arr, W, H, L, R, T, B, cw, canTop, canH, canBot, entTop, entH, entBot, oscTop, oscH, oscBot, pMin, pMax };
 
   // 1) K线背景：把当时的「🟢入场区间 / 🔴离场区间」直接以半透明色带投射在 K 线背后，一眼看清哪段K线该做、哪段K线该停！
   const colW = cw / Math.max(1, n - 1);
@@ -2305,12 +2489,12 @@ function buildEntryKLineChartSvg(rawArr, tf) {
   idxs.push(n - 1);
   const xGrid = idxs.map((i) => {
     const x = xOf(i).toFixed(1), tm = fmtBJ(arr[i].t), p = arr[i];
-    return `<line x1="${x}" y1="${canTop}" x2="${x}" y2="${entBot}" stroke="#262d3b" stroke-width="1" stroke-dasharray="2,4"/>
-      <text x="${x}" y="${entBot + 18}" text-anchor="middle" fill="#c6cddb" font-size="11.5">${tm}</text>
-      <text x="${x}" y="${entBot + 33}" text-anchor="middle" fill="${p.entryCol}" font-size="10.5" font-weight="bold">${p.zoneName.slice(0, 6)}</text>`;
+    return `<line x1="${x}" y1="${canTop}" x2="${x}" y2="${oscBot}" stroke="#262d3b" stroke-width="1" stroke-dasharray="2,4"/>
+      <text x="${x}" y="${oscBot + 18}" text-anchor="middle" fill="#c6cddb" font-size="11.5">${tm}</text>
+      <text x="${x}" y="${oscBot + 33}" text-anchor="middle" fill="${p.entryCol}" font-size="10.5" font-weight="bold">${p.zoneName.slice(0, 6)}</text>`;
   }).join('');
 
-  // 绘制下半屏底部状态色柱 + 快线(青白 #38bdf8) + 慢均线 EMA8(亮金粗线 #fbbf24)
+  // 绘制中屏状态色柱 + 快线(青白 #38bdf8) + 慢均线 EMA8(亮金粗线 #fbbf24)
   const fastPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yEnt(p.entryFast).toFixed(1)}`).join(' ');
   const slowPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yEnt(p.entrySlow).toFixed(1)}`).join(' ');
   const ebw = Math.max(2.5, Math.min(7.5, cw / n * 0.65));
@@ -2324,16 +2508,16 @@ function buildEntryKLineChartSvg(rawArr, tf) {
   const lastFastY = yEnt(lastP.entryFast).toFixed(1);
   const lastSlowY = yEnt(lastP.entrySlow).toFixed(1);
 
-  return `<svg class="big-svg" id="svg-entry-ded-${tf}" style="height:540px;min-height:480px;max-height:600px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onEntryDedicatedMove(event,'${tf}')" onmouseleave="onEntryDedicatedLeave('${tf}')">
-    <!-- 上半屏：黄金 K 线图 + 入场/离场历史背景直投 -->
+  return `<svg class="big-svg" id="svg-entry-ded-${tf}" style="height:680px;min-height:580px;max-height:760px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onEntryDedicatedMove(event,'${tf}')" onmouseleave="onEntryDedicatedLeave('${tf}')">
+    <!-- 上屏：黄金 K 线图 + 入场/离场历史背景直投 -->
     <text x="${L + 6}" y="${canTop - 8}" fill="#e8b84a" font-size="12.5" font-weight="bold">🕯️ [${tf}周期] 现货黄金 K 线走势 × 历史入场/离场区间直投对照 (绿底=处于🟢入场区间 · 红底=处于🔴离场区间 · 黄虚线=MA20中轨)</text>
     ${kZoneBands}${pTicks}${xGrid}${bbSvg}${candles}
 
-    <!-- 分割线与下半屏标题 -->
+    <!-- 分割线与中屏标题 -->
     <line x1="${L}" y1="${canBot + 14}" x2="${W - R}" y2="${canBot + 14}" stroke="#334155" stroke-width="1.5"/>
     <text x="${L + 6}" y="${entTop - 8}" fill="#e8b84a" font-size="12.5" font-weight="bold">🚦 [${tf}周期] 入场/离场「双线平滑指数」历史走势 (亮金粗线 = EMA8决策慢均线[定海神针] · 青白实线 = 3周期抗毛刺快线 · 蓝柱 = 均线护航过滤假跌)</text>
 
-    <!-- 下半屏：三大区间清晰背景色带 (≥56入场区间 / 46-56缓冲等回调区 / <46离场区间) -->
+    <!-- 中屏：三大区间清晰背景色带 (≥56入场区间 / 46-56缓冲等回调区 / <46离场区间) -->
     <rect x="${L}" y="${entTop}" width="${cw}" height="${eY56 - entTop}" fill="#10b981" opacity="0.11"/>
     <rect x="${L}" y="${eY56}" width="${cw}" height="${eY46 - eY56}" fill="#f59e0b" opacity="0.07"/>
     <rect x="${L}" y="${eY46}" width="${cw}" height="${entBot - eY46}" fill="#f43f5e" opacity="0.12"/>
@@ -2349,19 +2533,22 @@ function buildEntryKLineChartSvg(rawArr, tf) {
     <circle cx="${lastX}" cy="${lastSlowY}" r="6" fill="#fbbf24" stroke="#0f1218" stroke-width="1.5"/>
     <text x="${(+lastX - 10).toFixed(1)}" y="${Math.max(entTop + 16, Math.min(entBot - 10, +lastSlowY - 10)).toFixed(1)}" text-anchor="end" fill="#fbbf24" font-size="12.5" font-weight="bold">当前慢均线 ${lastP.entrySlow}分 | 快线 ${lastP.entryFast}分 (${lastP.zoneName})</text>
 
+    <!-- 下屏：MT4 12项自带震荡指标附图子面板 (与上方黄金K线 1:1 垂直对齐) -->
+    ${renderOscSubPanelSvg(arr, oscTop, oscH, L, R, W, cw, xOf)}
+
     <!-- 1:1 垂直联动十字准星 -->
     <g id="xh-eded-${tf}" style="display:none;pointer-events:none">
-      <line id="xh-eded-v-${tf}" x1="0" y1="${canTop}" x2="0" y2="${entBot}" stroke="#ffffff" stroke-width="1.2" stroke-dasharray="4,4" opacity="0.9"/>
+      <line id="xh-eded-v-${tf}" x1="0" y1="${canTop}" x2="0" y2="${oscBot}" stroke="#ffffff" stroke-width="1.2" stroke-dasharray="4,4" opacity="0.9"/>
       <line id="xh-eded-h-${tf}" x1="${L}" y1="0" x2="${W - R}" y2="0" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,4" opacity="0.75"/>
       <circle id="xh-eded-kdot-${tf}" cx="0" cy="0" r="5.5" fill="#ffffff" stroke="#0f1218" stroke-width="2"/>
       <circle id="xh-eded-fdot-${tf}" cx="0" cy="0" r="5" fill="#38bdf8" stroke="#ffffff" stroke-width="1.5"/>
       <circle id="xh-eded-sdot-${tf}" cx="0" cy="0" r="6.5" fill="#fbbf24" stroke="#ffffff" stroke-width="2"/>
-      <rect id="xh-eded-xbg-${tf}" x="0" y="${entBot + 3}" width="124" height="20" rx="4" fill="#fbbf24"/>
-      <text id="xh-eded-xtxt-${tf}" x="0" y="${entBot + 17}" text-anchor="middle" fill="#0f172a" font-size="11.5" font-weight="bold"></text>
-      <rect id="xh-eded-tbg-${tf}" x="0" y="0" width="530" height="74" rx="6" fill="rgba(15,18,26,0.96)" stroke="#fbbf24" stroke-width="1.3"/>
+      <rect id="xh-eded-xbg-${tf}" x="0" y="${oscBot + 3}" width="124" height="20" rx="4" fill="#fbbf24"/>
+      <text id="xh-eded-xtxt-${tf}" x="0" y="${oscBot + 17}" text-anchor="middle" fill="#0f172a" font-size="11.5" font-weight="bold"></text>
+      <rect id="xh-eded-tbg-${tf}" x="0" y="0" width="580" height="76" rx="6" fill="rgba(15,18,26,0.96)" stroke="#fbbf24" stroke-width="1.3"/>
       <text id="xh-eded-t1-${tf}" x="0" y="0" fill="#fbbf24" font-size="12.5" font-weight="bold"></text>
       <text id="xh-eded-t2-${tf}" x="0" y="0" fill="#34d399" font-size="12.5" font-weight="bold"></text>
-      <text id="xh-eded-t3-${tf}" x="0" y="0" fill="#e2e8f0" font-size="12"></text>
+      <text id="xh-eded-t3-${tf}" x="0" y="0" fill="#c4b5fd" font-size="12"></text>
     </g>
   </svg>`;
 }
@@ -2380,7 +2567,7 @@ window.onEntryDedicatedMove = function(ev, tf) {
   const yK = cfg.canTop + (1 - (p.c - cfg.pMin) / (cfg.pMax - cfg.pMin)) * cfg.canH;
   const yF = cfg.entTop + (1 - p.entryFast / 100) * cfg.entH;
   const yS = cfg.entTop + (1 - p.entrySlow / 100) * cfg.entH;
-  const hy = Math.max(cfg.canTop, Math.min(cfg.entBot, my));
+  const hy = Math.max(cfg.canTop, Math.min(cfg.oscBot || cfg.entBot, my));
 
   g.style.display = 'block';
   $('xh-eded-v-' + tf).setAttribute('x1', x); $('xh-eded-v-' + tf).setAttribute('x2', x);
@@ -2395,18 +2582,18 @@ window.onEntryDedicatedMove = function(ev, tf) {
   $('xh-eded-xtxt-' + tf).setAttribute('x', xClamped);
   $('xh-eded-xtxt-' + tf).textContent = tm;
 
-  const boxW = 530, boxH = 74;
+  const boxW = 580, boxH = 76;
   const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
-  const by = Math.max(cfg.canTop + 6, Math.min(cfg.entBot - boxH - 6, hy - 36));
+  const by = Math.max(cfg.canTop + 6, Math.min((cfg.oscBot || cfg.entBot) - boxH - 6, hy - 36));
   $('xh-eded-tbg-' + tf).setAttribute('x', bx); $('xh-eded-tbg-' + tf).setAttribute('y', by);
   const t1 = $('xh-eded-t1-' + tf), t2 = $('xh-eded-t2-' + tf), t3 = $('xh-eded-t3-' + tf);
   t1.setAttribute('x', bx + 10); t1.setAttribute('y', by + 20);
   t2.setAttribute('x', bx + 10); t2.setAttribute('y', by + 42);
-  t3.setAttribute('x', bx + 10); t3.setAttribute('y', by + 62);
+  t3.setAttribute('x', bx + 10); t3.setAttribute('y', by + 63);
   t1.textContent = `🕒 ${tm} | 黄金K线: 开$${f2(p.o)} 高$${f2(p.h)} 低$${f2(p.l)} 收$${f2(p.c)} (单根波幅 $${f2(p.barSpan)} / 14根波幅 $${f2(p.span)})`;
   t2.setAttribute('fill', p.entryCol);
-  t2.textContent = `🚦 所在区间: 【${p.zoneName}】 | 慢均线(EMA8): ${p.entrySlow}分  ·  抗毛刺快线: ${p.entryFast}分`;
-  t3.textContent = `📌 决策原因: ${p.entryReason}`;
+  t2.textContent = `🚦 所在区间: 【${p.zoneName}】 | 慢均线(EMA8): ${p.entrySlow}分 · 快线: ${p.entryFast}分 | ${p.entryReason}`;
+  t3.textContent = `🎛️ MT4指标: CCI=${p.cci ?? '-'} · KD=${p.stochK ?? '-'}/${p.stochD ?? '-'} · RSI=${p.rsi ?? '-'} · %R=${p.wpr ?? '-'} · OsMA=${p.osma ?? '-'} · DeM=${p.dem ?? '-'} · RVI=${p.rvi ?? '-'} · iATR=${p.atr ?? '-'}$`;
 };
 
 window.onEntryDedicatedLeave = function(tf) {
@@ -2414,19 +2601,20 @@ window.onEntryDedicatedLeave = function(tf) {
   if (g) g.style.display = 'none';
 };
 
-// 一图一屏大型 SVG 图表 (含: ①震荡指数+单次急跌标记 ②时间1:1对齐的「是否适合入场」双线时序图 ③可选K线蜡烛图+布林带)
+// 一图一屏大型 SVG 图表 (含: ①震荡指数+单次急跌标记 ②时间1:1对齐的「是否适合入场」双线时序图 ③黄金K线蜡烛图+布林带 ④MT4 12项震荡指标附图)
 function bigChartSvg(rawArr, tf) {
   if (!rawArr || rawArr.length < 2) return '<div class="mut">暂无趋势数据</div>';
   const showC = !!SHOW_CANDLE[tf];
   const arr = calcEntrySeries(rawArr, TOL);
-  const W = 1200, H = showC ? 720 : 540, L = 66, R = 112, T = 24, B = 48;
+  const W = 1200, H = showC ? 860 : 540, L = 66, R = 112, T = 24, B = 48;
   const cw = W - L - R, n = arr.length;
   const xOf = (i) => L + (i / (n - 1)) * cw;
 
-  // 面板1: 震荡指数走势图 | 面板2: 时间轴1:1对齐的「是否适合入场(快线+EMA8慢均线)」时序图 | 面板3(可选): 黄金K线蜡烛图+布林带
-  const idxTop = T, idxH = showC ? 210 : 255, idxBot = idxTop + idxH;
-  const entTop = idxBot + 32, entH = showC ? 155 : 175, entBot = entTop + entH;
-  const canTop = entBot + 32, canH = showC ? (H - B - canTop) : 0, canBot = canTop + canH;
+  // 面板1: 震荡指数走势图 | 面板2: 「是否适合入场(快线+EMA8慢均线)」 | 面板3: 黄金K线+布林带 | 面板4: MT4 12项震荡指标附图
+  const idxTop = T, idxH = showC ? 190 : 255, idxBot = idxTop + idxH;
+  const entTop = idxBot + 30, entH = showC ? 140 : 175, entBot = entTop + entH;
+  const canTop = entBot + 30, canH = showC ? 195 : 0, canBot = canTop + canH;
+  const oscTop = canBot + 28, oscH = showC ? (H - B - oscTop) : 0, oscBot = oscTop + oscH;
   const yIdx = (v) => idxTop + (1 - v / 100) * idxH;
   const yEnt = (v) => entTop + (1 - v / 100) * entH;
 
@@ -2445,7 +2633,7 @@ function bigChartSvg(rawArr, tf) {
   const yPrice = (v) => canTop + (1 - (v - pMin) / (pMax - pMin)) * canH;
 
   // 保存几何信息供鼠标十字准星高频调用
-  CHART_PTS[tf] = { arr, W, H, L, R, T, B, cw, idxTop, idxH, idxBot, entTop, entH, entBot, canTop, canH, canBot, showC, pMin, pMax };
+  CHART_PTS[tf] = { arr, W, H, L, R, T, B, cw, idxTop, idxH, idxBot, entTop, entH, entBot, canTop, canH, canBot, oscTop, oscH, oscBot, showC, pMin, pMax };
 
   const pts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yIdx(p.adjV).toFixed(1)}`).join(' ');
   const rawPts = arr.map((p, i) => `${xOf(i).toFixed(1)},${yIdx(p.v).toFixed(1)}`).join(' ');
@@ -2472,7 +2660,7 @@ function bigChartSvg(rawArr, tf) {
   const idxs = [];
   for (let i = 0; i < n - 1; i += step) idxs.push(i);
   idxs.push(n - 1);
-  const gridBottom = showC ? canBot : entBot;
+  const gridBottom = showC ? oscBot : entBot;
   const xTicks = idxs.map((i) => {
     const x = xOf(i).toFixed(1), tm = fmtBJ(arr[i].t), p = arr[i];
     const stShort = p.entryState === 'OK' ? '🟢入场区' : p.entryState === 'WAIT' ? '🟡缓冲' : '🔴离场区';
@@ -2540,7 +2728,7 @@ function bigChartSvg(rawArr, tf) {
     <polyline fill="none" stroke="#fbbf24" stroke-width="2.8" points="${entSlowPts}"/>
     ${entDots}`;
 
-  // 面板3: 黄金价格 K 线蜡烛图 + 布林带 BB(20,2) 子面板 (仅当用户点击开启时渲染)
+  // 面板3: 黄金价格 K 线蜡烛图 + 布林带 BB(20,2) + 面板4: MT4 12项震荡指标附图
   let candleSvg = '';
   if (showC) {
     const pTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
@@ -2572,10 +2760,11 @@ function bigChartSvg(rawArr, tf) {
     }).join('');
     candleSvg = `<line x1="${L}" y1="${entBot + 14}" x2="${W - R}" y2="${entBot + 14}" stroke="#262d3b" stroke-width="1.5"/>
       <text x="${L + 6}" y="${canTop - 7}" fill="#e8b84a" font-size="12" font-weight="bold">🕯️ 现货黄金 XAUUSD K线蜡烛图 + 布林带 BB(20,2)  (0秒延迟实时 · 蓝实线=上下轨 · 黄虚线=中轨MA20)</text>
-      ${pTicks}${bbSvg}${candles}`;
+      ${pTicks}${bbSvg}${candles}
+      ${renderOscSubPanelSvg(arr, oscTop, oscH, L, R, W, cw, xOf)}`;
   }
 
-  return `<svg class="big-svg" id="svg-${tf}" style="height:${showC ? 'calc(100vh - 220px);min-height:580px;max-height:760px' : 'calc(100vh - 275px);min-height:460px;max-height:660px'}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onChartMove(event,'${tf}')" onmouseleave="onChartLeave('${tf}')">
+  return `<svg class="big-svg" id="svg-${tf}" style="height:${showC ? '740px;min-height:640px;max-height:840px' : 'calc(100vh - 275px);min-height:460px;max-height:660px'}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onChartMove(event,'${tf}')" onmouseleave="onChartLeave('${tf}')">
     <defs>
       <linearGradient id="ag-${tf}" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stop-color="#e8b84a" stop-opacity="0.28"/>
@@ -2606,11 +2795,11 @@ function bigChartSvg(rawArr, tf) {
       <rect id="xh-ybg-${tf}" x="${W - R + 2}" y="0" width="104" height="22" rx="4" fill="#e8b84a"/>
       <text id="xh-ytxt-${tf}" x="${W - R + 54}" y="0" text-anchor="middle" fill="#121620" font-size="12" font-weight="bold"></text>
       <!-- 顶部悬浮详情框 -->
-      <rect id="xh-tbg-${tf}" x="0" y="0" width="490" height="88" rx="6" fill="rgba(15,18,24,0.95)" stroke="#e8b84a" stroke-width="1.2"/>
+      <rect id="xh-tbg-${tf}" x="0" y="0" width="580" height="88" rx="6" fill="rgba(15,18,24,0.95)" stroke="#e8b84a" stroke-width="1.2"/>
       <text id="xh-t1-${tf}" x="0" y="0" fill="#e8b84a" font-size="12.5" font-weight="bold"></text>
       <text id="xh-t2-${tf}" x="0" y="0" fill="#2ecc8f" font-size="12.5" font-weight="bold"></text>
       <text id="xh-t3-${tf}" x="0" y="0" fill="#e6e9ef" font-size="12"></text>
-      <text id="xh-t4-${tf}" x="0" y="0" fill="#58a6ff" font-size="12"></text>
+      <text id="xh-t4-${tf}" x="0" y="0" fill="#c4b5fd" font-size="12"></text>
     </g>
   </svg>`;
 }
@@ -2629,7 +2818,7 @@ window.onChartMove = function(ev, tf) {
   const x = cfg.L + (idx / (n - 1)) * cfg.cw;
   const yPoint = cfg.idxTop + (1 - p.adjV / 100) * cfg.idxH;
   const yEntPoint = cfg.entTop + (1 - p.entryScore / 100) * cfg.entH;
-  const gridBottom = cfg.showC ? cfg.canBot : cfg.entBot;
+  const gridBottom = cfg.showC ? (cfg.oscBot || cfg.canBot) : cfg.entBot;
   const hy = Math.max(cfg.T, Math.min(gridBottom, my));
 
   g.style.display = 'block';
@@ -2652,7 +2841,9 @@ window.onChartMove = function(ev, tf) {
   const ybg = $('xh-ybg-' + tf), ytxt = $('xh-ytxt-' + tf);
   ybg.setAttribute('y', hy - 11);
   ytxt.setAttribute('y', hy + 4);
-  if (cfg.showC && hy >= cfg.canTop) {
+  if (cfg.showC && hy >= cfg.oscTop) {
+    ytxt.textContent = (KLINE_OSC_KEY || 'cci').toUpperCase();
+  } else if (cfg.showC && hy >= cfg.canTop) {
     const pv = cfg.pMax - (hy - cfg.canTop) / cfg.canH * (cfg.pMax - cfg.pMin);
     ytxt.textContent = pv.toFixed(2) + '$';
   } else if (hy >= cfg.entTop && hy <= cfg.entBot) {
@@ -2663,10 +2854,9 @@ window.onChartMove = function(ev, tf) {
     ytxt.textContent = '指数 ' + iv.toFixed(1);
   }
 
-  // 顶部详情浮窗 (含时间、震荡指数、单次跌幅、是否适合入场、K线与布林带)
+  // 顶部详情浮窗 (含时间、震荡指数、单次跌幅、是否适合入场、K线与MT4震荡指标)
   const tbg = $('xh-tbg-' + tf), t1 = $('xh-t1-' + tf), t2 = $('xh-t2-' + tf), t3 = $('xh-t3-' + tf), t4 = $('xh-t4-' + tf);
-  const hasBB = p.bbU != null && p.bbM != null && p.bbL != null;
-  const boxW = 500, boxH = hasBB ? 88 : 68;
+  const boxW = 580, boxH = 88;
   tbg.setAttribute('width', boxW);
   tbg.setAttribute('height', boxH);
   const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
@@ -2681,8 +2871,8 @@ window.onChartMove = function(ev, tf) {
   t1.textContent = `🕒 ${tm}  |  震荡指数: ${p.adjV}分(原${p.v})  |  单次变化: ${chgStr}  |  ${dirTxt}`;
   t2.setAttribute('fill', p.entryCol);
   t2.textContent = `🚦 是否适合入场: ${p.entryTxt} (入场适宜度 ${p.entryScore}/100 · ${p.entryReason})`;
-  t3.textContent = `黄金K线: 开${f2(p.o)} 高${f2(p.h)} 低${f2(p.l)} 收${f2(p.c)}$ | 单根波幅:${f2(p.barSpan)}$ | 14根波幅:${f2(p.span)}$`;
-  t4.textContent = hasBB ? `布林带 BB(20,2): 上轨 ${f2(p.bbU)}$  ·  中轨 ${f2(p.bbM)}$  ·  下轨 ${f2(p.bbL)}$` : '';
+  t3.textContent = `黄金K线: 开${f2(p.o)} 高${f2(p.h)} 低${f2(p.l)} 收${f2(p.c)}$ | 单根:${f2(p.barSpan)}$ | 14根:${f2(p.span)}$ | BB中轨:${f2(p.bbM)}$`;
+  t4.textContent = `🎛️ MT4指标: CCI=${p.cci ?? '-'} · KD=${p.stochK ?? '-'}/${p.stochD ?? '-'} · RSI=${p.rsi ?? '-'} · %R=${p.wpr ?? '-'} · OsMA=${p.osma ?? '-'} · DeM=${p.dem ?? '-'} · iATR=${p.atr ?? '-'}$`;
 };
 
 window.onChartLeave = function(tf) {
@@ -3675,23 +3865,24 @@ function render() {
         <div class="mchip"><span>🛡️ 均线过滤假跌毛刺:</span><b style="color:#38bdf8">${filteredFakeDropCnt} 次</b><span class="mut">(快线偶发下探但均线≥55未破)</span></div>
         <div class="mchip"><span>近120根统计:</span><span style="color:#34d399;font-weight:700">🟢入场区 ${okZonePct}%</span><span class="mut">·</span><span style="color:#fb7185;font-weight:700">🔴离场区 ${exitZonePct}%</span></div>
       </div>
+      ${buildOscToolbarHtml(curEntTf, d.timeframes[curEntTf])}
       <div class="chart-wrap">${buildEntryKLineChartSvg(curEntSpRaw, curEntTf)}</div>
       <div class="legend" style="justify-content:space-between;margin-bottom:10px">
         <div style="display:flex;flex-wrap:wrap;gap:14px">
           <span><i style="background:#fbbf24;height:4px"></i><b>亮金粗实线: EMA8 慢速决策均线 (核心基准，不破 55 分不轻易离场)</b></span>
           <span><i style="background:#38bdf8"></i>青白实线: 3周期抗毛刺快线</span>
+          <span><i style="background:#a78bfa"></i>底部附图: MT4 12项自带震荡指标 (支持顶部按钮一键切换)</span>
           <span><i style="background:#10b981"></i>🟢 入场区间 (≥56分：双线共振可开EA)</span>
-          <span><i style="background:#38bdf8"></i>🛡️ 均线护航 (快线短暂掉下但均线≥55未破 = 假跌毛刺，拿住等回调)</span>
           <span><i style="background:#f43f5e"></i>🔴 离场区间 (&lt;46分：双线共振破位，暂停逆势加仓/锁仓)</span>
         </div>
-        <span>🎯 鼠标在图上左右移动即可 1:1 对齐回看历史 K 线与双线入场/离场点</span>
+        <span>🎯 鼠标在图上左右移动即可 1:1 对齐回看历史 K 线、双线入场点与 MT4 震荡指标</span>
       </div>
       <details class="clean-fold" id="fold-entry-all-tfs" ${window.OPEN_FOLDS && window.OPEN_FOLDS['fold-entry-all-tfs'] ? 'open' : ''} ontoggle="window.OPEN_FOLDS&&(window.OPEN_FOLDS[this.id]=this.open)">
         <summary>📊 点击展开/收起：1M / 5M / 15M / 1H / 4H 全周期入场区间色带一览表 (点击任意周期可切换上方大图)</summary>
         <div style="margin-top:8px">${entryRowsHtml}</div>
       </details>`;
 
-    // 渲染 5 个周期的「一图一屏幕」大型趋势图 (顶部标签全部采用 .mchip 严格水平等高对齐 + 内置是否适合入场时序图 + 蜡烛图对比开关按钮)
+    // 渲染 5 个周期的「一图一屏幕」大型趋势图 (顶部标签全部采用 .mchip 严格水平等高对齐 + 内置是否适合入场时序图 + K线与MT4震荡指标附图)
     const TF_DESC = { '1M': '1分钟超短线 (每15秒0延迟更新)', '5M': '5分钟短线 (每15秒0延迟更新)', '15M': '15分钟波段 (每15秒0延迟更新)', '1H': '1小时主周期 (每15秒0延迟更新)', '4H': '4小时大周期 (每15秒0延迟更新)' };
     $('bigCharts').innerHTML = ['1M', '5M', '15M', '1H', '4H'].map((k) => {
       const t = d.timeframes[k];
@@ -3709,9 +3900,9 @@ function render() {
       return `<section class="card screen-card" id="chart-${k}" style="margin-bottom:18px">
         <div>
           <div class="vhead">
-            <h2 style="margin:0;font-size:18px;display:flex;align-items:center;flex-wrap:wrap;gap:6px">${isFast ? '<span class="live-dot"></span>' : ''}<span>📈 ${k} 实时震荡指数 & 是否适合入场大图</span><span class="mut sm" style="font-weight:400">— ${TF_DESC[k]} · 时间: ${firstT} 至 ${lastT}</span></h2>
+            <h2 style="margin:0;font-size:18px;display:flex;align-items:center;flex-wrap:wrap;gap:6px">${isFast ? '<span class="live-dot"></span>' : ''}<span>📈 ${k} 实时震荡指数 & 黄金K线 + MT4震荡指标大图</span><span class="mut sm" style="font-weight:400">— ${TF_DESC[k]} · 时间: ${firstT} 至 ${lastT}</span></h2>
             <div class="btns">
-              <button class="sm ${showC ? 'on' : ''}" onclick="toggleCandle('${k}')">🕯️ ${showC ? '隐藏黄金K线蜡烛图+布林带' : '显示黄金K线蜡烛图+布林带'}</button>
+              <button class="sm ${showC ? 'on' : ''}" onclick="toggleCandle('${k}')">🕯️ ${showC ? '隐藏K线与MT4震荡指标附图' : '显示K线与MT4震荡指标附图'}</button>
               <a href="#ind-${k}"><button class="sm">🎛️ 查看 ${k} 20项指标明细(含MT4全套)</button></a>
               <a href="${API[k]}" target="_blank" rel="noopener"><button class="sm">🔗 验证 ${k} 原始K线</button></a>
             </div>
@@ -3724,6 +3915,7 @@ function render() {
             <div class="mchip"><span class="pill ${inRange ? 'RANGE' : 'TREND'}">${inRange ? '✅ 在合理区间内' : '⚠️ 超出合理区间'}</span><span class="mut">14根波幅:</span><b>${f2(t.span14)}$ / 目标${f2(TOL)}$</b></div>
             <div class="mchip"><span class="mut">最新黄金价:</span><b class="num-chip ${isFast ? 'fast-num' : ''}" style="color:var(--gold)">${f2(t.price)}$</b><span class="mut">(${fmtBJ(t.lastBarTime)})</span></div>
           </div>
+          ${showC ? buildOscToolbarHtml(k, t) : ''}
         </div>
         <div class="chart-wrap">${bigChartSvg(sp, k)}</div>
         <div class="legend" style="justify-content:space-between">
@@ -4904,6 +5096,7 @@ function updateMt4UiStatus(mt4, ea) {
     const isMockAcc = !!(mt4.isMock || mt4.account === '8861092' || mt4.account === '1');
     const ageSec = Math.max(0, Math.round((Date.now() - mt4.ts) / 1000));
     const pnlStr = `${mt4.totalPnl >= 0 ? '+' : ''}$${f2(mt4.totalPnl)}`;
+    const hasOsc = !!(mt4.oscByTf && Object.keys(mt4.oscByTf).length > 0);
     if (btn) {
       btn.innerHTML = isMockAcc
         ? `🧪 MT4演示数据(#${mt4.account} · 非真实账号)`
@@ -4914,31 +5107,34 @@ function updateMt4UiStatus(mt4, ea) {
     if (pill) {
       pill.textContent = isMockAcc
         ? `🧪 当前为网页模拟演示数据 (假账号 #${mt4.account}) · 等待您真实的 MT4 推送覆盖`
-        : `🟢 真实MT4在线 (${ageSec}秒前更新 · 您的账号 #${mt4.account || '-'})`;
+        : `🟢 真实MT4在线 (${ageSec}秒前更新 · 账号 #${mt4.account || '-'} · ${hasOsc ? 'v2.0已直传12项震荡指标' : 'v1.x仅传账户，建议下载v2.0脚本'})`;
       pill.className = isMockAcc ? 'pill MIXED' : 'pill RANGE';
     }
     if (bar) {
       const headBadge = isMockAcc
         ? `🧪 <b style="color:#fbbf24">当前显示的是【网页模拟测试按钮】生成的假演示账号 (#${mt4.account})，不是您的真实 MT4！</b> <button class="sm" onclick="clearMt4Data()" style="padding:1px 7px;color:#fb7185;border-color:#fb7185">🗑️ 立即清除假数据</button><br>`
         : `🟢 <b>您的真实 MT4 实盘已连接</b> `;
+      const oscBadge = hasOsc
+        ? ` | <span class="pill RANGE" style="font-size:11px">🎛️ MT4原生12项震荡指标(1M~1D)实时直传已激活</span>`
+        : ` | <span class="pill MIXED" style="font-size:11px">⚠️ 当前MT4脚本为旧版(未上传12项震荡指标)，请点击上方下载/复制最新 v2.0 脚本覆盖编译！</span>`;
       bar.innerHTML = headBadge + `(账户 <b>#${mt4.account || '-'}</b> · ${mt4.server || 'Live'} · 品种 <b>${mt4.symbol || 'XAUUSD'}</b> 现价 <b>$${f2(mt4.bid)}</b> · 点差 <b>${mt4.spreadPts || mt4.spread || '-'}</b>) — ` +
         `余额: <b style="color:var(--gold)">$${f2(mt4.balance)}</b> | 净值: <b>$${f2(mt4.equity)}</b> | 已用预付款: <b>$${f2(mt4.margin)}</b> (${f2(mt4.marginLevel)}%) | ` +
         `多单 Buy: <b>${mt4.buyCount}层 / ${f2(mt4.buyLots)}手</b> (均价 $${f2(mt4.buyAvgPrice)} · 浮盈 <b style="color:${mt4.buyPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.buyPnl)}</b>) | ` +
         `空单 Sell: <b>${mt4.sellCount}层 / ${f2(mt4.sellLots)}手</b> (均价 $${f2(mt4.sellAvgPrice)} · 浮盈 <b style="color:${mt4.sellPnl >= 0 ? '#34d399' : '#fb7185'}">$${f2(mt4.sellPnl)}</b>) | ` +
-        `挂单: BuyStop ${mt4.buyStopCount || 0}笔 / SellStop ${mt4.sellStopCount || 0}笔`;
+        `挂单: BuyStop ${mt4.buyStopCount || 0}笔 / SellStop ${mt4.sellStopCount || 0}笔` + oscBadge;
     }
   } else {
     if (btn) {
-      btn.innerHTML = `🔌 MT4实盘同步(点击接入)`;
+      btn.innerHTML = `🔌 MT4实盘同步(点击接入v2.0)`;
       btn.style.borderColor = 'rgba(56,189,248,0.55)';
       btn.style.color = '#38bdf8';
     }
     if (pill) {
-      pill.textContent = '等待您的真实 MT4 脚本推送数据...';
+      pill.textContent = '等待您的真实 MT4 脚本(v2.0)推送账户与12项震荡指标...';
       pill.className = 'pill NEUT';
     }
     if (bar) {
-      bar.innerHTML = `⚪ 当前尚未收到您的真实 MT4 终端推送。请确认：① MT4 <b>工具 → 选项 → EA交易</b> 已勾选「允许 WebRequest」并填入 <code style="color:#38bdf8">${window.location.origin}</code>；② 将最新下载的脚本拖到图表上并勾选「允许实时自动交易」。`;
+      bar.innerHTML = `⚪ 当前尚未收到您的真实 MT4 终端推送。请确认：① MT4 <b>工具 → 选项 → EA交易</b> 已勾选「允许 WebRequest」并填入 <code style="color:#38bdf8">${window.location.origin}</code>；② 将最新下载的 v2.0 脚本(含12项自带震荡指标上传)拖到图表上并勾选「允许实时自动交易」。`;
     }
   }
 }
@@ -4953,7 +5149,7 @@ function buildMql4Source(kind) {
   const entryLines = isScript ? [
     '// 脚本只运行一次，这里用循环常驻，直到手动移除脚本/关闭图表/关闭MT4',
     'void OnStart() {',
-    '   Print("🚀 [GoldDashboardSync] 脚本已启动，正在向网站同步您的真实 MT4 账户 #", AccountNumber());',
+    '   Print("🚀 [GoldDashboardSync v2.0] 脚本已启动，正在同步 MT4 账户 #", AccountNumber(), " + 全周期12项震荡指标");',
     '   while(!IsStopped()) {',
     '      PushAccountDataToWeb();',
     '      Sleep(MathMax(1, SyncIntervalSec) * 1000);',
@@ -4962,7 +5158,7 @@ function buildMql4Source(kind) {
     '}'
   ] : [
     'int OnInit() {',
-    '   Print("🚀 [GoldDashboardSync] EA已启动，正在向网站同步您的真实 MT4 账户 #", AccountNumber());',
+    '   Print("🚀 [GoldDashboardSync v2.0] EA已启动，正在同步 MT4 账户 #", AccountNumber(), " + 全周期12项震荡指标");',
     '   EventSetTimer(MathMax(1, SyncIntervalSec));',
     '   PushAccountDataToWeb();',
     '   return(INIT_SUCCEEDED);',
@@ -4983,21 +5179,21 @@ function buildMql4Source(kind) {
   ];
   return [
     '//+------------------------------------------------------------------+',
-    isScript ? '//|                              GoldDashboardSyncScript.mq4 (脚本版) |' : '//|                                     GoldDashboardSync.mq4 (EA版) |',
-    '//|        黄金震荡指数 & 马丁EA风控台 — MT4 实盘数据实时同步脚本     |',
+    isScript ? '//|                         GoldDashboardSyncScript.mq4 (脚本版 v2.0) |' : '//|                                GoldDashboardSync.mq4 (EA版 v2.0) |',
+    '//|   黄金震荡指数 & 马丁EA风控台 — MT4 实盘账户 + 12项自带震荡指标直传 |',
     '//|   100%只读安全保证：绝不调用任何下单/改单/平仓函数，零交易干预！  |',
     '//+------------------------------------------------------------------+',
     '#property copyright "Gold Range Index Dashboard"',
-    '#property version   "1.10"',
+    '#property version   "2.00"',
     '#property strict',
     isScript ? '#property show_inputs' : '',
     '',
-    'input string DashboardUrl    = "' + vercelApiUrl + '"; // 线上Vercel接收地址(需在MT4白名单添加域名)',
+    'input string DashboardUrl    = "' + vercelApiUrl + '"; // 线上接收地址(需在MT4白名单添加域名)',
     'input string LocalBackupUrl  = "' + localApiUrl + '";  // 本地备用接收地址(如开启本地服务也会同步)',
     'input int    SyncIntervalSec = 5;               // 同步间隔秒数 (建议 3~10 秒)',
     'input string GoldSymbolKey   = "XAU";           // 黄金品种匹配关键字 (自动兼容 XAUUSD / GOLD)',
     'input int    MagicFilter     = 0;               // EA魔术号过滤 (0 = 统计账户内所有黄金订单)',
-    'input string SyncToken       = "";              // 推送口令 (与 Vercel 环境变量 MT4_TOKEN 一致；未设置则留空)',
+    'input string SyncToken       = "";              // 推送口令 (与环境变量 MT4_TOKEN 一致；未设置则留空)',
     '',
     ...entryLines,
     '',
@@ -5006,6 +5202,47 @@ function buildMql4Source(kind) {
     '   if(StringFind(sym, GoldSymbolKey) >= 0) return true;',
     '   if(StringFind(sym, "GOLD") >= 0 || StringFind(sym, "Gold") >= 0 || StringFind(sym, "gold") >= 0) return true;',
     '   return false;',
+    '}',
+    '',
+    '// 采集指定周期的 MT4 原生 12 项震荡指标 + ADX/DI:',
+    '// 顺序: atr,bears,bulls,cci,dem,force,mom,osma,rsi,rvi,rviSig,stochK,stochD,wpr,adx,pdi,mdi',
+    'string BuildTfOsc(string sym, int tf) {',
+    '   double atr    = iATR(sym, tf, 14, 0);',
+    '   double bears  = iBearsPower(sym, tf, 13, PRICE_CLOSE, 0);',
+    '   double bulls  = iBullsPower(sym, tf, 13, PRICE_CLOSE, 0);',
+    '   double cci    = iCCI(sym, tf, 14, PRICE_TYPICAL, 0);',
+    '   double dem    = iDeMarker(sym, tf, 14, 0);',
+    '   double force  = iForce(sym, tf, 13, MODE_EMA, PRICE_CLOSE, 0);',
+    '   double mom    = iMomentum(sym, tf, 14, PRICE_CLOSE, 0);',
+    '   double osma   = iOsMA(sym, tf, 12, 26, 9, PRICE_CLOSE, 0);',
+    '   double rsi    = iRSI(sym, tf, 14, PRICE_CLOSE, 0);',
+    '   double rvi    = iRVI(sym, tf, 10, MODE_MAIN, 0);',
+    '   double rviSig = iRVI(sym, tf, 10, MODE_SIGNAL, 0);',
+    '   double stK    = iStochastic(sym, tf, 14, 3, 3, MODE_SMA, 0, MODE_MAIN, 0);',
+    '   double stD    = iStochastic(sym, tf, 14, 3, 3, MODE_SMA, 0, MODE_SIGNAL, 0);',
+    '   double wpr    = iWPR(sym, tf, 14, 0);',
+    '   double adx    = iADX(sym, tf, 14, PRICE_CLOSE, MODE_MAIN, 0);',
+    '   double pdi    = iADX(sym, tf, 14, PRICE_CLOSE, MODE_PLUSDI, 0);',
+    '   double mdi    = iADX(sym, tf, 14, PRICE_CLOSE, MODE_MINUSDI, 0);',
+    '   return StringConcatenate(',
+    '      DoubleToString(atr, 2), ",",',
+    '      DoubleToString(bears, 2), ",",',
+    '      DoubleToString(bulls, 2), ",",',
+    '      DoubleToString(cci, 1), ",",',
+    '      DoubleToString(dem, 3), ",",',
+    '      DoubleToString(force, 1), ",",',
+    '      DoubleToString(mom, 2), ",",',
+    '      DoubleToString(osma, 3), ",",',
+    '      DoubleToString(rsi, 1), ",",',
+    '      DoubleToString(rvi, 3), ",",',
+    '      DoubleToString(rviSig, 3), ",",',
+    '      DoubleToString(stK, 1), ",",',
+    '      DoubleToString(stD, 1), ",",',
+    '      DoubleToString(wpr, 1), ",",',
+    '      DoubleToString(adx, 1), ",",',
+    '      DoubleToString(pdi, 1), ",",',
+    '      DoubleToString(mdi, 1)',
+    '   );',
     '}',
     '',
     'void PushAccountDataToWeb() {',
@@ -5057,10 +5294,20 @@ function buildMql4Source(kind) {
     '   StringReplace(srv, " ", "_");',
     '   StringReplace(srv, "#", "");',
     '   StringReplace(srv, "&", "");',
-    '   string symClean = Symbol();',
+    '   string symRaw   = Symbol();',
+    '   string symClean = symRaw;',
     '   StringReplace(symClean, " ", "");',
     '   StringReplace(symClean, "#", "");',
-    '   int    sprd   = (int)MarketInfo(Symbol(), MODE_SPREAD);',
+    '   int    sprd   = (int)MarketInfo(symRaw, MODE_SPREAD);',
+    '',
+    '   string oscPayload = StringConcatenate(',
+    '      "1M:",  BuildTfOsc(symRaw, PERIOD_M1),  ";",',
+    '      "5M:",  BuildTfOsc(symRaw, PERIOD_M5),  ";",',
+    '      "15M:", BuildTfOsc(symRaw, PERIOD_M15), ";",',
+    '      "1H:",  BuildTfOsc(symRaw, PERIOD_H1),  ";",',
+    '      "4H:",  BuildTfOsc(symRaw, PERIOD_H4),  ";",',
+    '      "1D:",  BuildTfOsc(symRaw, PERIOD_D1)',
+    '   );',
     '',
     '   string qs = StringConcatenate(',
     '      "?account=", IntegerToString(accNum),',
@@ -5085,6 +5332,7 @@ function buildMql4Source(kind) {
     '      "&totalPnl=", DoubleToString(totalPnl, 2),',
     '      "&buyStopCount=", IntegerToString(buyStopCount),',
     '      "&sellStopCount=", IntegerToString(sellStopCount),',
+    '      "&osc=", oscPayload,',
     '      "&token=", SyncToken',
     '   );',
     '',
@@ -5101,11 +5349,12 @@ function buildMql4Source(kind) {
     '   }',
     '   if(res == 200 || resLocal == 200) {',
     '      Comment(',
-    '         "=== 🟢 黄金震荡指数网站 · 您的真实 MT4 实时同步已连接 ===\\n",',
+    '         "=== 🟢 黄金震荡指数网站 v2.0 · MT4 账户+12项震荡指标实时同步已连接 ===\\n",',
     '         "真实账号: #", accNum, " (", srv, ") | 余额: $", DoubleToString(bal, 2), " | 净值: $", DoubleToString(eq, 2), "\\n",',
     '         "买单(Buy): ", buyCount, "层 / ", DoubleToString(buyLots, 2), "手 (均价 $", DoubleToString(buyAvg, 2), " | 浮盈 $", DoubleToString(buyPnl, 2), ")\\n",',
     '         "卖单(Sell): ", sellCount, "层 / ", DoubleToString(sellLots, 2), "手 (均价 $", DoubleToString(sellAvg, 2), " | 浮盈 $", DoubleToString(sellPnl, 2), ")\\n",',
-    '         "同步状态: 线上Vercel=", (res == 200 ? "🟢成功" : "⚪未通"), " | 本地localhost=", (resLocal == 200 ? "🟢成功" : "⚪未开")',
+    '         "已直传12项MT4自带指标: iATR/Bears/Bulls/CCI/DeM/Force/Mom/OsMA/RSI/RVI/Stoch/WPR\\n",',
+    '         "同步状态: 线上=", (res == 200 ? "🟢成功" : "⚪未通"), " | 本地=", (resLocal == 200 ? "🟢成功" : "⚪未开")',
     '      );',
     '   } else {',
     '      Comment(',
@@ -5113,10 +5362,9 @@ function buildMql4Source(kind) {
     '         "您的真实账号: #", accNum, " | 余额: $", DoubleToString(bal, 2), "\\n",',
     '         "请在 MT4 顶部菜单点击：【工具(T) -> 选项(O) -> EA交易】\\n",',
     '         "勾选 ☑【允许 WebRequest 用于所列 URL】，并在下方列表添加：\\n",',
-    '         "👉 https://gold-range-index-dashboard.vercel.app\\n",',
-    '         "👉 http://localhost:3000"',
+    '         "👉 " + DashboardUrl',
     '      );',
-    '      Print("⚠️ [GoldDashboardSync] WebRequest 失败! 错误码=", err, " HTTP=", res, " 请将 https://gold-range-index-dashboard.vercel.app 添加到 MT4 工具->选项->EA交易->允许WebRequest白名单!");',
+    '      Print("⚠️ [GoldDashboardSync v2.0] WebRequest 失败! 错误码=", err, " HTTP=", res, " 请将网站域名添加到 MT4 工具->选项->EA交易->允许WebRequest白名单!");',
     '   }',
     '}'
   ].join('\r\n');
@@ -8118,11 +8366,16 @@ function buildMScoreKlineSvg(candles, tf, curScore) {
   if (!candles || !candles.length) {
     return '<div class="mut sm" style="padding:40px;text-align:center">正在采集并合成 ' + tf + ' 马丁可做指数蜡烛图数据...</div>';
   }
+  const oscArr = (window.D && window.D.model && window.D.model.sparks && window.D.model.sparks[tf]) || [];
+  const hasOsc = oscArr.length >= 2;
   // 核心：严格对齐上方 MT4 收益/浮亏极值图的绘制坐标轴 (W=1200, L=72, R=175)，确保时间轴上下完全像素级对齐！
-  const W = 1200, H = 330, L = 72, R = 175, T = 22, B = 35;
-  const cw = W - L - R, ch = H - T - B;
+  const W = 1200, H = hasOsc ? 500 : 330, L = 72, R = 175, T = 22, B = 35;
+  const cw = W - L - R, ch = hasOsc ? 235 : (H - T - B);
+  const canBot = T + ch;
+  const oscTop = canBot + 28, oscH = hasOsc ? (H - B - oscTop) : 0, oscBot = oscTop + oscH;
   const n = candles.length;
   const xOf = (i) => L + (i / Math.max(1, n - 1)) * cw;
+  const xOfOsc = (i) => L + (i / Math.max(1, oscArr.length - 1)) * cw;
 
   const vMin = 0, vMax = 100;
   const yOf = (v) => T + (1 - (v - vMin) / (vMax - vMin)) * ch;
@@ -8199,25 +8452,28 @@ function buildMScoreKlineSvg(candles, tf, curScore) {
     <text x="${W - R + 55}" y="${+lastY + 4}" text-anchor="middle" fill="#0b0e14" font-size="12" font-weight="900">${last.c}分 ${lastTxt}</text>
   `;
 
-  MSCORE_CHART_CONFIG = { candles, W, H, L, R, T, B, cw, ch, tf, vMin, vMax };
+  const oscSubSvg = hasOsc ? renderOscSubPanelSvg(oscArr, oscTop, oscH, L, R, W, cw, xOfOsc) : '';
+
+  MSCORE_CHART_CONFIG = { candles, oscArr, W, H, L, R, T, B, cw, ch, tf, vMin, vMax };
 
   return `
-    <svg class="big-svg" id="svg-mscore-kline" style="height:350px;min-height:300px;max-height:400px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onMScoreChartMove(event)" onmouseleave="onMScoreChartLeave()">
+    <svg class="big-svg" id="svg-mscore-kline" style="height:${hasOsc ? '480px;min-height:420px;max-height:540px' : '350px;min-height:300px;max-height:400px'}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" onmousemove="onMScoreChartMove(event)" onmouseleave="onMScoreChartLeave()">
       ${zoneBgs}
       ${gridLines}
       ${xTicks}
       ${candleSvg}
       ${maSvg}
       ${rightTagSvg}
+      ${oscSubSvg}
 
       <!-- 准星浮窗 -->
       <g id="xh-mscore" style="display:none;pointer-events:none">
         <line id="xh-mscore-v" x1="0" y1="${T}" x2="0" y2="${H - B}" stroke="#ffffff" stroke-width="1.2" stroke-dasharray="3,3" opacity="0.9"/>
         <circle id="xh-mscore-c" cx="0" cy="0" r="5" fill="#eab308" stroke="#ffffff" stroke-width="1.6"/>
-        <rect id="xh-mscore-box" x="0" y="0" width="380" height="66" rx="6" fill="rgba(15,20,30,0.96)" stroke="#eab308" stroke-width="1.2"/>
+        <rect id="xh-mscore-box" x="0" y="0" width="540" height="68" rx="6" fill="rgba(15,20,30,0.96)" stroke="#eab308" stroke-width="1.2"/>
         <text id="xh-mscore-t1" x="0" y="0" fill="#eab308" font-size="12" font-weight="bold"></text>
         <text id="xh-mscore-t2" x="0" y="0" fill="#ffffff" font-size="12.5" font-weight="bold"></text>
-        <text id="xh-mscore-t3" x="0" y="0" fill="#94a3b8" font-size="11.5"></text>
+        <text id="xh-mscore-t3" x="0" y="0" fill="#c4b5fd" font-size="11.5"></text>
       </g>
     </svg>
   `;
@@ -8247,6 +8503,7 @@ function buildMScoreKlineCardHtml(d, curScore, tf) {
     navDelta('nav-mkline', curScore, 2, `${curScore}分`);
   }
 
+  const tfData = d && d.timeframes && d.timeframes[tf];
   const svgHtml = buildMScoreKlineSvg(candles, tf, curScore);
 
   return `
@@ -8254,7 +8511,7 @@ function buildMScoreKlineCardHtml(d, curScore, tf) {
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <h2 style="margin:0;display:flex;align-items:center;gap:6px">
           <span class="live-dot"></span>
-          <span>🕯️ 全站唯一总分：马丁可做指数 · 多周期 K 线蜡烛图</span>
+          <span>🕯️ 全站唯一总分：马丁可做指数 · 多周期 K 线蜡烛图 + MT4 12项震荡指标附图</span>
         </h2>
         <span class="pill ${statusCls}">当前最新: <b>${curScore}分</b> (${statusTxt})</span>
         <span class="xs mut">本根 ${tf} 蜡烛: 开盘 <b style="color:#cbd5e1">${last.o}</b> · 最高 <b style="color:#34d399">${last.h}</b> · 最低 <b style="color:#fb7185">${last.l}</b> · 收盘 <b style="color:var(--gold)">${last.c}</b> (${isUp ? '+' : ''}${chg}分) · 已累计归档 <b>${candles.length}</b> 根蜡烛</span>
@@ -8267,17 +8524,16 @@ function buildMScoreKlineCardHtml(d, curScore, tf) {
         <button class="sm ${tf === '1H' ? 'pri on' : ''}" onclick="setMScoreChartTf('1H')">📅 1H (1小时主力)</button>
       </div>
     </div>
-    <div class="chart-wrap" style="min-height:350px">${svgHtml}</div>
+    ${buildOscToolbarHtml(tf, tfData)}
+    <div class="chart-wrap" style="min-height:420px">${svgHtml}</div>
     <div class="legend" style="justify-content:space-between;margin-top:6px">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         <span><i style="background:#10b981"></i>绿色阳线: 马丁指数上升/转安全</span>
         <span><i style="background:#f43f5e"></i>红色阴线: 马丁指数下滑/单边风险加剧</span>
         <span><i style="background:#eab308"></i>金色实线: MA10 指数趋势均线</span>
-        <span><i style="border:1px dashed #10b981;background:rgba(16,185,129,0.2)"></i>≥60分: 推荐做马丁绿区</span>
-        <span><i style="border:1px dashed #f59e0b;background:rgba(245,158,11,0.2)"></i>46~59分: 谨慎观望黄区</span>
-        <span><i style="background:rgba(244,63,94,0.3)"></i>&lt;46分: 单边推土机禁做红区</span>
+        <span><i style="background:#a78bfa"></i>底部附图: MT4 12项自带震荡指标 (点击上方按钮自由切换 CCI/KD/RSI/%R/OsMA/BullsBears/DeM/RVI/Mom/Force/iATR)</span>
       </div>
-      <span class="xs mut">💡 提示：鼠标移入蜡烛图显示十字准星与开高低收明细 · 全周期实时持久化记录</span>
+      <span class="xs mut">💡 提示：鼠标移入蜡烛图显示十字准星与 MT4 震荡指标明细</span>
     </div>
   `;
 }
@@ -8316,23 +8572,29 @@ window.onMScoreChartMove = function(ev) {
   $('xh-mscore-c').setAttribute('cx', x);
   $('xh-mscore-c').setAttribute('cy', yC);
 
-  const boxW = 380, boxH = 66;
+  const boxW = 540, boxH = 68;
   const bx = x + 16 + boxW > cfg.W - cfg.R ? Math.max(cfg.L + 4, x - boxW - 16) : x + 16;
   const by = cfg.T + 6;
   const box = $('xh-mscore-box'), t1 = $('xh-mscore-t1'), t2 = $('xh-mscore-t2'), t3 = $('xh-mscore-t3');
   box.setAttribute('x', bx); box.setAttribute('y', by);
   t1.setAttribute('x', bx + 12); t1.setAttribute('y', by + 19);
   t2.setAttribute('x', bx + 12); t2.setAttribute('y', by + 39);
-  t3.setAttribute('x', bx + 12); t3.setAttribute('y', by + 57);
+  t3.setAttribute('x', bx + 12); t3.setAttribute('y', by + 58);
 
   const dObj = new Date(c.t < 1e11 ? c.t * 1000 : c.t);
   const tmStr = dObj.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
   const isBull = c.c >= c.o;
   const statusStr = c.c >= 60 ? '🟢 适合做马丁' : c.c >= 46 ? '🟡 谨慎观望' : '🔴 高危禁做';
 
-  t1.textContent = `⏱️ ${cfg.tf} 蜡烛时间: ${tmStr}`;
-  t2.textContent = `开: ${c.o} | 高: ${c.h} | 低: ${c.l} | 收: ${c.c} (${isBull ? '▲阳线' : '▼阴线'})`;
-  t3.textContent = `马丁判定: ${statusStr} (柱内采样: ${c.cnt || 1}次)`;
+  const oscArr = cfg.oscArr || [];
+  const oscIdx = oscArr.length ? Math.max(0, Math.min(oscArr.length - 1, Math.round((mx - cfg.L) / cfg.cw * Math.max(1, oscArr.length - 1)))) : -1;
+  const op = oscIdx >= 0 ? oscArr[oscIdx] : null;
+
+  t1.textContent = `⏱️ ${cfg.tf} 蜡烛时间: ${tmStr}  |  马丁判定: ${statusStr}`;
+  t2.textContent = `马丁指数K线: 开 ${c.o} | 高 ${c.h} | 低 ${c.l} | 收 ${c.c} (${isBull ? '▲阳线' : '▼阴线'})`;
+  t3.textContent = op
+    ? `🎛️ MT4指标: CCI=${op.cci ?? '-'} · KD=${op.stochK ?? '-'}/${op.stochD ?? '-'} · RSI=${op.rsi ?? '-'} · %R=${op.wpr ?? '-'} · OsMA=${op.osma ?? '-'} · iATR=${op.atr ?? '-'}$`
+    : `柱内采样: ${c.cnt || 1}次`;
 };
 
 window.onMScoreChartLeave = function() {

@@ -1,22 +1,21 @@
-﻿//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
 //|                                     GoldDashboardSync.mq4 (EA版) |
-//|        黄金震荡指数 & 马丁EA风控台 — MT4 实盘数据实时同步脚本     |
+//|        黄金震荡指数 & 马丁EA风控台 — MT4 实盘数据+12项震荡指标同步 |
 //|   100%只读安全保证：绝不调用任何下单/改单/平仓函数，零交易干预！  |
 //+------------------------------------------------------------------+
 #property copyright "Gold Range Index Dashboard"
-#property version   "1.10"
+#property version   "2.00"
 #property strict
 
-
-input string DashboardUrl    = "https://gold-range-index-dashboard.vercel.app/api/mt4"; // 线上Vercel接收地址(需在MT4白名单添加域名)
+input string DashboardUrl    = "https://gold-range-index-dashboard.onrender.com/api/mt4"; // 线上接收地址(需在MT4白名单添加域名)
 input string LocalBackupUrl  = "http://localhost:3000/api/mt4";  // 本地备用接收地址(如开启本地服务也会同步)
 input int    SyncIntervalSec = 5;               // 同步间隔秒数 (建议 3~10 秒)
 input string GoldSymbolKey   = "XAU";           // 黄金品种匹配关键字 (自动兼容 XAUUSD / GOLD)
 input int    MagicFilter     = 0;               // EA魔术号过滤 (0 = 统计账户内所有黄金订单)
-input string SyncToken       = "";              // 推送口令 (与 Vercel 环境变量 MT4_TOKEN 一致；未设置则留空)
+input string SyncToken       = "";              // 推送口令 (与环境变量 MT4_TOKEN 一致；未设置则留空)
 
 int OnInit() {
-   Print("🚀 [GoldDashboardSync] EA已启动，正在向网站同步您的真实 MT4 账户 #", AccountNumber());
+   Print("🚀 [GoldDashboardSync v2.0] EA已启动，正在向网站同步真实 MT4 账户 #", AccountNumber(), " 及 MT4 自带 12 项震荡指标");
    EventSetTimer(MathMax(1, SyncIntervalSec));
    PushAccountDataToWeb();
    return(INIT_SUCCEEDED);
@@ -40,6 +39,47 @@ bool IsGoldSymbol(string sym) {
    if(StringFind(sym, GoldSymbolKey) >= 0) return true;
    if(StringFind(sym, "GOLD") >= 0 || StringFind(sym, "Gold") >= 0 || StringFind(sym, "gold") >= 0) return true;
    return false;
+}
+
+// 采集单周期 MT4 原生自带的 12 项震荡指标 + ADX:
+// 顺序: iATR, BearsPower, BullsPower, CCI, DeMarker, ForceIndex, Momentum, OsMA, RSI, RVI_Main, RVI_Sig, Stoch_K, Stoch_D, Williams%R, ADX, +DI, -DI
+string BuildTfOsc(string sym, int tf) {
+   double atr   = iATR(sym, tf, 14, 0);
+   double bears = iBearsPower(sym, tf, 13, PRICE_CLOSE, 0);
+   double bulls = iBullsPower(sym, tf, 13, PRICE_CLOSE, 0);
+   double cci   = iCCI(sym, tf, 14, PRICE_TYPICAL, 0);
+   double dem   = iDeMarker(sym, tf, 14, 0);
+   double force = iForce(sym, tf, 13, MODE_EMA, PRICE_CLOSE, 0);
+   double mom   = iMomentum(sym, tf, 14, PRICE_CLOSE, 0);
+   double osma  = iOsMA(sym, tf, 12, 26, 9, PRICE_CLOSE, 0);
+   double rsi   = iRSI(sym, tf, 14, PRICE_CLOSE, 0);
+   double rviM  = iRVI(sym, tf, 10, MODE_MAIN, 0);
+   double rviS  = iRVI(sym, tf, 10, MODE_SIGNAL, 0);
+   double stoK  = iStochastic(sym, tf, 14, 3, 3, MODE_SMA, 0, MODE_MAIN, 0);
+   double stoD  = iStochastic(sym, tf, 14, 3, 3, MODE_SMA, 0, MODE_SIGNAL, 0);
+   double wpr   = iWPR(sym, tf, 14, 0);
+   double adxV  = iADX(sym, tf, 14, PRICE_CLOSE, MODE_MAIN, 0);
+   double pdiV  = iADX(sym, tf, 14, PRICE_CLOSE, MODE_PLUSDI, 0);
+   double mdiV  = iADX(sym, tf, 14, PRICE_CLOSE, MODE_MINUSDI, 0);
+   return StringConcatenate(
+      DoubleToString(atr, 3), ",",
+      DoubleToString(bears, 2), ",",
+      DoubleToString(bulls, 2), ",",
+      DoubleToString(cci, 1), ",",
+      DoubleToString(dem, 3), ",",
+      DoubleToString(force, 1), ",",
+      DoubleToString(mom, 2), ",",
+      DoubleToString(osma, 3), ",",
+      DoubleToString(rsi, 1), ",",
+      DoubleToString(rviM, 3), ",",
+      DoubleToString(rviS, 3), ",",
+      DoubleToString(stoK, 1), ",",
+      DoubleToString(stoD, 1), ",",
+      DoubleToString(wpr, 1), ",",
+      DoubleToString(adxV, 1), ",",
+      DoubleToString(pdiV, 1), ",",
+      DoubleToString(mdiV, 1)
+   );
 }
 
 void PushAccountDataToWeb() {
@@ -91,10 +131,21 @@ void PushAccountDataToWeb() {
    StringReplace(srv, " ", "_");
    StringReplace(srv, "#", "");
    StringReplace(srv, "&", "");
-   string symClean = Symbol();
+   string symRaw = Symbol();
+   string symClean = symRaw;
    StringReplace(symClean, " ", "");
    StringReplace(symClean, "#", "");
-   int    sprd   = (int)MarketInfo(Symbol(), MODE_SPREAD);
+   int    sprd   = (int)MarketInfo(symRaw, MODE_SPREAD);
+
+   // 采集 MT4 全部 6 个周期的 12 项原生震荡指标
+   string oscPayload = StringConcatenate(
+      "1M:",  BuildTfOsc(symRaw, PERIOD_M1),  ";",
+      "5M:",  BuildTfOsc(symRaw, PERIOD_M5),  ";",
+      "15M:", BuildTfOsc(symRaw, PERIOD_M15), ";",
+      "1H:",  BuildTfOsc(symRaw, PERIOD_H1),  ";",
+      "4H:",  BuildTfOsc(symRaw, PERIOD_H4),  ";",
+      "1D:",  BuildTfOsc(symRaw, PERIOD_D1)
+   );
 
    string qs = StringConcatenate(
       "?account=", IntegerToString(accNum),
@@ -119,6 +170,7 @@ void PushAccountDataToWeb() {
       "&totalPnl=", DoubleToString(totalPnl, 2),
       "&buyStopCount=", IntegerToString(buyStopCount),
       "&sellStopCount=", IntegerToString(sellStopCount),
+      "&osc=", oscPayload,
       "&token=", SyncToken
    );
 
@@ -135,21 +187,20 @@ void PushAccountDataToWeb() {
    }
    if(res == 200 || resLocal == 200) {
       Comment(
-         "=== 🟢 黄金震荡指数网站 · 您的真实 MT4 实时同步已连接 ===\n",
+         "=== 🟢 黄金震荡指数网站 v2.0 · 您的真实 MT4 账户 + 12项自带震荡指标已连接 ===\n",
          "真实账号: #", accNum, " (", srv, ") | 余额: $", DoubleToString(bal, 2), " | 净值: $", DoubleToString(eq, 2), "\n",
          "买单(Buy): ", buyCount, "层 / ", DoubleToString(buyLots, 2), "手 (均价 $", DoubleToString(buyAvg, 2), " | 浮盈 $", DoubleToString(buyPnl, 2), ")\n",
          "卖单(Sell): ", sellCount, "层 / ", DoubleToString(sellLots, 2), "手 (均价 $", DoubleToString(sellAvg, 2), " | 浮盈 $", DoubleToString(sellPnl, 2), ")\n",
-         "同步状态: 线上Vercel=", (res == 200 ? "🟢成功" : "⚪未通"), " | 本地localhost=", (resLocal == 200 ? "🟢成功" : "⚪未开")
+         "已直传MT4原生指标: iATR / Bears / Bulls / CCI / DeM / Force / Mom / OsMA / RSI / RVI / Stoch / WPR\n",
+         "同步状态: 线上=", (res == 200 ? "🟢成功" : "⚪未通"), " | 本地localhost=", (resLocal == 200 ? "🟢成功" : "⚪未开")
       );
    } else {
       Comment(
          "=== ⚠️ MT4 同步等待授权 (错误码: ", err, " / HTTP: ", res, ") ===\n",
          "您的真实账号: #", accNum, " | 余额: $", DoubleToString(bal, 2), "\n",
          "请在 MT4 顶部菜单点击：【工具(T) -> 选项(O) -> EA交易】\n",
-         "勾选 ☑【允许 WebRequest 用于所列 URL】，并在下方列表添加：\n",
-         "👉 https://gold-range-index-dashboard.vercel.app\n",
-         "👉 http://localhost:3000"
+         "勾选 ☑【允许 WebRequest 用于所列 URL】，并在下方列表添加您的网站域名！"
       );
-      Print("⚠️ [GoldDashboardSync] WebRequest 失败! 错误码=", err, " HTTP=", res, " 请将 https://gold-range-index-dashboard.vercel.app 添加到 MT4 工具->选项->EA交易->允许WebRequest白名单!");
+      Print("⚠️ [GoldDashboardSync] WebRequest 失败! 错误码=", err, " HTTP=", res, " 请将网站域名添加到 MT4 工具->选项->EA交易->允许WebRequest白名单!");
    }
 }

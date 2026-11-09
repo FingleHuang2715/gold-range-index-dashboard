@@ -72,9 +72,10 @@ function featureSeries(bars, W = 250) {
   const bbw = new Array(n).fill(null), bbwPct = new Array(n).fill(null), atrPct = new Array(n).fill(null);
   const bbUp = new Array(n).fill(null), bbMid = new Array(n).fill(null), bbLo = new Array(n).fill(null);
   const emaDist = new Array(n).fill(null), rsi = new Array(n).fill(null), atrRatio = new Array(n).fill(null);
-  const cci = new Array(n).fill(null), stochK = new Array(n).fill(null), wpr = new Array(n).fill(null);
-  const dem = new Array(n).fill(null), rvi = new Array(n).fill(null), osmaAtr = new Array(n).fill(null);
-  const momAtr = new Array(n).fill(null), forceAtr = new Array(n).fill(null), elderNetAtr = new Array(n).fill(null);
+  const cci = new Array(n).fill(null), stochK = new Array(n).fill(null), stochD = new Array(n).fill(null), wpr = new Array(n).fill(null);
+  const dem = new Array(n).fill(null), rvi = new Array(n).fill(null), rviSig = new Array(n).fill(null), osmaAtr = new Array(n).fill(null), osmaRaw = new Array(n).fill(null);
+  const momAtr = new Array(n).fill(null), momRaw = new Array(n).fill(null), forceAtr = new Array(n).fill(null), forceRaw = new Array(n).fill(null);
+  const bullsRaw = new Array(n).fill(null), bearsRaw = new Array(n).fill(null), elderNetAtr = new Array(n).fill(null);
   const tp = bars.map((b) => (b.h + b.l + b.c) / 3);
   const fastK = new Array(n).fill(null), deMax = new Array(n).fill(0), deMin = new Array(n).fill(0);
   const rviUp = new Array(n).fill(0), rviDn = new Array(n).fill(0);
@@ -116,10 +117,18 @@ function featureSeries(bars, W = 250) {
       macdSig = i === 1 ? macdVal : macdVal * k9 + macdSig * (1 - k9);
       const rawFi = (c[i] - c[i - 1]) * (bars[i].v || Math.max(0.01, bars[i].h - bars[i].l));
       fiEma = i === 1 ? rawFi : rawFi * k13 + fiEma * (1 - k13);
-      if (i >= 26 && atr14[i]) osmaAtr[i] = (macdVal - macdSig) / atr14[i];
-      if (i >= 13 && atr14[i]) {
-        forceAtr[i] = fiEma / (atr14[i] * atr14[i]);
-        elderNetAtr[i] = ((bars[i].h - ema13) + (bars[i].l - ema13)) / atr14[i];
+      if (i >= 26) {
+        osmaRaw[i] = macdVal - macdSig;
+        if (atr14[i]) osmaAtr[i] = (macdVal - macdSig) / atr14[i];
+      }
+      if (i >= 13) {
+        bullsRaw[i] = bars[i].h - ema13;
+        bearsRaw[i] = bars[i].l - ema13;
+        forceRaw[i] = fiEma;
+        if (atr14[i]) {
+          forceAtr[i] = fiEma / (atr14[i] * atr14[i]);
+          elderNetAtr[i] = ((bars[i].h - ema13) + (bars[i].l - ema13)) / atr14[i];
+        }
       }
       deMax[i] = bars[i].h > bars[i - 1].h ? bars[i].h - bars[i - 1].h : 0;
       deMin[i] = bars[i].l < bars[i - 1].l ? bars[i - 1].l - bars[i].l : 0;
@@ -132,10 +141,16 @@ function featureSeries(bars, W = 250) {
       let su = 0, sd = 0;
       for (let j = i - 9; j <= i; j++) { su += rviUp[j]; sd += rviDn[j]; }
       rvi[i] = sd === 0 ? 0 : su / sd;
+      if (i >= 15 && rvi[i - 1] != null && rvi[i - 2] != null && rvi[i - 3] != null) {
+        rviSig[i] = (rvi[i] + 2 * rvi[i - 1] + 2 * rvi[i - 2] + rvi[i - 3]) / 6;
+      }
     }
     if (i >= 50 && atr14[i]) emaDist[i] = (c[i] - ema) / atr14[i];
     if (atr14[i] && atr100[i]) atrRatio[i] = atr14[i] / atr100[i];
-    if (i >= 14 && atr14[i]) momAtr[i] = (c[i] - c[i - 14]) / atr14[i];
+    if (i >= 14) {
+      momRaw[i] = c[i - 14] ? (c[i] / c[i - 14]) * 100 : 100;
+      if (atr14[i]) momAtr[i] = (c[i] - c[i - 14]) / atr14[i];
+    }
     if (i >= 13) {
       let s = 0, hh = -Infinity, ll = Infinity, sTp = 0, sDmax = 0, sDmin = 0;
       for (let j = i - 13; j <= i; j++) {
@@ -152,6 +167,9 @@ function featureSeries(bars, W = 250) {
       if (i >= 15 && fastK[i - 1] != null && fastK[i - 2] != null) {
         stochK[i] = (fastK[i] + fastK[i - 1] + fastK[i - 2]) / 3;
       }
+      if (i >= 17 && stochK[i] != null && stochK[i - 1] != null && stochK[i - 2] != null) {
+        stochD[i] = (stochK[i] + stochK[i - 1] + stochK[i - 2]) / 3;
+      }
     }
     if (i >= 20) {
       let p = 0; for (let j = i - 19; j <= i; j++) p += Math.abs(c[j] - c[j - 1]);
@@ -167,7 +185,10 @@ function featureSeries(bars, W = 250) {
     }
     if (atr14[i] != null) atrPct[i] = pct(atr14, i);
   }
-  return { n, c, atr14, adx, chop, er, bbw, bbwPct, bbUp, bbMid, bbLo, atrPct, emaDist, rsi, atrRatio, cci, stochK, wpr, dem, rvi, osmaAtr, momAtr, forceAtr, elderNetAtr };
+  return {
+    n, c, atr14, adx, chop, er, bbw, bbwPct, bbUp, bbMid, bbLo, atrPct, emaDist, rsi, atrRatio,
+    cci, stochK, stochD, wpr, dem, rvi, rviSig, osmaAtr, osmaRaw, momAtr, momRaw, forceAtr, forceRaw, bullsRaw, bearsRaw, elderNetAtr
+  };
 }
 
 function featAt(F, i) {
@@ -178,7 +199,7 @@ function featAt(F, i) {
   };
 }
 
-// 近 N 根 K 线的震荡指数走势 (含震荡指数单次变化 chg1、单次跌幅 drop1、3根累计跌幅 drop3、单根K线振幅 barSpan)
+// 近 N 根 K 线的震荡指数走势 (含震荡指数单次变化 chg1、单次跌幅 drop1、3根累计跌幅 drop3、单根K线振幅 barSpan + MT4全套12项震荡指标序列)
 function indexSeries(bars, last = 120, W = 500) {
   const F = featureSeries(bars, W), tmp = [];
   for (let i = Math.max(0, F.n - last - 4); i < F.n; i++) {
@@ -195,6 +216,20 @@ function indexSeries(bars, last = 120, W = 500) {
       bbU: F.bbUp[i] != null ? +F.bbUp[i].toFixed(2) : null,
       bbM: F.bbMid[i] != null ? +F.bbMid[i].toFixed(2) : null,
       bbL: F.bbLo[i] != null ? +F.bbLo[i].toFixed(2) : null,
+      atr: F.atr14[i] != null ? +F.atr14[i].toFixed(2) : null,
+      rsi: F.rsi[i] != null ? +F.rsi[i].toFixed(1) : null,
+      cci: F.cci[i] != null ? +F.cci[i].toFixed(1) : null,
+      stochK: F.stochK[i] != null ? +F.stochK[i].toFixed(1) : null,
+      stochD: F.stochD[i] != null ? +F.stochD[i].toFixed(1) : null,
+      wpr: F.wpr[i] != null ? +F.wpr[i].toFixed(1) : null,
+      dem: F.dem[i] != null ? +F.dem[i].toFixed(3) : null,
+      rvi: F.rvi[i] != null ? +F.rvi[i].toFixed(3) : null,
+      rviSig: F.rviSig[i] != null ? +F.rviSig[i].toFixed(3) : null,
+      osma: F.osmaRaw[i] != null ? +F.osmaRaw[i].toFixed(3) : null,
+      mom: F.momRaw[i] != null ? +F.momRaw[i].toFixed(2) : null,
+      force: F.forceRaw[i] != null ? +F.forceRaw[i].toFixed(2) : null,
+      bulls: F.bullsRaw[i] != null ? +F.bullsRaw[i].toFixed(2) : null,
+      bears: F.bearsRaw[i] != null ? +F.bearsRaw[i].toFixed(2) : null,
       span: +(hi - lo).toFixed(2), dir
     });
   }
