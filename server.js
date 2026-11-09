@@ -79,8 +79,10 @@ async function getText(url, headers = {}, timeout = 10000, retries = 1) {
 }
 
 // 实时现货黄金 XAUUSD K线接口 (华尔街见闻 DDC 行情源, 0秒延迟秒级实时, 失败自动降级 Yahoo GC=F)
-async function wscnGold(periodSec, count = 600, fallbackInterval = '1h', fallbackRange = '3mo') {
-  const url = `https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=${count}&period_type=${periodSec}&fields=tick_at,open_px,close_px,high_px,low_px`;
+async function wscnGold(periodSec, count = 1200, fallbackInterval = '1h', fallbackRange = '3mo') {
+  // 华尔街见闻底层为分块存储，周一开盘后必须使用至少 1200 个 tick 才能跨周末向后拉取完整的历史 K 线
+  const reqCount = (periodSec === 300 || periodSec === 60) ? Math.max(count, 1200) : count;
+  const url = `https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=${reqCount}&period_type=${periodSec}&fields=tick_at,open_px,close_px,high_px,low_px`;
   try {
     const j = await getJSON(url);
     const c = j.data && j.data.candle && j.data.candle.XAUUSD;
@@ -88,9 +90,23 @@ async function wscnGold(periodSec, count = 600, fallbackInterval = '1h', fallbac
     if (!c || !c.lines || !c.lines.length) throw new Error('WSCN XAUUSD 空数据');
     const io = fields.indexOf('open_px'), ic = fields.indexOf('close_px');
     const ih = fields.indexOf('high_px'), il = fields.indexOf('low_px'), it = fields.indexOf('tick_at');
-    const bars = c.lines.map((r) => ({ t: r[it], o: r[io], h: r[ih], l: r[il], c: r[ic] }))
+    let bars = c.lines.map((r) => ({ t: r[it], o: r[io], h: r[ih], l: r[il], c: r[ic] }))
       .filter((b) => [b.t, b.o, b.h, b.l, b.c].every((v) => v != null && !isNaN(v)));
-    if (bars.length < 30) throw new Error('WSCN K线数量不足');
+
+    // 若拿到的 K 线少于 100 根 (周一开盘分块边界问题导致 EMA50/ATR100 无法计算)，自动加大 tick_count 到 2000 跨周末重抓
+    if (bars.length < 100) {
+      try {
+        const retryUrl = `https://api-ddc-wscn.awtmt.com/market/kline?prod_code=XAUUSD&tick_count=2000&period_type=${periodSec}&fields=tick_at,open_px,close_px,high_px,low_px`;
+        const rj = await getJSON(retryUrl);
+        const rc = rj && rj.data && rj.data.candle && rj.data.candle.XAUUSD;
+        if (rc && rc.lines && rc.lines.length > bars.length) {
+          bars = rc.lines.map((r) => ({ t: r[it], o: r[io], h: r[ih], l: r[il], c: r[ic] }))
+            .filter((b) => [b.t, b.o, b.h, b.l, b.c].every((v) => v != null && !isNaN(v)));
+        }
+      } catch (e2) {}
+    }
+
+    if (bars.length < 60) throw new Error('WSCN K线太少 (' + bars.length + '根)，自动切换 Yahoo 兜底');
     return { bars, meta: { gmtoffset: 0, source: 'WSCN_XAUUSD', url } };
   } catch (e) {
     const fb = await yahoo('GC=F', fallbackInterval, fallbackRange);
@@ -1498,8 +1514,8 @@ async function build() {
     wscnGold(14400, 600, '1h', '3mo'),
     wscnGold(3600, 600, '1h', '3mo'),
     p15,
-    wscnGold(300, 600, '5m', '5d'),
-    wscnGold(60, 600, '1m', '5d'),
+    wscnGold(300, 1200, '5m', '5d'),
+    wscnGold(60, 1200, '1m', '5d'),
     yahoo('^GVZ', '1d', '1y'),
     jin10Calendar(),
     wscnGold(86400, 2600, '1d', '10y'),
@@ -1622,8 +1638,8 @@ async function refreshFast() {
   fastInflight = (async () => {
     const p15 = wscnGold(900, 600, '15m', '1mo');
     const [g1, g5, g15, g1h, g4h, mac, trp, attn, sent] = await Promise.allSettled([
-      wscnGold(60, 600, '1m', '5d'),
-      wscnGold(300, 600, '5m', '5d'),
+      wscnGold(60, 1200, '1m', '5d'),
+      wscnGold(300, 1200, '5m', '5d'),
       p15,
       wscnGold(3600, 600, '1h', '3mo'),
       wscnGold(14400, 600, '1h', '3mo'),
