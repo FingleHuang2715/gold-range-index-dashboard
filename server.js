@@ -239,6 +239,108 @@ function bbWidth(bars, n = 20, k = 2) {
 
 function emaLast(vals, n) { const k = 2 / (n + 1); let e = vals[0]; for (let i = 1; i < vals.length; i++) e = vals[i] * k + e * (1 - k); return e; }
 
+// ---- MT4 自带震荡指标完整套件 (CCI / Stochastic KD / Williams %R / DeMarker / RVI / Bulls & Bears Power / Momentum / OsMA / Force Index) ----
+function mt4Oscillators(bars, atrNow) {
+  const n = bars.length;
+  if (n < 28) return {};
+  const c = bars.map((b) => b.c), last = bars[n - 1];
+  const atr = atrNow || 1;
+
+  // 1) Bears Power(13) & Bulls Power(13): Low - EMA13, High - EMA13
+  const ema13 = emaLast(c, 13);
+  const bullsPower = last.h - ema13;
+  const bearsPower = last.l - ema13;
+  const bullsAtr = bullsPower / atr;
+  const bearsAtr = bearsPower / atr;
+  const elderNetAtr = (bullsPower + bearsPower) / atr;
+
+  // 2) Commodity Channel Index CCI(14)
+  const tp = bars.slice(-14).map((b) => (b.h + b.l + b.c) / 3);
+  const smaTp = tp.reduce((a, b) => a + b, 0) / 14;
+  const md = tp.reduce((a, b) => a + Math.abs(b - smaTp), 0) / 14;
+  const cci = md === 0 ? 0 : (tp[13] - smaTp) / (0.015 * md);
+
+  // 3) Stochastic Oscillator KD(14, 3, 3) & 4) Williams Percent Range %R(14)
+  const fastKs = [];
+  let wpr = -50;
+  for (let i = n - 6; i < n; i++) {
+    const w = bars.slice(i - 13, i + 1);
+    const hh = Math.max(...w.map((b) => b.h)), ll = Math.min(...w.map((b) => b.l));
+    const fk = hh === ll ? 50 : 100 * (bars[i].c - ll) / (hh - ll);
+    fastKs.push(fk);
+    if (i === n - 1) wpr = hh === ll ? -50 : -100 * (hh - bars[i].c) / (hh - ll);
+  }
+  const slowKs = [];
+  for (let j = 2; j < fastKs.length; j++) slowKs.push((fastKs[j] + fastKs[j - 1] + fastKs[j - 2]) / 3);
+  const stochK = slowKs[slowKs.length - 1];
+  const stochD = slowKs.slice(-3).reduce((a, b) => a + b, 0) / 3;
+
+  // 5) DeMarker DeM(14)
+  let sDmax = 0, sDmin = 0;
+  for (let i = n - 14; i < n; i++) {
+    const dm = bars[i].h > bars[i - 1].h ? bars[i].h - bars[i - 1].h : 0;
+    const dn = bars[i].l < bars[i - 1].l ? bars[i - 1].l - bars[i].l : 0;
+    sDmax += dm; sDmin += dn;
+  }
+  const dem = (sDmax + sDmin) === 0 ? 0.5 : sDmax / (sDmax + sDmin);
+
+  // 6) Force Index(13): EMA13 of (Close[i] - Close[i-1]) * TickVolProxy
+  const rawFi = [];
+  for (let i = 1; i < n; i++) {
+    const volProxy = bars[i].v || Math.max(0.01, bars[i].h - bars[i].l);
+    rawFi.push((bars[i].c - bars[i - 1].c) * volProxy);
+  }
+  const forceIdx = emaLast(rawFi, 13);
+  const forceAtr = forceIdx / (atr * atr);
+
+  // 7) Momentum(14): MT4 标准 Close[i] / Close[i-14] * 100 及 ATR 归一化动量
+  const c14Ago = bars[n - 15].c;
+  const mom = c14Ago ? (last.c / c14Ago) * 100 : 100;
+  const momDiff = last.c - c14Ago;
+  const momAtr = momDiff / atr;
+
+  // 8) Moving Average of Oscillator OsMA(12, 26, 9): MACD(12,26) - Signal(9)
+  let e12 = c[0], e26 = c[0], sig = 0;
+  const k12 = 2 / 13, k26 = 2 / 27, k9 = 2 / 10;
+  let macd = 0;
+  for (let i = 1; i < n; i++) {
+    e12 = c[i] * k12 + e12 * (1 - k12);
+    e26 = c[i] * k26 + e26 * (1 - k26);
+    macd = e12 - e26;
+    sig = i === 1 ? macd : macd * k9 + sig * (1 - k9);
+  }
+  const osma = macd - sig;
+  const osmaAtr = osma / atr;
+
+  // 9) Relative Vigor Index RVI(10)
+  const rviSer = [];
+  for (let idx = n - 4; idx < n; idx++) {
+    let su = 0, sd = 0;
+    for (let j = idx - 9; j <= idx; j++) {
+      su += ((bars[j].c - bars[j].o) + 2 * (bars[j - 1].c - bars[j - 1].o) + 2 * (bars[j - 2].c - bars[j - 2].o) + (bars[j - 3].c - bars[j - 3].o)) / 6;
+      sd += ((bars[j].h - bars[j].l) + 2 * (bars[j - 1].h - bars[j - 1].l) + 2 * (bars[j - 2].h - bars[j - 2].l) + (bars[j - 3].h - bars[j - 3].l)) / 6;
+    }
+    rviSer.push(sd === 0 ? 0 : su / sd);
+  }
+  const rvi = rviSer[3];
+  const rviSig = (rviSer[3] + 2 * rviSer[2] + 2 * rviSer[1] + rviSer[0]) / 6;
+
+  return {
+    ema13: +ema13.toFixed(2),
+    bullsPower: +bullsPower.toFixed(2), bullsAtr: +bullsAtr.toFixed(2),
+    bearsPower: +bearsPower.toFixed(2), bearsAtr: +bearsAtr.toFixed(2),
+    elderNetAtr: +elderNetAtr.toFixed(2),
+    cci: +cci.toFixed(1),
+    stochK: +stochK.toFixed(1), stochD: +stochD.toFixed(1),
+    wpr: +wpr.toFixed(1), wprAbs: +Math.abs(wpr).toFixed(1),
+    dem: +dem.toFixed(3),
+    forceIdx: +forceIdx.toFixed(2), forceAtr: +forceAtr.toFixed(2),
+    mom: +mom.toFixed(2), momDiff: +momDiff.toFixed(2), momAtr: +momAtr.toFixed(2),
+    macd: +macd.toFixed(2), macdSig: +sig.toFixed(2), osma: +osma.toFixed(3), osmaAtr: +osmaAtr.toFixed(2),
+    rvi: +rvi.toFixed(3), rviSig: +rviSig.toFixed(3),
+  };
+}
+
 function analyze(bars) {
   const A = adx(bars), C = chop(bars), R = atrRatio(bars);
   const last = bars[bars.length - 1];
@@ -246,6 +348,7 @@ function analyze(bars) {
   const atrSeries = wilderATR(trueRanges(bars), 14).filter((x) => x != null).slice(-500);
   const ema50 = bars.length >= 50 ? emaLast(bars.map((b) => b.c), 50) : null;
   const atrNow = atrSeries[atrSeries.length - 1];
+  const mt4Osc = mt4Oscillators(bars, atrNow);
   const box = (k) => {
     const w = bars.slice(-k);
     if (!w.length) return null;
@@ -268,12 +371,15 @@ function analyze(bars) {
     span14: b14 && b14.span, hi14: b14 && b14.hi, lo14: b14 && b14.lo, net14: b14 && b14.net,
     span24: b24 && b24.span, hi24: b24 && b24.hi, lo24: b24 && b24.lo, net24: b24 && b24.net,
     span48: b48 && b48.span, hi48: b48 && b48.hi, lo48: b48 && b48.lo,
+    ...mt4Osc,
   };
-  // 判定上涨/下跌趋势方向 (综合 +DI/-DI、EMA50偏离、近14根净涨跌、RSI)
+  // 判定上涨/下跌趋势方向 (综合 +DI/-DI、EMA50偏离、近14根净涨跌、CCI、OsMA、牛熊力量)
   let dirVotes = 0;
   if (res.pdi != null && res.mdi != null) dirVotes += res.pdi > res.mdi ? 1 : -1;
   if (res.emaDist != null) dirVotes += res.emaDist > 0.2 ? 1 : res.emaDist < -0.2 ? -1 : 0;
   if (res.net14 != null) dirVotes += res.net14 > 0 ? 1 : res.net14 < 0 ? -1 : 0;
+  if (res.cci != null && Math.abs(res.cci) > 50) dirVotes += res.cci > 0 ? 1 : -1;
+  if (res.elderNetAtr != null && Math.abs(res.elderNetAtr) > 0.4) dirVotes += res.elderNetAtr > 0 ? 1 : -1;
   res.trendDir = dirVotes > 0 ? 'UP' : dirVotes < 0 ? 'DOWN' : (res.pdi >= res.mdi ? 'UP' : 'DOWN');
   res.trendDirText = res.trendDir === 'UP' ? '📈 上涨趋势' : '📉 下跌趋势';
   // 状态判定 + 打分 (正=震荡, 负=单边)
@@ -289,9 +395,9 @@ function analyze(bars) {
     else notes.push(`CHOP ${res.chop} 处于 38.2-61.8 中性区`);
   }
   if (res.atrRatio != null) {
-    if (res.atrRatio < 0.82) { score += 1; res.squeeze = true; notes.push(`ATR比率 ${res.atrRatio} < 0.82 → 波动挤压(蓄势,警惕突破)`); }
-    else if (res.atrRatio > 1.25) { score -= 1; res.expansion = true; notes.push(`ATR比率 ${res.atrRatio} > 1.25 → 波动扩张`); }
-    else notes.push(`ATR比率 ${res.atrRatio} 正常`);
+    if (res.atrRatio < 0.82) { score += 1; res.squeeze = true; notes.push(`iATR比率 ${res.atrRatio} < 0.82 → 波动挤压(蓄势,警惕突破)`); }
+    else if (res.atrRatio > 1.25) { score -= 1; res.expansion = true; notes.push(`iATR比率 ${res.atrRatio} > 1.25 → 波动扩张`); }
+    else notes.push(`iATR比率 ${res.atrRatio} 正常`);
   }
   if (res.er != null) {
     if (res.er < 0.25) { score += 1; notes.push(`效率比ER ${res.er} < 0.25 → 来回拉锯(震荡)`); }
@@ -307,6 +413,23 @@ function analyze(bars) {
     else if (Math.abs(res.emaDist) < 1) { notes.push(`价格贴近EMA50(${res.emaDist}倍ATR)`); }
   }
   if (res.rsi != null && (res.rsi > 70 || res.rsi < 30)) notes.push(`RSI ${res.rsi} 进入${res.rsi > 70 ? '超买' : '超卖'}区,单边动能强`);
+  if (res.cci != null) {
+    if (Math.abs(res.cci) <= 100) { score += 1; notes.push(`CCI ${res.cci} 处于 ±100 通道内 → 常态震荡`); }
+    else if (Math.abs(res.cci) >= 160) { score -= 1; notes.push(`CCI ${res.cci} 突破 ±160 → 强单边极值`); }
+  }
+  if (res.stochK != null) {
+    if (res.stochK >= 25 && res.stochK <= 75) { score += 1; }
+    else if (res.stochK > 85 || res.stochK < 15) { score -= 1; notes.push(`KD随机指标 %K=${res.stochK}/%D=${res.stochD} 极端钝化`); }
+  }
+  if (res.dem != null && (res.dem > 0.72 || res.dem < 0.28)) {
+    score -= 1; notes.push(`DeMarker ${res.dem} 进入${res.dem > 0.72 ? '超买(>0.7)' : '超卖(<0.3)'}极值区`);
+  }
+  if (res.rvi != null && Math.abs(res.rvi) > 0.32) {
+    score -= 1; notes.push(`RVI相对能量 ${res.rvi} (信号线 ${res.rviSig}) 趋势活力强劲`);
+  }
+  if (res.osmaAtr != null && Math.abs(res.osmaAtr) > 0.3) {
+    notes.push(`OsMA柱 ${res.osma}$ (${res.osmaAtr}倍ATR) 动能加速发散`);
+  }
   res.score = score;
   res.state = score >= 4 ? 'RANGE' : score <= -4 ? 'TREND' : 'MIXED';
   res.stateText = { RANGE: '震荡', TREND: res.trendDir === 'UP' ? '单边·📈上涨趋势' : '单边·📉下跌趋势', MIXED: '过渡/不明' }[res.state];

@@ -30,15 +30,24 @@ function lerp(x, pts) {
 }
 const r1 = (x) => x == null || isNaN(x) ? null : Math.round(x * 10) / 10;
 
-// ---------- 单周期打分 (分数越高越震荡) ----------
+// ---------- 单周期打分 (分数越高越震荡，融合 MT4 全部 12 项自带震荡指标) ----------
 const SCORE_RULES = [
-  { key: 'adx', name: 'ADX', w: 20, f: (v) => lerp(v, [[15, 100], [20, 70], [25, 35], [40, 0]]) },
-  { key: 'chop', name: 'CHOP', w: 20, f: (v) => lerp(v, [[30, 0], [38.2, 15], [50, 50], [61.8, 85], [65, 100]]) },
-  { key: 'er', name: '效率比ER', w: 20, f: (v) => lerp(v, [[0.1, 100], [0.25, 70], [0.5, 25], [0.7, 0]]) },
-  { key: 'emaDist', name: 'EMA50偏离', w: 10, f: (v) => lerp(Math.abs(v), [[0.5, 100], [1, 80], [2, 35], [3, 0]]) },
-  { key: 'rsi', name: 'RSI', w: 10, f: (v) => lerp(Math.abs(v - 50), [[5, 100], [10, 75], [20, 20], [25, 0]]) },
-  { key: 'bbwPct', name: '布林带宽分位', w: 10, f: (v) => lerp(v, [[0, 90], [50, 55], [100, 10]]) },
-  { key: 'atrRatio', name: 'ATR比率', w: 10, f: (v) => lerp(v, [[0.7, 90], [1.0, 65], [1.25, 30], [1.6, 0]]) },
+  { key: 'adx', name: 'ADX', w: 16, f: (v) => lerp(v, [[15, 100], [20, 70], [25, 35], [40, 0]]) },
+  { key: 'chop', name: 'CHOP', w: 16, f: (v) => lerp(v, [[30, 0], [38.2, 15], [50, 50], [61.8, 85], [65, 100]]) },
+  { key: 'er', name: '效率比ER', w: 14, f: (v) => lerp(v, [[0.1, 100], [0.25, 70], [0.5, 25], [0.7, 0]]) },
+  { key: 'emaDist', name: 'EMA50偏离', w: 8, f: (v) => lerp(Math.abs(v), [[0.5, 100], [1, 80], [2, 35], [3, 0]]) },
+  { key: 'rsi', name: 'RSI(14)', w: 8, f: (v) => lerp(Math.abs(v - 50), [[5, 100], [10, 75], [20, 20], [25, 0]]) },
+  { key: 'bbwPct', name: '布林带宽分位', w: 6, f: (v) => lerp(v, [[0, 90], [50, 55], [100, 10]]) },
+  { key: 'atrRatio', name: 'iATR比率', w: 6, f: (v) => lerp(v, [[0.7, 90], [1.0, 65], [1.25, 30], [1.6, 0]]) },
+  { key: 'cci', name: 'CCI(14)', w: 5, f: (v) => lerp(Math.abs(v), [[50, 100], [100, 72], [160, 25], [220, 0]]) },
+  { key: 'stochK', name: 'KD随机指标(%K)', w: 4, f: (v) => lerp(Math.abs(v - 50), [[10, 100], [25, 75], [35, 25], [45, 0]]) },
+  { key: 'wpr', name: 'Williams %R(14)', w: 3, f: (v) => lerp(Math.abs(v + 50), [[10, 100], [25, 75], [35, 25], [45, 0]]) },
+  { key: 'dem', name: 'DeMarker(14)', w: 3, f: (v) => lerp(Math.abs(v - 0.5), [[0.08, 100], [0.18, 75], [0.28, 25], [0.38, 0]]) },
+  { key: 'rvi', name: 'RVI相对能量(10)', w: 3, f: (v) => lerp(Math.abs(v), [[0.08, 100], [0.18, 75], [0.32, 25], [0.45, 0]]) },
+  { key: 'osmaAtr', name: 'OsMA(12,26,9)', w: 3, f: (v) => lerp(Math.abs(v), [[0.08, 100], [0.18, 75], [0.32, 25], [0.5, 0]]) },
+  { key: 'momAtr', name: 'Momentum动量(14)', w: 3, f: (v) => lerp(Math.abs(v), [[0.6, 100], [1.4, 75], [2.5, 25], [4.0, 0]]) },
+  { key: 'forceAtr', name: 'Force强力指数(13)', w: 3, f: (v) => lerp(Math.abs(v), [[0.12, 100], [0.25, 75], [0.5, 25], [0.85, 0]]) },
+  { key: 'elderNetAtr', name: 'Bulls/Bears牛熊合力(13)', w: 3, f: (v) => lerp(Math.abs(v), [[0.4, 100], [1.0, 75], [2.0, 25], [3.2, 0]]) },
 ];
 
 function scoreTF(t) {
@@ -63,6 +72,12 @@ function featureSeries(bars, W = 250) {
   const bbw = new Array(n).fill(null), bbwPct = new Array(n).fill(null), atrPct = new Array(n).fill(null);
   const bbUp = new Array(n).fill(null), bbMid = new Array(n).fill(null), bbLo = new Array(n).fill(null);
   const emaDist = new Array(n).fill(null), rsi = new Array(n).fill(null), atrRatio = new Array(n).fill(null);
+  const cci = new Array(n).fill(null), stochK = new Array(n).fill(null), wpr = new Array(n).fill(null);
+  const dem = new Array(n).fill(null), rvi = new Array(n).fill(null), osmaAtr = new Array(n).fill(null);
+  const momAtr = new Array(n).fill(null), forceAtr = new Array(n).fill(null), elderNetAtr = new Array(n).fill(null);
+  const tp = bars.map((b) => (b.h + b.l + b.c) / 3);
+  const fastK = new Array(n).fill(null), deMax = new Array(n).fill(0), deMin = new Array(n).fill(0);
+  const rviUp = new Array(n).fill(0), rviDn = new Array(n).fill(0);
   const pct = (arr, i) => {
     const v = arr[i]; let cnt = 0, tot = 0;
     for (let k = Math.max(0, i - W + 1); k <= i; k++) if (arr[k] != null) { tot++; if (arr[k] <= v) cnt++; }
@@ -89,15 +104,54 @@ function featureSeries(bars, W = 250) {
       else { g = (g * (N - 1) + Math.max(d, 0)) / N; l = (l * (N - 1) + Math.max(-d, 0)) / N; }
       rsi[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l);
     } }
-  let ema = c[0]; const k = 2 / 51;
+  let ema = c[0], ema13 = c[0], ema12 = c[0], ema26 = c[0], macdSig = 0, fiEma = 0;
+  const k50 = 2 / 51, k13 = 2 / 14, k12 = 2 / 13, k26 = 2 / 27, k9 = 2 / 10;
   for (let i = 0; i < n; i++) {
-    if (i > 0) ema = c[i] * k + ema * (1 - k);
+    if (i > 0) {
+      ema = c[i] * k50 + ema * (1 - k50);
+      ema13 = c[i] * k13 + ema13 * (1 - k13);
+      ema12 = c[i] * k12 + ema12 * (1 - k12);
+      ema26 = c[i] * k26 + ema26 * (1 - k26);
+      const macdVal = ema12 - ema26;
+      macdSig = i === 1 ? macdVal : macdVal * k9 + macdSig * (1 - k9);
+      const rawFi = (c[i] - c[i - 1]) * (bars[i].v || Math.max(0.01, bars[i].h - bars[i].l));
+      fiEma = i === 1 ? rawFi : rawFi * k13 + fiEma * (1 - k13);
+      if (i >= 26 && atr14[i]) osmaAtr[i] = (macdVal - macdSig) / atr14[i];
+      if (i >= 13 && atr14[i]) {
+        forceAtr[i] = fiEma / (atr14[i] * atr14[i]);
+        elderNetAtr[i] = ((bars[i].h - ema13) + (bars[i].l - ema13)) / atr14[i];
+      }
+      deMax[i] = bars[i].h > bars[i - 1].h ? bars[i].h - bars[i - 1].h : 0;
+      deMin[i] = bars[i].l < bars[i - 1].l ? bars[i - 1].l - bars[i].l : 0;
+    }
+    if (i >= 3) {
+      rviUp[i] = ((c[i] - bars[i].o) + 2 * (c[i - 1] - bars[i - 1].o) + 2 * (c[i - 2] - bars[i - 2].o) + (c[i - 3] - bars[i - 3].o)) / 6;
+      rviDn[i] = ((bars[i].h - bars[i].l) + 2 * (bars[i - 1].h - bars[i - 1].l) + 2 * (bars[i - 2].h - bars[i - 2].l) + (bars[i - 3].h - bars[i - 3].l)) / 6;
+    }
+    if (i >= 12) {
+      let su = 0, sd = 0;
+      for (let j = i - 9; j <= i; j++) { su += rviUp[j]; sd += rviDn[j]; }
+      rvi[i] = sd === 0 ? 0 : su / sd;
+    }
     if (i >= 50 && atr14[i]) emaDist[i] = (c[i] - ema) / atr14[i];
     if (atr14[i] && atr100[i]) atrRatio[i] = atr14[i] / atr100[i];
-    if (i >= 14) {
-      let s = 0, hh = -Infinity, ll = Infinity;
-      for (let j = i - 13; j <= i; j++) { s += tr[j]; hh = Math.max(hh, bars[j].h); ll = Math.min(ll, bars[j].l); }
-      chop[i] = hh === ll ? 100 : 100 * Math.log10(s / (hh - ll)) / Math.log10(14);
+    if (i >= 14 && atr14[i]) momAtr[i] = (c[i] - c[i - 14]) / atr14[i];
+    if (i >= 13) {
+      let s = 0, hh = -Infinity, ll = Infinity, sTp = 0, sDmax = 0, sDmin = 0;
+      for (let j = i - 13; j <= i; j++) {
+        s += tr[j]; hh = Math.max(hh, bars[j].h); ll = Math.min(ll, bars[j].l);
+        sTp += tp[j]; sDmax += deMax[j]; sDmin += deMin[j];
+      }
+      if (i >= 14) chop[i] = hh === ll ? 100 : 100 * Math.log10(s / (hh - ll)) / Math.log10(14);
+      const smaTp = sTp / 14;
+      let md = 0; for (let j = i - 13; j <= i; j++) md += Math.abs(tp[j] - smaTp); md /= 14;
+      cci[i] = md === 0 ? 0 : (tp[i] - smaTp) / (0.015 * md);
+      fastK[i] = hh === ll ? 50 : 100 * (c[i] - ll) / (hh - ll);
+      wpr[i] = hh === ll ? -50 : -100 * (hh - c[i]) / (hh - ll);
+      if (i >= 14) dem[i] = (sDmax + sDmin) === 0 ? 0.5 : sDmax / (sDmax + sDmin);
+      if (i >= 15 && fastK[i - 1] != null && fastK[i - 2] != null) {
+        stochK[i] = (fastK[i] + fastK[i - 1] + fastK[i - 2]) / 3;
+      }
     }
     if (i >= 20) {
       let p = 0; for (let j = i - 19; j <= i; j++) p += Math.abs(c[j] - c[j - 1]);
@@ -113,11 +167,15 @@ function featureSeries(bars, W = 250) {
     }
     if (atr14[i] != null) atrPct[i] = pct(atr14, i);
   }
-  return { n, c, atr14, adx, chop, er, bbw, bbwPct, bbUp, bbMid, bbLo, atrPct, emaDist, rsi, atrRatio };
+  return { n, c, atr14, adx, chop, er, bbw, bbwPct, bbUp, bbMid, bbLo, atrPct, emaDist, rsi, atrRatio, cci, stochK, wpr, dem, rvi, osmaAtr, momAtr, forceAtr, elderNetAtr };
 }
 
 function featAt(F, i) {
-  return { adx: F.adx[i], chop: F.chop[i], er: F.er[i], emaDist: F.emaDist[i], rsi: F.rsi[i], bbwPct: F.bbwPct[i], atrRatio: F.atrRatio[i] };
+  return {
+    adx: F.adx[i], chop: F.chop[i], er: F.er[i], emaDist: F.emaDist[i], rsi: F.rsi[i], bbwPct: F.bbwPct[i], atrRatio: F.atrRatio[i],
+    cci: F.cci[i], stochK: F.stochK[i], wpr: F.wpr[i], dem: F.dem[i], rvi: F.rvi[i],
+    osmaAtr: F.osmaAtr[i], momAtr: F.momAtr[i], forceAtr: F.forceAtr[i], elderNetAtr: F.elderNetAtr[i],
+  };
 }
 
 // 近 N 根 K 线的震荡指数走势 (含震荡指数单次变化 chg1、单次跌幅 drop1、3根累计跌幅 drop3、单根K线振幅 barSpan)
