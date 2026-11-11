@@ -1924,7 +1924,47 @@ setInterval(() => {
   }
 }, 1000);
 
-// 合并快刷返回的数据与本地已缓存的低频数据(1D日线/kNN/GVZ/金十周历)，确保快刷时低频模块永不丢失
+function mergeSparkBars(prevArr, tailArr, keepMax = 120) {
+  if (!Array.isArray(tailArr) || !tailArr.length) return Array.isArray(prevArr) ? prevArr : [];
+  if (!Array.isArray(prevArr) || !prevArr.length) return tailArr.slice(-keepMax);
+  const byT = new Map();
+  for (const b of prevArr) if (b && b.t != null) byT.set(b.t, b);
+  for (const b of tailArr) if (b && b.t != null) byT.set(b.t, b);
+  return Array.from(byT.values()).sort((a, b) => a.t - b.t).slice(-keepMax);
+}
+
+function mergeMt4Series(prevArr, tailArr, keepMax, keyFn) {
+  if (!Array.isArray(tailArr) || !tailArr.length) return Array.isArray(prevArr) ? prevArr : [];
+  if (!Array.isArray(prevArr) || !prevArr.length) return tailArr.slice(-keepMax);
+  const byK = new Map();
+  for (const p of prevArr) if (p) byK.set(keyFn(p), p);
+  for (const p of tailArr) if (p) byK.set(keyFn(p), p);
+  return Array.from(byK.values()).sort((a, b) => (a.t || 0) - (b.t || 0)).slice(-keepMax);
+}
+
+function mergeMt4State(prevMt4, incomingMt4) {
+  if (!incomingMt4) return prevMt4;
+  if (!incomingMt4.lite) return incomingMt4;
+  const merged = { ...(prevMt4 || {}), ...incomingMt4 };
+  delete merged.lite;
+  delete merged.historyTail;
+  delete merged.historyLongTail;
+  merged.history = mergeMt4Series(
+    prevMt4 && prevMt4.history,
+    incomingMt4.historyTail,
+    480,
+    (p) => p.bTs || (Math.floor((p.t || 0) / 30) * 30)
+  );
+  merged.historyLong = mergeMt4Series(
+    prevMt4 && prevMt4.historyLong,
+    incomingMt4.historyLongTail,
+    720,
+    (p) => p.t || 0
+  );
+  return merged;
+}
+
+// 合并快刷返回的数据与本地已缓存的低频数据(1D日线/kNN/GVZ/金十周历/完整K线与MT4历史)，确保增量省流的同时数据完整不丢失
 function mergeDashboardData(prev, incoming) {
   if (!prev) return incoming;
   if (!incoming || !incoming.timeframes) return prev;
@@ -1935,16 +1975,32 @@ function mergeDashboardData(prev, incoming) {
   if (!incoming.sentiment && prev.sentiment) out.sentiment = prev.sentiment;
   if (!incoming.keyLevels && prev.keyLevels) out.keyLevels = prev.keyLevels;
   if (!incoming.pullback && prev.pullback) out.pullback = prev.pullback;
+  if ((incoming.trumpUnchanged || !incoming.trump) && prev.trump) out.trump = prev.trump;
   if ((!incoming.calendar || !incoming.calendar.items || !incoming.calendar.items.length) && prev.calendar && prev.calendar.items && prev.calendar.items.length) {
     out.calendar = prev.calendar;
   }
+  if (incoming.mt4Unchanged && prev.mt4) {
+    out.mt4 = prev.mt4;
+  } else if (incoming.mt4) {
+    out.mt4 = mergeMt4State(prev.mt4, incoming.mt4);
+  }
   if (prev.model && incoming.model) {
+    const mergedSparks = { ...(prev.model.sparks || {}) };
+    if (incoming.model.sparks) {
+      for (const [k, v] of Object.entries(incoming.model.sparks)) mergedSparks[k] = v;
+    }
+    if (incoming.model.sparksTail) {
+      for (const [k, v] of Object.entries(incoming.model.sparksTail)) {
+        mergedSparks[k] = mergeSparkBars(mergedSparks[k], v, 120);
+      }
+    }
     out.model = {
       ...prev.model,
       ...incoming.model,
       knn: incoming.model.knn || prev.model.knn,
-      sparks: { ...(prev.model.sparks || {}), ...(incoming.model.sparks || {}) }
+      sparks: mergedSparks
     };
+    delete out.model.sparksTail;
   }
   return out;
 }
@@ -1953,8 +2009,18 @@ async function load(force, fastOnly = false, silentBg = false) {
   const b = fastOnly ? $('btnFast') : $('btnFetch');
   if (!fastOnly && !silentBg && b) { b.disabled = true; b.textContent = '获取中…'; }
   try {
-    const q = force ? '?force=1' : (fastOnly ? '?fast=1' : '');
-    const r = await fetch('/api/data' + q);
+    const params = new URLSearchParams();
+    if (force) params.set('force', '1');
+    else if (fastOnly) params.set('fast', '1');
+    const hasFullSparks = !force && D && D.model && D.model.sparks && Array.isArray(D.model.sparks['1M']) && D.model.sparks['1M'].length >= 60;
+    if (hasFullSparks && fastOnly) params.set('delta', '1');
+    if (!force && D && D.mt4 && Array.isArray(D.mt4.history) && D.mt4.history.length >= 10) {
+      params.set('hasMt4Hist', '1');
+    }
+    if (!force && D && D.mt4 && D.mt4.ts) params.set('mt4Ts', String(D.mt4.ts));
+    if (!force && D && D.trump && D.trump._ver) params.set('trumpTs', String(D.trump._ver));
+    const qs = params.toString();
+    const r = await fetch('/api/data' + (qs ? '?' + qs : ''));
     const incoming = await r.json();
     if (incoming && incoming.timeframes) {
       D = mergeDashboardData(D, incoming);
@@ -9291,27 +9357,33 @@ function renderMt4CurveSection(d, mt4, mt4Dec, isMockAcc, martingaleScore) {
   `;
 }
 
-// 每 10 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (配合服务端增量探测，未变动仅消耗45字节，彻底杜绝流量超限)
+// 每 15 秒轻量检查一次 /api/mt4 是否有最新 MT4 实盘推送 (配合 since 增量探测 + lite 尾部增量，极大降低外发流量)
 setInterval(async () => {
   if (!D || document.hidden) return; // 页面切到后台、锁屏时暂停轮询，不耗费流量
   try {
     const since = (D.mt4 && D.mt4.ts) ? D.mt4.ts : 0;
-    const r = await fetch('/api/mt4?since=' + since);
+    const hasHist = !!(D.mt4 && Array.isArray(D.mt4.history) && D.mt4.history.length >= 10);
+    const r = await fetch('/api/mt4?since=' + since + (hasHist ? '&lite=1' : ''));
     if (!r.ok) return;
     const j = await r.json();
     if (j && j.unchanged) return; // 数据无变化，直接跳过，零开销
     if (j && j.connected && j.mt4) {
       const prevTs = D.mt4 ? D.mt4.ts : 0;
       if (j.mt4.ts !== prevTs) {
-        D.mt4 = j.mt4;
+        D.mt4 = mergeMt4State(D.mt4, j.mt4);
         render();
+        if (j.mt4.lite && (!D.mt4.history || D.mt4.history.length < 10) && (j.mt4.historyCount || 0) > 10) {
+          fetch('/api/mt4').then((fr) => fr.ok ? fr.json() : null).then((fj) => {
+            if (fj && fj.connected && fj.mt4) { D.mt4 = fj.mt4; render(); }
+          }).catch(() => {});
+        }
       }
     } else if (j && !j.connected && D.mt4) {
       delete D.mt4;
       render();
     }
   } catch (e) {}
-}, 10000);
+}, 15000);
 // 1) 打开网页瞬间(0ms)：立即从浏览器 localStorage 恢复上次缓存秒开渲染，杜绝白屏等待
 try {
   const cachedStr = localStorage.getItem(LOCAL_DATA_CACHE_KEY);
@@ -9326,12 +9398,12 @@ try {
 
 // 2) 紧接着立即请求 fast=1 极速实时接口(~0.4s)，秒级更新 1M/5M/15M/1H/4H 黄金价格与震荡指数、跨市场报价与特朗普快讯
 load(false, true);
-// 经常更新的数据(1M~4H/跨市场/特朗普)每 20 秒实时获取；休市期间或切到后台自动休眠
+// 经常更新的数据(1M~4H/跨市场/特朗普)每 45 秒增量刷新；休市期间或切到后台自动休眠
 setInterval(() => {
   if (document.hidden) return;
   if (typeof isGoldMarketClosedMs === 'function' && isGoldMarketClosedMs(Date.now())) return; // 周末休市自动静默防偷跑
   load(false, true);
-}, 20 * 1000);
+}, 45 * 1000);
 // 低频数据(日线kNN/GVZ/金十周历)每 20 分钟后台静默同步
 setInterval(() => {
   if (document.hidden) return;

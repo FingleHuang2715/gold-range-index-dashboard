@@ -5,6 +5,33 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
+const crypto = require('crypto');
+
+let _cachedHtmlEtagSrc = '';
+let _cachedHtmlEtagVal = '';
+function getHtmlEtag(str) {
+  if (str !== _cachedHtmlEtagSrc || !_cachedHtmlEtagVal) {
+    _cachedHtmlEtagSrc = str;
+    _cachedHtmlEtagVal = '"' + crypto.createHash('md5').update(str).digest('hex').slice(0, 16) + '"';
+  }
+  return _cachedHtmlEtagVal;
+}
+
+function buildLiteMt4State(mt4) {
+  if (!mt4) return mt4;
+  const hist = Array.isArray(mt4.history) ? mt4.history : [];
+  const histL = Array.isArray(mt4.historyLong) ? mt4.historyLong : [];
+  return {
+    ...mt4,
+    history: undefined,
+    historyLong: undefined,
+    historyTail: hist.slice(-4),
+    historyLongTail: histL.slice(-3),
+    historyCount: hist.length,
+    historyLongCount: histL.length,
+    lite: true
+  };
+}
 
 function sendResponse(req, res, statusCode, contentType, body, extraHeaders = {}) {
   const acceptEncoding = (req && req.headers && req.headers['accept-encoding']) || '';
@@ -1622,7 +1649,6 @@ function buildComposite(result) {
     result.model = composite({ timeframes: mtf, session: result.session, gvz: result.gvz, events: cachedEvents, knn: cachedKnn });
     result.model.knn = cachedKnn && { horizons: cachedKnn.horizons, similar: cachedKnn.similar, validation: cachedKnn.validation, dailyIndex: cachedKnn.dailyIndex, lastDate: cachedKnn.lastDate, samples: cachedKnn.samples };
     result.model.sparks = prevSparks;
-    result.model.spark = prevSparks['1H'];
   }
 }
 
@@ -3145,10 +3171,18 @@ async function handleApiMt4(req, res) {
       }
     }
     const since = Number(u.searchParams.get('since')) || 0;
+    const isPushReq = u.searchParams.has('bal') || u.searchParams.has('balance');
+    const isMockPush = u.searchParams.get('mock') === '1' || (u.searchParams.get('account') || '') === '8861092' || (u.searchParams.get('account') || '') === '1';
+    if (isPushReq && !isMockPush && u.searchParams.get('ret') !== '1') {
+      // MT4 实盘 WebRequest 推送仅校验 HTTP 200，不读取正文；返回极简回执彻底消除每5秒几十万字节的无效回传流量
+      return sendResponse(req, res, 200, 'application/json; charset=utf-8', { ok: true, pushed: true, ts: latestMt4State ? latestMt4State.ts : Date.now() }, corsHeaders);
+    }
     if (since > 0 && latestMt4State && latestMt4State.ts && latestMt4State.ts === since) {
       return sendResponse(req, res, 200, 'application/json; charset=utf-8', { ok: true, unchanged: true, ts: latestMt4State.ts }, corsHeaders);
     }
-    return sendResponse(req, res, 200, 'application/json; charset=utf-8', { ok: true, redisOk: !!(MT4_REDIS_URL && MT4_REDIS_TOKEN), connected: !!latestMt4State, mt4: latestMt4State }, corsHeaders);
+    const lite = u.searchParams.get('lite') === '1';
+    const mt4Payload = (lite && latestMt4State) ? buildLiteMt4State(latestMt4State) : latestMt4State;
+    return sendResponse(req, res, 200, 'application/json; charset=utf-8', { ok: true, redisOk: !!(MT4_REDIS_URL && MT4_REDIS_TOKEN), connected: !!latestMt4State, mt4: mt4Payload }, corsHeaders);
   } catch (e) {
     res.writeHead(500, corsHeaders);
     return res.end(JSON.stringify({ ok: false, error: e.message }));
@@ -3227,14 +3261,58 @@ async function handleApiData(req, res) {
         buildComposite(data);
       }
     }
-    let respData = data;
-    if (fast && data && data.timeframes) {
-      // 瘦身优化：高频轮询保留大图所需的 model.sparks，仅对长文推特 items 适度裁剪，兼顾大图完整呈现与省流
-      respData = { ...data };
-      if (respData.trump && respData.trump.items && respData.trump.items.length > 5) {
-        respData.trump = { ...respData.trump, items: respData.trump.items.slice(0, 5) };
+    let respData = { ...data };
+    const delta = u.searchParams.get('delta') === '1';
+    const hasMt4Hist = u.searchParams.get('hasMt4Hist') === '1';
+    const clientMt4Ts = Number(u.searchParams.get('mt4Ts')) || 0;
+    const clientTrumpTs = u.searchParams.get('trumpTs') || '';
+
+    const curTrumpVer = (respData.trump && Array.isArray(respData.trump.items))
+      ? `${(respData.trump.items[0] && (respData.trump.items[0].id || respData.trump.items[0].time || respData.trump.items[0].title)) || ''}:${respData.trump.recent2hCount || 0}:${respData.trump.items.length}`
+      : '';
+
+    if (delta && respData.timeframes) {
+      // 极致省流增量模式：客户端已缓存完整120根K线/周历/kNN，仅回传最新6根K线尾部 + 实时变动指标，单次流量骤降95%+
+      delete respData.calendar;
+      delete respData.gvz;
+      if (respData.model) {
+        const sparksTail = {};
+        if (respData.model.sparks) {
+          for (const [tfk, arr] of Object.entries(respData.model.sparks)) {
+            if (Array.isArray(arr)) sparksTail[tfk] = arr.slice(-6);
+          }
+        }
+        respData.model = {
+          ...respData.model,
+          knn: undefined,
+          sparks: undefined,
+          sparksTail
+        };
+      }
+      if (clientTrumpTs && curTrumpVer && clientTrumpTs === curTrumpVer) {
+        delete respData.trump;
+        respData.trumpUnchanged = true;
+      } else if (respData.trump && Array.isArray(respData.trump.items)) {
+        respData.trump = { ...respData.trump, items: respData.trump.items.slice(0, 12), _ver: curTrumpVer };
+      }
+    } else if (fast && respData.timeframes) {
+      // 首次fast快刷：保留完整120根K线图用于首屏渲染，适度精简长新闻列表，省略未请求的低频周历占位
+      if (respData.trump && Array.isArray(respData.trump.items)) {
+        respData.trump = { ...respData.trump, items: respData.trump.items.slice(0, 30), _ver: curTrumpVer };
+      }
+    } else if (respData.trump && Array.isArray(respData.trump.items)) {
+      respData.trump = { ...respData.trump, _ver: curTrumpVer };
+    }
+
+    if (respData.mt4) {
+      if (clientMt4Ts > 0 && respData.mt4.ts === clientMt4Ts) {
+        delete respData.mt4;
+        respData.mt4Unchanged = true;
+      } else if (hasMt4Hist) {
+        respData.mt4 = buildLiteMt4State(respData.mt4);
       }
     }
+
     return sendResponse(req, res, 200, 'application/json; charset=utf-8', respData, {
       'cache-control': 'no-store',
       'access-control-allow-origin': '*'
@@ -3263,7 +3341,13 @@ const appHandler = async (req, res) => {
     const htmlContent = (!process.env.VERCEL && fs.existsSync(INDEX_HTML_PATH))
       ? await fs.promises.readFile(INDEX_HTML_PATH, 'utf8').catch(() => EMBEDDED_HTML)
       : EMBEDDED_HTML;
+    const etag = getHtmlEtag(htmlContent);
+    if ((req.headers['if-none-match'] || '') === etag) {
+      res.writeHead(304, { 'etag': etag, 'cache-control': 'public, max-age=60, s-maxage=300' });
+      return res.end();
+    }
     return sendResponse(req, res, 200, 'text/html; charset=utf-8', htmlContent, {
+      'etag': etag,
       'cache-control': 'public, max-age=60, s-maxage=300'
     });
   }
